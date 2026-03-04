@@ -1,0 +1,213 @@
+"""
+RabbitMQ Consumer Worker for Webhook Processing
+"""
+import asyncio
+import json
+import logging
+import aio_pika
+
+from app.services.rabbitmq_service import rabbitmq_client
+from app.database import async_session_maker
+from app.orchestrator import run_orchestrator_v2
+from app.redis_client import redis_client
+
+logger = logging.getLogger(__name__)
+
+
+async def process_webhook_message(message: aio_pika.IncomingMessage):
+    """Callback to process a message from RabbitMQ"""
+    async with message.process():
+        try:
+            body = json.loads(message.body.decode())
+            payload = body.get("payload", {})
+            config_id = body.get("webhook_config_id")
+            session_id = body.get("session_id")
+            job_id = body.get("job_id")
+
+            logger.info(f"Processing webhook job {job_id} for session {session_id}")
+
+            # Prepare args for orchestrator
+            message_text = payload.get("message")
+            agent_id = payload.get("agent_id")
+            user_access_level = payload.get("user_access_level", "normal")
+            context_data = payload.get("context_data")
+            transition_data = payload.get("transition_data")
+            callback_url = payload.get("callback_url")
+            
+            # Set to in_progress
+            await redis_client.set(
+                f"job:{job_id}",
+                json.dumps({
+                    "job_id": job_id,
+                    "status": "in_progress",
+                    "result": None
+                }),
+                expire=3600
+            )
+
+            # Get history
+            history = await redis_client.get_conversation(session_id)
+
+            async with async_session_maker() as db:
+                from app.orchestrator.agent_factory import AgentFactory
+                from langchain_core.messages import HumanMessage, AIMessage
+
+                # Check if target agent exists and has output schema
+                agent_config = None
+                logger.info(f"[Consumer] agent_id={agent_id}, session={session_id}")
+                
+                if agent_id:
+                    factory = AgentFactory(db)
+                    agent = await factory.get_agent_by_id(agent_id)
+                    logger.info(f"[Consumer] Agent found: {agent.name if agent else 'None'}, has output_schema: {bool(agent.output_schema) if agent else False}")
+                    
+                    if agent:
+                        # Auto-map extra root fields from payload to context or transition data
+                        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url", "source", "event_type", "sender_id", "sender_name", "timestamp"}
+                        ctx_keys = set(agent.input_schema.keys()) if agent.input_schema else set()
+                        trans_keys = set(agent.transition_input_schema.keys()) if agent.transition_input_schema else set()
+                        
+                        c_data = context_data or {}
+                        t_data = transition_data or {}
+                        
+                        for k, v in payload.items():
+                            if k in standard_keys: continue
+                            if k in ctx_keys:
+                                c_data[k] = v
+                            else:
+                                t_data[k] = v
+                                
+                        if c_data: context_data = c_data
+                        if t_data: transition_data = t_data
+
+                    if agent and agent.output_schema:
+                        agent_config = await factory.get_agent_config(agent)
+                        logger.info(f"[Consumer] Using STRUCTURED mode with schema keys: {list(agent.output_schema.keys())}")
+                else:
+                    logger.warning(f"[Consumer] No agent_id provided, falling back to standard orchestrator")
+
+                if agent_config:
+                    # Run Structured Agent
+                    messages = []
+                    for msg in history:
+                        if msg.get("role") == "user":
+                            messages.append(HumanMessage(content=msg["content"]))
+                        elif msg.get("role") == "assistant":
+                            messages.append(AIMessage(content=msg["content"]))
+                    messages.append(HumanMessage(content=message_text))
+
+                    rag_context = None
+                    try:
+                        from app.services.rag_service import get_rag_context
+                        rag_context = await get_rag_context(db, agent_config["id"], message_text, limit=5)
+                    except Exception:
+                        pass
+
+                    result_dict = await factory.invoke_agent_structured(
+                        agent_config=agent_config,
+                        messages=messages,
+                        rag_context=rag_context,
+                        context_data=context_data
+                    )
+                    
+                    logger.info(f"[Consumer] Structured result keys: {list(result_dict.keys()) if isinstance(result_dict, dict) else 'NOT_DICT'}")
+                    
+                    # Store serialized dictionary response
+                    response_text = result_dict if isinstance(result_dict, dict) else result_dict.get("output", str(result_dict))
+                    
+                    await redis_client.add_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=str(response_text)
+                    )
+                    final_result = response_text
+                    agent_used = agent_config["name"]
+                
+                else:
+                    # Run Standard Orchestrator V2 (No custom output schema or agent not specified)
+                    logger.info(f"[Consumer] Using STANDARD mode (no output_schema)")
+                    result = await run_orchestrator_v2(
+                        message=message_text,
+                        session_id=session_id,
+                        history=history,
+                        agent_id=agent_id,
+                        db=db,
+                        user_access_level=user_access_level,
+                        context_data=context_data
+                    )
+
+                    await redis_client.add_message(
+                        session_id=session_id,
+                        role="assistant",
+                        content=result["response"]
+                    )
+                    final_result = result["response"]
+                    agent_used = result.get("agent_used")
+                
+            # Set to completed
+            job_data = {
+                "job_id": job_id,
+                "status": "completed",
+                "result": final_result,
+                "agent_used": agent_used
+            }
+            if transition_data:
+                job_data["transition_data"] = transition_data
+
+            await redis_client.set(
+                f"job:{job_id}",
+                json.dumps(job_data),
+                expire=3600
+            )
+
+            logger.info(f"Successfully processed webhook job {job_id}, result type: {type(final_result).__name__}")
+
+            if callback_url:
+                import httpx
+                try:
+                    async with httpx.AsyncClient() as client:
+                        response_data = {
+                            "status": "completed",
+                            "job_id": job_id,
+                            "result": final_result,
+                            "agent_used": agent_used
+                        }
+                        
+                        if transition_data:
+                            response_data["transition_data"] = transition_data
+                            
+                        await client.post(callback_url, json=response_data, timeout=10.0)
+                        logger.info(f"Callback sent to {callback_url}")
+                except Exception as cb_err:
+                    logger.error(f"Failed to send callback to {callback_url}: {str(cb_err)}")
+
+        except Exception as e:
+            logger.error(f"Error processing webhook job from RabbitMQ: {str(e)}")
+            job_id = body.get("job_id") if 'body' in locals() else None
+            if job_id:
+                try:
+                    await redis_client.set(
+                        f"job:{job_id}",
+                        json.dumps({
+                            "job_id": job_id,
+                            "status": "failed",
+                            "error": str(e)
+                        }),
+                        expire=3600
+                    )
+                except Exception:
+                    pass
+
+
+async def start_rabbitmq_consumer():
+    """Start listening to the webhook queue"""
+    if not rabbitmq_client.channel:
+        logger.error("RabbitMQ channel not available for consumer")
+        return
+
+    try:
+        queue = await rabbitmq_client.channel.get_queue(rabbitmq_client.webhook_queue_name)
+        await queue.consume(process_webhook_message)
+        logger.info("RabbitMQ Consumer started listening for webhooks")
+    except Exception as e:
+        logger.error(f"Failed to start RabbitMQ consumer: {str(e)}")

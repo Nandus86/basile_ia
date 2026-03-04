@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  basile-redis:
+    image: redis:7-alpine
+    container_name: basile-redis
+    restart: unless-stopped
+    ports:
+      - "6480:6379"
+    volumes:
+      - basile_redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - basile-network
+
+  basile-postgres:
+    image: postgres:16-alpine
+    container_name: basile-postgres
+    restart: unless-stopped
+    ports:
+      - "5533:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-basile}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-basile123}
+      POSTGRES_DB: ${POSTGRES_DB:-basile_db}
+    volumes:
+      - basile_postgres_data:/var/lib/postgresql/data
+    networks:
+      - basile-network
+
+  basile-t2v-transformers:
+    image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
+    container_name: basile-t2v-transformers
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    environment:
+      ENABLE_CUDA: '0'
+    networks:
+      - basile-network
+
+  basile-weaviate:
+    image: semitechnologies/weaviate:1.28.4
+    container_name: basile-weaviate
+    restart: unless-stopped
+    depends_on:
+      - basile-t2v-transformers
+    ports:
+      - "8086:8080"
+      - "50056:50051"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-transformers'
+      ENABLE_MODULES: 'text2vec-transformers'
+      TRANSFORMERS_INFERENCE_API: 'http://basile-t2v-transformers:8080'
+      CLUSTER_HOSTNAME: 'node1'
+    volumes:
+      - basile_weaviate_data:/var/lib/weaviate
+    networks:
+      - basile-network
+
+  basile-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: basile-backend
+    restart: unless-stopped
+    ports:
+      - "8009:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-basile}:${POSTGRES_PASSWORD:-basile123}@basile-postgres:5432/${POSTGRES_DB:-basile_db}
+      - REDIS_URL=redis://basile-redis:6379
+      - WEAVIATE_URL=http://basile-weaviate:8080
+      - TRANSFORMERS_URL=http://basile-t2v-transformers:8080
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - RABBITMQ_URL=amqp://basile:basile_secret@basile-rabbitmq:5672/
+      # LangSmith Observability
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-Basile_IA_Orch}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT:-https://api.smith.langchain.com}
+    depends_on:
+      - basile-redis
+      - basile-postgres
+      - basile-weaviate
+      - basile-t2v-transformers
+      - basile-rabbitmq
+    volumes:
+      - ./backend:/app
+      - basile_uploads:/app/uploads
+    networks:
+      - basile-network
+
+  basile-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: basile-frontend
+    restart: unless-stopped
+    ports:
+      - "3009:80"
+    depends_on:
+      - basile-backend
+    networks:
+      - basile-network
+
+  basile-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: basile-worker
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-basile}:${POSTGRES_PASSWORD:-basile123}@basile-postgres:5432/${POSTGRES_DB:-basile_db}
+      - REDIS_URL=redis://basile-redis:6379
+      - WEAVIATE_URL=http://basile-weaviate:8080
+      - TRANSFORMERS_URL=http://basile-t2v-transformers:8080
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - RABBITMQ_URL=amqp://basile:basile_secret@basile-rabbitmq:5672/
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-Basile_IA_Orch}
+      - LANGCHAIN_ENDPOINT=${LANGCHAIN_ENDPOINT:-https://api.smith.langchain.com}
+    depends_on:
+      - basile-redis
+      - basile-postgres
+      - basile-weaviate
+      - basile-rabbitmq
+    volumes:
+      - ./backend:/app
+    command: [ "arq", "app.worker.settings.WorkerSettings" ]
+    networks:
+      - basile-network
+
+  basile-rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: basile-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: basile
+      RABBITMQ_DEFAULT_PASS: basile_secret
+    volumes:
+      - basile_rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - basile-network
+
+volumes:
+  basile_redis_data:
+  basile_postgres_data:
+  basile_weaviate_data:
+  basile_uploads:
+  basile_rabbitmq_data:
+
+
+networks:
+  basile-network:
+    driver: bridge
