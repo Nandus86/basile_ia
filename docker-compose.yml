@@ -28,23 +28,10 @@ services:
     networks:
       - basile-network
 
-  basile-t2v-transformers:
-    image: semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
-    container_name: basile-t2v-transformers
-    restart: unless-stopped
-    ports:
-      - "8090:8080"
-    environment:
-      ENABLE_CUDA: '0'
-    networks:
-      - basile-network
-
   basile-weaviate:
     image: semitechnologies/weaviate:1.28.4
     container_name: basile-weaviate
     restart: unless-stopped
-    depends_on:
-      - basile-t2v-transformers
     ports:
       - "8086:8080"
       - "50056:50051"
@@ -52,9 +39,8 @@ services:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-      DEFAULT_VECTORIZER_MODULE: 'text2vec-transformers'
-      ENABLE_MODULES: 'text2vec-transformers'
-      TRANSFORMERS_INFERENCE_API: 'http://basile-t2v-transformers:8080'
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-openai'
+      ENABLE_MODULES: 'text2vec-openai'
       CLUSTER_HOSTNAME: 'node1'
     volumes:
       - basile_weaviate_data:/var/lib/weaviate
@@ -73,7 +59,6 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-basile}:${POSTGRES_PASSWORD:-basile123}@basile-postgres:5432/${POSTGRES_DB:-basile_db}
       - REDIS_URL=redis://basile-redis:6379
       - WEAVIATE_URL=http://basile-weaviate:8080
-      - TRANSFORMERS_URL=http://basile-t2v-transformers:8080
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
@@ -87,7 +72,6 @@ services:
       - basile-redis
       - basile-postgres
       - basile-weaviate
-      - basile-t2v-transformers
       - basile-rabbitmq
     volumes:
       - ./backend:/app
@@ -118,7 +102,6 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-basile}:${POSTGRES_PASSWORD:-basile123}@basile-postgres:5432/${POSTGRES_DB:-basile_db}
       - REDIS_URL=redis://basile-redis:6379
       - WEAVIATE_URL=http://basile-weaviate:8080
-      - TRANSFORMERS_URL=http://basile-t2v-transformers:8080
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}

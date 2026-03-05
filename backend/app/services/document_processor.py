@@ -1,7 +1,7 @@
 """
 Document Processor Service
 Handles chunking, embedding, and indexing of documents into Weaviate
-Uses local transformers server for embeddings (sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2)
+Uses OpenAI API for embeddings (text-embedding-3-small)
 """
 import os
 import hashlib
@@ -21,47 +21,56 @@ from app.weaviate_client import get_weaviate
 
 logger = logging.getLogger(__name__)
 
+
 # Storage directory for uploaded files
 UPLOAD_DIR = Path("/app/uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# Local transformers server URL
-TRANSFORMERS_URL = os.getenv("TRANSFORMERS_URL", "http://basile-t2v-transformers:8080")
 
-
-class LocalTransformersEmbeddings:
+class OpenAIEmbeddings:
     """
-    Embeddings using local transformers server.
-    Model: sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2
+    Embeddings using OpenAI API.
+    Model: text-embedding-3-small (1536 dimensions, cheaper and fast)
     """
     
-    def __init__(self, base_url: str = TRANSFORMERS_URL):
-        self.base_url = base_url.rstrip("/")
-        self.model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-        self.dimension = 384  # MiniLM-L12 produces 384-dimensional vectors
+    def __init__(self, model: str = "text-embedding-3-small"):
+        self.model_name = model
+        self.dimension = 1536  # text-embedding-3-small produces 1536-dimensional vectors
+        self.api_key = settings.OPENAI_API_KEY
     
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for multiple texts"""
+        """Generate embeddings for multiple texts via OpenAI API"""
         embeddings = []
         
         async with httpx.AsyncClient(timeout=60.0) as client:
-            for text in texts:
+            # Process in batches of 100 (OpenAI limit is 2048)
+            batch_size = 100
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
                 try:
                     response = await client.post(
-                        f"{self.base_url}/vectors",
-                        json={"text": text}
+                        "https://api.openai.com/v1/embeddings",
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": self.model_name,
+                            "input": batch
+                        }
                     )
                     response.raise_for_status()
                     result = response.json()
                     
-                    # The server returns {"text": "...", "vector": [...], "dim": 384}
-                    vector = result.get("vector", [])
-                    embeddings.append(vector)
+                    # Sort by index to maintain order
+                    sorted_data = sorted(result["data"], key=lambda x: x["index"])
+                    batch_embeddings = [item["embedding"] for item in sorted_data]
+                    embeddings.extend(batch_embeddings)
                     
                 except Exception as e:
-                    logger.error(f"Error generating embedding: {e}")
-                    # Return zero vector on error
-                    embeddings.append([0.0] * self.dimension)
+                    logger.error(f"Error generating OpenAI embedding: {e}")
+                    # Return zero vectors on error for this batch
+                    embeddings.extend([[0.0] * self.dimension] * len(batch))
         
         return embeddings
     
@@ -69,25 +78,15 @@ class LocalTransformersEmbeddings:
         """Generate embedding for a single query"""
         results = await self.embed_documents([text])
         return results[0] if results else [0.0] * self.dimension
-    
-    def embed_documents_sync(self, texts: List[str]) -> List[List[float]]:
-        """Synchronous version for compatibility"""
-        import asyncio
-        return asyncio.get_event_loop().run_until_complete(self.embed_documents(texts))
-    
-    def embed_query_sync(self, text: str) -> List[float]:
-        """Synchronous version for compatibility"""
-        import asyncio
-        return asyncio.get_event_loop().run_until_complete(self.embed_query(text))
 
 
 class DocumentProcessor:
-    """Processes documents for vector search using local transformers"""
+    """Processes documents for vector search using OpenAI embeddings"""
     
     WEAVIATE_CLASS = "AgentDocuments"
     
     def __init__(self):
-        self.embeddings = LocalTransformersEmbeddings()
+        self.embeddings = OpenAIEmbeddings()
         self.weaviate = get_weaviate()
     
     async def ensure_collection_exists(self):
@@ -291,8 +290,8 @@ class DocumentProcessor:
                     "chunk_count": 0
                 }
             
-            # 3. Generate embeddings using local transformers
-            logger.info(f"Generating embeddings using local transformers server...")
+            # 3. Generate embeddings using OpenAI
+            logger.info(f"Generating embeddings using OpenAI API...")
             embeddings = await self.generate_embeddings(chunks)
             
             # 4. Index in Weaviate
