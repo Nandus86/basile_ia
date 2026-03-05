@@ -126,6 +126,7 @@ const rail = ref(false)
 
 const menuItems = [
   { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: '/' },
+  { title: 'Acompanhamento', icon: 'mdi-chart-timeline-variant', to: '/acompanhamento' },
   { title: 'Chat IA', icon: 'mdi-chat-processing-outline', to: '/chat' },
   { title: 'Meus Agentes', icon: 'mdi-robot-outline', to: '/agents' },
   { title: 'Conhecimento', icon: 'mdi-book-open-page-variant-outline', to: '/documents' },

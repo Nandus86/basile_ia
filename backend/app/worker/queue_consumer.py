@@ -45,6 +45,19 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 expire=3600
             )
 
+            try:
+                from sqlalchemy.future import select
+                from app.models.job_log import JobLog
+                async with async_session_maker() as db_session:
+                    query = select(JobLog).where(JobLog.job_id == job_id)
+                    res = await db_session.execute(query)
+                    job_log = res.scalar_one_or_none()
+                    if job_log:
+                        job_log.status = "in_progress"
+                        await db_session.commit()
+            except Exception as e:
+                logger.error(f"Failed to update JobLog in_progress: {e}")
+
             # Get history
             history = await redis_client.get_conversation(session_id)
 
@@ -86,63 +99,92 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 else:
                     logger.warning(f"[Consumer] No agent_id provided, falling back to standard orchestrator")
 
-                if agent_config:
-                    # Run Structured Agent
-                    messages = []
-                    for msg in history:
-                        if msg.get("role") == "user":
-                            messages.append(HumanMessage(content=msg["content"]))
-                        elif msg.get("role") == "assistant":
-                            messages.append(AIMessage(content=msg["content"]))
-                    messages.append(HumanMessage(content=message_text))
-
-                    rag_context = None
-                    try:
-                        from app.services.rag_service import get_rag_context
-                        rag_context = await get_rag_context(db, agent_config["id"], message_text, limit=5)
-                    except Exception:
-                        pass
-
-                    result_dict = await factory.invoke_agent_structured(
-                        agent_config=agent_config,
-                        messages=messages,
-                        rag_context=rag_context,
-                        context_data=context_data
-                    )
-                    
-                    logger.info(f"[Consumer] Structured result keys: {list(result_dict.keys()) if isinstance(result_dict, dict) else 'NOT_DICT'}")
-                    
-                    # Store serialized dictionary response
-                    response_text = result_dict if isinstance(result_dict, dict) else result_dict.get("output", str(result_dict))
-                    
-                    await redis_client.add_message(
-                        session_id=session_id,
-                        role="assistant",
-                        content=str(response_text)
-                    )
-                    final_result = response_text
-                    agent_used = agent_config["name"]
+                # Configure resilience
+                max_retries = 3
+                retry_delay = 1.0
+                if agent_config and "resilience" in agent_config:
+                    res = agent_config.get("resilience", {})
+                    max_retries = res.get("max_retries", 3)
+                    retry_delay = res.get("retry_delay_seconds", 1.0)
                 
-                else:
-                    # Run Standard Orchestrator V2 (No custom output schema or agent not specified)
-                    logger.info(f"[Consumer] Using STANDARD mode (no output_schema)")
-                    result = await run_orchestrator_v2(
-                        message=message_text,
-                        session_id=session_id,
-                        history=history,
-                        agent_id=agent_id,
-                        db=db,
-                        user_access_level=user_access_level,
-                        context_data=context_data
-                    )
+                attempts = 0
+                last_exception = None
+                
+                while attempts <= max_retries:
+                    attempts += 1
+                    try:
+                        if agent_config:
+                            # Run Structured Agent
+                            messages = []
+                            for msg in history:
+                                if msg.get("role") == "user":
+                                    messages.append(HumanMessage(content=msg["content"]))
+                                elif msg.get("role") == "assistant":
+                                    messages.append(AIMessage(content=msg["content"]))
+                            messages.append(HumanMessage(content=message_text))
 
-                    await redis_client.add_message(
-                        session_id=session_id,
-                        role="assistant",
-                        content=result["response"]
-                    )
-                    final_result = result["response"]
-                    agent_used = result.get("agent_used")
+                            rag_context = None
+                            try:
+                                from app.services.rag_service import get_rag_context
+                                rag_context = await get_rag_context(db, agent_config["id"], message_text, limit=5)
+                            except Exception:
+                                pass
+
+                            result_dict = await factory.invoke_agent_structured(
+                                agent_config=agent_config,
+                                messages=messages,
+                                rag_context=rag_context,
+                                context_data=context_data
+                            )
+                            
+                            logger.info(f"[Consumer] Structured result keys: {list(result_dict.keys()) if isinstance(result_dict, dict) else 'NOT_DICT'}")
+                            
+                            # Store serialized dictionary response
+                            response_text = result_dict if isinstance(result_dict, dict) else result_dict.get("output", str(result_dict))
+                            
+                            await redis_client.add_message(
+                                session_id=session_id,
+                                role="assistant",
+                                content=str(response_text)
+                            )
+                            final_result = response_text
+                            agent_used = agent_config["name"]
+                        
+                        else:
+                            # Run Standard Orchestrator V2 (No custom output schema or agent not specified)
+                            logger.info(f"[Consumer] Using STANDARD mode (no output_schema)")
+                            result = await run_orchestrator_v2(
+                                message=message_text,
+                                session_id=session_id,
+                                history=history,
+                                agent_id=agent_id,
+                                db=db,
+                                user_access_level=user_access_level,
+                                context_data=context_data
+                            )
+
+                            await redis_client.add_message(
+                                session_id=session_id,
+                                role="assistant",
+                                content=result["response"]
+                            )
+                            final_result = result["response"]
+                            agent_used = result.get("agent_used")
+                        
+                        # If execution succeeded, break retry loop
+                        break
+
+                    except Exception as e:
+                        last_exception = e
+                        logger.error(f"[Consumer] Attempt {attempts}/{max_retries+1} failed: {str(e)}")
+                        if attempts <= max_retries:
+                            import asyncio
+                            logger.info(f"[Consumer] Retrying in {retry_delay} seconds...")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                        else:
+                            logger.error(f"[Consumer] All {max_retries+1} attempts failed for job {job_id}.")
+                            raise last_exception
                 
             # Set to completed
             job_data = {
@@ -159,6 +201,24 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 json.dumps(job_data),
                 expire=3600
             )
+
+            try:
+                from sqlalchemy.future import select
+                from app.models.job_log import JobLog
+                from datetime import datetime, timezone
+                async with async_session_maker() as db_session:
+                    query = select(JobLog).where(JobLog.job_id == job_id)
+                    res = await db_session.execute(query)
+                    job_log = res.scalar_one_or_none()
+                    if job_log:
+                        job_log.status = "completed"
+                        job_log.response_data = final_result if isinstance(final_result, dict) else {"output": final_result}
+                        job_log.completed_at = datetime.now(timezone.utc)
+                        if job_log.created_at:
+                            job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                        await db_session.commit()
+            except Exception as e:
+                logger.error(f"Failed to update JobLog completed: {e}")
 
             logger.info(f"Successfully processed webhook job {job_id}, result type: {type(final_result).__name__}")
 
@@ -195,6 +255,20 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         }),
                         expire=3600
                     )
+                    from sqlalchemy.future import select
+                    from app.models.job_log import JobLog
+                    from datetime import datetime, timezone
+                    async with async_session_maker() as db_session:
+                        query = select(JobLog).where(JobLog.job_id == job_id)
+                        res = await db_session.execute(query)
+                        job_log = res.scalar_one_or_none()
+                        if job_log:
+                            job_log.status = "failed"
+                            job_log.error_message = str(e)
+                            job_log.completed_at = datetime.now(timezone.utc)
+                            if job_log.created_at:
+                                job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                            await db_session.commit()
                 except Exception:
                     pass
 

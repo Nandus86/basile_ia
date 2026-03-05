@@ -43,6 +43,7 @@ class ProcessResponse(BaseModel):
     response: str
     agent_used: Optional[str] = None
     processing_time_ms: Optional[float] = None
+    transition_data: Optional[Dict[str, Any]] = Field(default=None, description="Dados de transição passados no request")
 
 
 class AsyncProcessResponse(BaseModel):

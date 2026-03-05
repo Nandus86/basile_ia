@@ -7,6 +7,7 @@ from app.models.document import Document, DocumentStatus, DocumentType
 from app.models.emotional_profile import EmotionalProfile, DEFAULT_EMOTIONAL_PROFILES
 from app.models.ai_provider import AIProvider
 from app.models.webhook_config import WebhookConfig
+from app.models.job_log import JobLog
 
 __all__ = [
     "APIKey", 
@@ -15,6 +16,6 @@ __all__ = [
     "AgentConfig", "PendingApproval",
     "Document", "DocumentStatus", "DocumentType",
     "EmotionalProfile", "DEFAULT_EMOTIONAL_PROFILES",
-    "AIProvider", "WebhookConfig"
+    "AIProvider", "WebhookConfig", "JobLog"
 ]
 

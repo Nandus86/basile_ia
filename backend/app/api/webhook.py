@@ -17,6 +17,7 @@ from app.schemas.webhook import (
     AsyncProcessResponse, JobStatusResponse
 )
 from app.orchestrator import run_orchestrator_v2
+from app.models.job_log import JobLog
 
 router = APIRouter()
 
@@ -81,12 +82,23 @@ async def process_message(
         # Get conversation history
         history = await redis.get_conversation(request.session_id)
         
-        # Add current message to history
+        # Store response in history
         await redis.add_message(
             session_id=request.session_id,
             role="user",
             content=request.message
         )
+        
+        # Log to DB
+        job_log = JobLog(
+            job_id=f"sync_{uuid.uuid4().hex}",
+            webhook_path="/process",
+            status="in_progress",
+            request_data=request.model_dump()
+        )
+        db.add(job_log)
+        await db.commit()
+        await db.refresh(job_log)
         
         # Run the supervisor orchestrator (v2)
         result = await run_orchestrator_v2(
@@ -108,14 +120,35 @@ async def process_message(
         
         processing_time = (time.time() - start_time) * 1000
         
+        job_log.status = "completed"
+        job_log.response_data = {"output": result["response"], "agent_used": result.get("agent_used")}
+        job_log.duration_ms = int(processing_time)
+        try:
+            from datetime import datetime, timezone
+            job_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+        except:
+            pass
+
         return ProcessResponse(
             response=result["response"],
             agent_used=result.get("agent_used"),
-            processing_time_ms=processing_time
+            processing_time_ms=processing_time,
+            transition_data=request.transition_data
         )
         
     except Exception as e:
         processing_time = (time.time() - start_time) * 1000
+        if 'job_log' in locals():
+            try:
+                from datetime import datetime, timezone
+                job_log.status = "failed"
+                job_log.error_message = str(e)
+                job_log.duration_ms = int(processing_time)
+                job_log.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+            except:
+                pass
         return ProcessResponse(
             response=f"Error processing message: {str(e)}",
             processing_time_ms=processing_time
@@ -155,6 +188,16 @@ async def process_message_structured(
             role="user",
             content=request.message
         )
+        
+        job_log = JobLog(
+            job_id=f"sync_{uuid.uuid4().hex}",
+            webhook_path="/process/structured",
+            status="in_progress",
+            request_data=request.model_dump()
+        )
+        db.add(job_log)
+        await db.commit()
+        await db.refresh(job_log)
         
         # Initialize factory
         factory = AgentFactory(db)
@@ -212,12 +255,24 @@ async def process_message_structured(
         
         processing_time = (time.time() - start_time) * 1000
         
+        job_log.status = "completed"
+        job_log.response_data = {**result, "agent_used": agent_config["name"]}
+        job_log.duration_ms = int(processing_time)
+        from datetime import datetime, timezone
+        job_log.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+
         # Return structured response with metadata
-        return {
+        response_dict = {
             **result,
             "agent_used": agent_config["name"],
             "processing_time_ms": processing_time
         }
+        
+        if request.transition_data is not None:
+            response_dict["transition_data"] = request.transition_data
+            
+        return response_dict
         
     except Exception as e:
         processing_time = (time.time() - start_time) * 1000
@@ -242,7 +297,23 @@ async def process_message_async(
     from app.worker.queue_client import enqueue_process_message
     
     try:
-        job_id = await enqueue_process_message(
+        from app.database import async_session_maker
+        import uuid
+        
+        # Generate an early job_id or use one passed from enqueue
+        job_id = f"job_{uuid.uuid4().hex}"
+        
+        async with async_session_maker() as db_session:
+            job_log = JobLog(
+                job_id=job_id,
+                webhook_path="/process/async",
+                status="queued",
+                request_data=request.model_dump()
+            )
+            db_session.add(job_log)
+            await db_session.commit()
+
+        queued_job_id = await enqueue_process_message(
             message=request.message,
             session_id=request.session_id,
             agent_id=request.agent_id,
@@ -250,6 +321,7 @@ async def process_message_async(
             context_data=request.context_data,
             transition_data=request.transition_data,
             callback_url=request.callback_url,
+            job_id=job_id # Passing to use our custom uuid
         )
         
         return AsyncProcessResponse(
@@ -274,7 +346,21 @@ async def process_message_structured_async(
     from app.worker.queue_client import enqueue_process_structured
     
     try:
-        job_id = await enqueue_process_structured(
+        from app.database import async_session_maker
+        import uuid
+        
+        job_id = f"job_{uuid.uuid4().hex}"
+        async with async_session_maker() as db_session:
+            job_log = JobLog(
+                job_id=job_id,
+                webhook_path="/process/structured/async",
+                status="queued",
+                request_data=request.model_dump()
+            )
+            db_session.add(job_log)
+            await db_session.commit()
+
+        queued_job_id = await enqueue_process_structured(
             message=request.message,
             session_id=request.session_id,
             agent_id=request.agent_id,
@@ -282,6 +368,7 @@ async def process_message_structured_async(
             context_data=request.context_data,
             transition_data=request.transition_data,
             callback_url=request.callback_url,
+            job_id=job_id
         )
         
         return AsyncProcessResponse(
@@ -368,6 +455,15 @@ async def process_dynamic_webhook(
     payload = request.model_dump()
     payload["agent_id"] = target_agent_id
     payload["callback_url"] = request.callback_url
+    
+    job_log = JobLog(
+        job_id=job_id,
+        webhook_path=path,
+        status="queued",
+        request_data=payload
+    )
+    db.add(job_log)
+    await db.commit()
     
     # Publish to RabbitMQ
     success = await rabbitmq_client.publish_webhook_job(

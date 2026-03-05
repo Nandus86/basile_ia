@@ -425,7 +425,8 @@ const fetchWebhooks = async () => {
 const fetchAgents = async () => {
   try {
     const { data } = await axios.get('/agents')
-    agents.value = data.map(agent => ({
+    const agentList = data.agents || []
+    agents.value = agentList.map(agent => ({
       ...agent,
       name: agent.name || 'Agente sem nome'
     }))

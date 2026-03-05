@@ -94,6 +94,7 @@ class AgentFactory:
             "transition_input_schema": agent.transition_input_schema,   # System transition input
             "transition_output_schema": agent.transition_output_schema, # System transition output
             "config": agent.config or {},           # Extra config (reasoning, etc.)
+            "resilience": agent.resilience_config.to_dict() if agent.resilience_config else {},
             "agent_model": agent  # Keep reference for collaboration
         }
         

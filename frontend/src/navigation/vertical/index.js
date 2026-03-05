@@ -1,14 +1,19 @@
-import { mdiFileOutline, mdiHomeOutline } from '@mdi/js'
+import { mdiFileOutline, mdiHomeOutline, mdiChartTimelineVariant } from '@mdi/js'
 
 export default [
   {
     title: 'Home',
     icon: mdiHomeOutline,
-    to: 'home',
+    to: { name: 'Dashboard' },
   },
   {
-    title: 'Second Page',
+    title: 'Acompanhamento',
+    icon: mdiChartTimelineVariant,
+    to: { name: 'Acompanhamento' },
+  },
+  {
+    title: 'Agents',
     icon: mdiFileOutline,
-    to: 'second-page',
+    to: { name: 'Agents' },
   },
 ]

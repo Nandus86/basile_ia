@@ -39,6 +39,11 @@ const routes = [
         path: 'ia-settings',
         name: 'IASettings',
         component: () => import('@/views/IASettings.vue')
+      },
+      {
+        path: 'acompanhamento',
+        name: 'Acompanhamento',
+        component: () => import('@/views/Acompanhamento.vue')
       }
     ]
   },
