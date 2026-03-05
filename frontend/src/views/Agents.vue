@@ -134,13 +134,23 @@
         </template>
         
         <template v-slot:item.collaboration_enabled="{ item }">
-          <v-tooltip :text="item.collaboration_enabled ? 'Colaboração ativa' : 'Colaboração desativada'">
-            <template v-slot:activator="{ props }">
-              <v-icon v-bind="props" :color="item.collaboration_enabled ? 'success' : 'grey-lighten-1'" size="24">
-                {{ item.collaboration_enabled ? 'mdi-account-multiple-check' : 'mdi-account-multiple-remove' }}
-              </v-icon>
-            </template>
-          </v-tooltip>
+          <div class="d-flex align-center gap-2">
+            <v-tooltip :text="item.collaboration_enabled ? 'Colaboração ativa' : 'Colaboração desativada'">
+              <template v-slot:activator="{ props }">
+                <v-icon v-bind="props" :color="item.collaboration_enabled ? 'success' : 'grey-lighten-1'" size="20">
+                  {{ item.collaboration_enabled ? 'mdi-account-multiple-check' : 'mdi-account-multiple-remove' }}
+                </v-icon>
+              </template>
+            </v-tooltip>
+            
+            <v-tooltip :text="item.vector_memory_enabled ? 'Memória Vetorial ativa' : 'Memória Vetorial desativada'">
+              <template v-slot:activator="{ props }">
+                <v-icon v-bind="props" :color="item.vector_memory_enabled ? 'deep-purple' : 'grey-lighten-1'" size="20">
+                  {{ item.vector_memory_enabled ? 'mdi-brain' : 'mdi-brain' }}
+                </v-icon>
+              </template>
+            </v-tooltip>
+          </div>
         </template>
         
         <template v-slot:item.actions="{ item }">
@@ -354,7 +364,7 @@
                 <v-divider class="my-4"></v-divider>
                 
                 <v-row>
-                  <v-col cols="12" md="6">
+                  <v-col cols="12" md="4">
                     <v-switch
                       v-model="formData.is_active"
                       label="Agente Ativo"
@@ -366,15 +376,27 @@
                       </template>
                     </v-switch>
                   </v-col>
-                  <v-col cols="12" md="6">
+                  <v-col cols="12" md="4">
                     <v-switch
                       v-model="formData.collaboration_enabled"
-                      label="Habilitar Colaboração"
+                      label="Colaboração"
                       color="info"
                       hide-details
                     >
                       <template v-slot:prepend>
                         <v-icon :color="formData.collaboration_enabled ? 'info' : 'grey'">mdi-account-group</v-icon>
+                      </template>
+                    </v-switch>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-switch
+                      v-model="formData.vector_memory_enabled"
+                      label="Memória Vetorial"
+                      color="deep-purple"
+                      hide-details
+                    >
+                      <template v-slot:prepend>
+                        <v-icon :color="formData.vector_memory_enabled ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
                       </template>
                     </v-switch>
                   </v-col>
@@ -1227,6 +1249,7 @@ const formData = reactive({
   is_active: true,
   access_level: 'normal',
   collaboration_enabled: true,
+  vector_memory_enabled: false,
   is_orchestrator: false,
   emotional_profile_id: null,
   emotional_intensity: 'medium',
@@ -1448,7 +1471,7 @@ const headers = [
   { title: 'Nível', key: 'access_level', sortable: true },
   { title: 'Modelo', key: 'model', sortable: true },
   { title: 'Status', key: 'is_active', sortable: true },
-  { title: 'Collab', key: 'collaboration_enabled', sortable: false, align: 'center' },
+  { title: 'Recursos', key: 'collaboration_enabled', sortable: false, align: 'center' },
   { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '140px' }
 ]
 
@@ -1529,6 +1552,7 @@ function resetForm() {
     is_active: true,
     access_level: 'normal',
     collaboration_enabled: true,
+    vector_memory_enabled: false,
     is_orchestrator: false,
     emotional_profile_id: null,
     emotional_intensity: 'medium',
@@ -1740,6 +1764,7 @@ async function openDialog(agent = null) {
         is_active: fullAgent.is_active ?? true,
         access_level: fullAgent.access_level || 'normal',
         collaboration_enabled: fullAgent.collaboration_enabled ?? true,
+        vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
         is_orchestrator: fullAgent.is_orchestrator ?? false,
         emotional_profile_id: fullAgent.emotional_profile?.id || null,
         emotional_intensity: fullAgent.emotional_intensity || 'medium',

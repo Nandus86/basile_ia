@@ -94,7 +94,8 @@ async def select_specialist_agent(state: OrchestratorState, db: AsyncSession) ->
             "temperature": float(agent.temperature),
             "max_tokens": int(agent.max_tokens),
             "access_level": agent.access_level.value,
-            "collaboration_enabled": agent.collaboration_enabled
+            "collaboration_enabled": agent.collaboration_enabled,
+            "vector_memory_enabled": getattr(agent, "vector_memory_enabled", False)
         }
         state["agent_used"] = agent.name
         state["agent_model"] = agent  # Store full model for orchestration
@@ -194,6 +195,60 @@ Cite a fonte (nome do documento) quando usar informações do contexto acima.
 """
             except Exception as e:
                 print(f"[Response] Failed to get RAG context: {e}")
+                
+        # Get Intelligent Vector Memory (Contact qualitative data)
+        vector_memory_enabled = agent_info.get("vector_memory_enabled", False) if agent_info else False
+        contact_id = state.get("session_id") # Use session_id as the surrogate contact identifier
+        current_message = state["message"]
+        
+        if vector_memory_enabled and agent_id and contact_id:
+            try:
+                from app.weaviate_client import get_weaviate
+                weaviate_client = get_weaviate()
+                if weaviate_client:
+                    memories = await weaviate_client.search_contact_memories(
+                        agent_id=str(agent_id),
+                        contact_id=str(contact_id),
+                        query=current_message,
+                        limit=5
+                    )
+                    
+                    if memories:
+                        print(f"[VectorMemory] 🧠 Retrieved {len(memories)} qualitative facts for contact {contact_id}")
+                        mem_str = "\n".join([f"- {m['content']}" for m in memories])
+                        
+                        system_prompt += f"""
+
+## Inteligência e Memória Histórica do Contato
+
+Abaixo estão informações e peculiaridades qualitativas deste usuário, adquiridas em interações anteriores. 
+Utilize isso para personalizar ativamente o engajamento de maneira natural:
+
+{mem_str}
+"""
+                        
+            except Exception as e:
+                import traceback
+                print(f"[VectorMemory] Failed to retrieve vector memory: {e}")
+                traceback.print_exc()
+
+        # Extract New Vector Memories in background asynchronously
+        if vector_memory_enabled and agent_id and contact_id:
+            try:
+                from app.services.vector_memory_service import extract_and_save_memories
+                import asyncio
+                # Fire and forget into the event loop
+                history_copy = state.get("history", [])[:]
+                asyncio.create_task(
+                    extract_and_save_memories(
+                        agent_id=str(agent_id),
+                        contact_id=str(contact_id),
+                        history=history_copy,
+                        current_message=current_message
+                    )
+                )
+            except Exception as e:
+                print(f"[VectorMemory] Failed to launch extraction task: {e}")
         
         # Load agent config for resilience settings
         agent_config = None

@@ -57,6 +57,7 @@ class Supervisor:
                 state["current_agent_name"] = agent_config["name"]
                 state["current_agent_config"] = agent_config
                 state["next_action"] = "execute"
+                state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False)
                 print(f"[Supervisor] Direct route to: {agent_config['name']}")
                 return state
         
@@ -74,6 +75,7 @@ class Supervisor:
             state["current_agent_name"] = agent_config["name"]
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
+            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
             return state
         
         # Use LLM to select best agent
@@ -115,6 +117,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                     state["current_agent_name"] = agent_config["name"]
                     state["current_agent_config"] = agent_config
                     state["next_action"] = "execute"
+                    state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False)
                     print(f"[Supervisor] LLM selected: {agent_config['name']}")
                     return state
             
@@ -124,6 +127,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
             state["current_agent_name"] = agent_config["name"]
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
+            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
             
         except Exception as e:
             print(f"[Supervisor] Router error: {e}")
@@ -132,6 +136,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
             state["current_agent_name"] = agent_config["name"]
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
+            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
         
         return state
     
@@ -160,6 +165,60 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                 print(f"[Supervisor] 📚 RAG context loaded for {agent_name}")
         except Exception as e:
             print(f"[Supervisor] RAG error: {e}")
+            
+        vector_memory_enabled = state.get("vector_memory_enabled", False)
+        contact_id = state.get("session_id")
+        current_message = state["original_message"]
+        
+        # Vector Memory Retrieval
+        if vector_memory_enabled and agent_id and contact_id:
+            try:
+                from app.weaviate_client import get_weaviate
+                weaviate_client = get_weaviate()
+                if weaviate_client:
+                    memories = await weaviate_client.search_contact_memories(
+                        agent_id=str(agent_id),
+                        contact_id=str(contact_id),
+                        query=current_message,
+                        limit=5
+                    )
+                    
+                    if memories:
+                        print(f"[Supervisor] 🧠 Retrieved {len(memories)} qualitative facts for contact {contact_id}")
+                        mem_str = "\n".join([f"- {m['content']}" for m in memories])
+                        
+                        system_addition = f"""
+
+## Inteligência e Memória Histórica do Contato
+
+Abaixo estão informações e peculiaridades qualitativas deste usuário, adquiridas em interações anteriores. 
+Utilize isso para personalizar ativamente o engajamento de maneira natural:
+
+{mem_str}
+"""
+                        # We must inject this into the agent's system prompt before invoking
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + system_addition
+            except Exception as e:
+                import traceback
+                print(f"[Supervisor] Failed to retrieve vector memory: {e}")
+                traceback.print_exc()
+
+        # Extract New Vector Memories in background asynchronously
+        if vector_memory_enabled and agent_id and contact_id:
+            try:
+                from app.services.vector_memory_service import extract_and_save_memories
+                import asyncio
+                history_copy = state.get("history", [])[:]
+                asyncio.create_task(
+                    extract_and_save_memories(
+                        agent_id=str(agent_id),
+                        contact_id=str(contact_id),
+                        history=history_copy,
+                        current_message=current_message
+                    )
+                )
+            except Exception as e:
+                print(f"[Supervisor] Failed to launch extraction task: {e}")
         
         # Build messages
         messages = []

@@ -63,6 +63,7 @@ class AgentBase(BaseModel):
     max_tokens: str = Field(default="2000")
     config: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
+    vector_memory_enabled: bool = False
 
 
 class AgentCreate(AgentBase):
@@ -99,6 +100,7 @@ class AgentUpdate(BaseModel):
     input_schema: Optional[Dict[str, Any]] = None
     transition_output_schema: Optional[Dict[str, Any]] = None
     transition_input_schema: Optional[Dict[str, Any]] = None
+    vector_memory_enabled: Optional[bool] = None
 
 
 class AgentResponse(BaseModel):
@@ -121,6 +123,7 @@ class AgentResponse(BaseModel):
     input_schema: Optional[Dict[str, Any]] = None
     transition_output_schema: Optional[Dict[str, Any]] = None
     transition_input_schema: Optional[Dict[str, Any]] = None
+    vector_memory_enabled: bool = False
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []
@@ -139,6 +142,7 @@ class AgentListItem(BaseModel):
     collaboration_enabled: bool = True
     is_orchestrator: bool = False
     emotional_profile_id: Optional[UUID] = None
+    vector_memory_enabled: bool = False
     mcp_count: int = 0
     collaborator_count: int = 0
     created_at: datetime

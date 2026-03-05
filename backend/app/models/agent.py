@@ -91,6 +91,9 @@ class Agent(Base):
     is_orchestrator = Column(Boolean, default=False, nullable=False)
     orchestrator_config = Column(JSON, default=dict)  # Additional orchestrator settings
     
+    # Intelligent Vector Memory - for storing temporal/qualitative data about contacts
+    vector_memory_enabled = Column(Boolean, default=False, nullable=False)
+    
     # Structured Output - custom JSON schema per agent (LLM Context)
     output_schema = Column(JSON, nullable=True, default=None)
     # Example: {"output": {"type": "string"}, "tag": {"type": "string", "enum": [...]}}
