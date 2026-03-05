@@ -8,13 +8,19 @@ from app.config import settings
 
 
 def parse_redis_url(url: str) -> dict:
-    """Parse redis URL into host/port/db components."""
+    """Parse redis URL into host/port/db/password components."""
     # redis://localhost:6480/0 -> host=localhost, port=6480, database=0
+    # redis://default:password@host:port/0 -> host, port, password, database
     url = url.replace("redis://", "")
     
-    # Handle password: user:pass@host:port
+    # Handle credentials: user:pass@host:port
+    password = None
     if "@" in url:
-        _, url = url.rsplit("@", 1)
+        credentials, url = url.rsplit("@", 1)
+        if ":" in credentials:
+            _, password = credentials.split(":", 1)
+        else:
+            password = credentials
     
     # Handle database: host:port/db
     database = 0
@@ -33,7 +39,7 @@ def parse_redis_url(url: str) -> dict:
         host = url
         port = 6379
     
-    return {"host": host, "port": port, "database": database}
+    return {"host": host, "port": port, "database": database, "password": password}
 
 
 def get_redis_settings() -> RedisSettings:
@@ -43,6 +49,7 @@ def get_redis_settings() -> RedisSettings:
         host=parsed["host"],
         port=parsed["port"],
         database=parsed["database"],
+        password=parsed["password"],
     )
 
 
