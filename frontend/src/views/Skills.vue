@@ -373,7 +373,7 @@ function resetForm() {
 async function fetchSkills() {
   loading.value = true
   try {
-    const response = await axios.get('/skills')
+    const response = await axios.get('/skills/')
     skills.value = response.data.skills || []
   } catch (error) {
     console.error('Error fetching skills:', error)
@@ -438,7 +438,7 @@ async function saveSkill() {
       await axios.put(`/skills/${formData.id}`, payload)
       showSnackbar('Skill atualizada com sucesso!')
     } else {
-      await axios.post('/skills', payload)
+      await axios.post('/skills/', payload)
       showSnackbar('Skill criada com sucesso!')
     }
     dialog.value = false

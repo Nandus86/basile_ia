@@ -1917,7 +1917,7 @@ async function fetchAgentMcps(agentId) {
 
 async function fetchAllSkills() {
   try {
-    const response = await axios.get('/skills')
+    const response = await axios.get('/skills/')
     allSkills.value = response.data.skills || []
   } catch (error) {
     console.error('Error fetching skills:', error)
