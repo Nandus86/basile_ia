@@ -69,6 +69,46 @@ async def process_message_task(
                 except Exception:
                     pass
 
+                # Information Bases Retrieval
+                try:
+                    from app.models.agent import Agent as AgentModel
+                    from sqlalchemy import select as sa_select
+                    from sqlalchemy.orm import selectinload
+                    from app.weaviate_client import get_weaviate
+                    
+                    ib_result = await db.execute(
+                        sa_select(AgentModel).options(selectinload(AgentModel.information_bases)).where(AgentModel.id == agent_id)
+                    )
+                    ib_agent = ib_result.scalar_one_or_none()
+                    if ib_agent and ib_agent.information_bases:
+                        base_codes = [b.code for b in ib_agent.information_bases if b.is_active]
+                        if base_codes:
+                            possible_ids = []
+                            ctx = context_data or {}
+                            for v in ctx.values():
+                                if isinstance(v, str) and v.strip():
+                                    possible_ids.append(v.strip())
+                            if session_id:
+                                possible_ids.append(str(session_id))
+                            
+                            weaviate_cl = get_weaviate()
+                            if weaviate_cl and possible_ids:
+                                all_info_nodes = []
+                                for uid in possible_ids:
+                                    info_nodes = await weaviate_cl.search_information_bases(
+                                        base_codes=base_codes, user_id=uid, query=message, limit=5
+                                    )
+                                    if info_nodes:
+                                        all_info_nodes.extend(info_nodes)
+                                if all_info_nodes:
+                                    seen = set()
+                                    unique_nodes = [n for n in all_info_nodes if n['content'] not in seen and not seen.add(n['content'])]
+                                    print(f"[Task] \U0001f4da Retrieved {len(unique_nodes)} Information Base contexts")
+                                    info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
+                                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## Contextualiza\u00e7\u00e3o Personalizada Externa\n\nInforma\u00e7\u00f5es anexadas aos bancos de dados do usu\u00e1rio logado:\n{info_str}\n"
+                except Exception as ib_err:
+                    print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
+
                 result_dict = await factory.invoke_agent_structured(
                     agent_config=agent_config,
                     messages=messages,
@@ -203,6 +243,46 @@ async def process_message_structured_task(
                 rag_context = await get_rag_context(db, agent_config["id"], message, limit=5)
             except Exception:
                 pass
+            
+            # Information Bases Retrieval
+            try:
+                from app.models.agent import Agent as AgentModel
+                from sqlalchemy import select as sa_select
+                from sqlalchemy.orm import selectinload
+                from app.weaviate_client import get_weaviate
+                
+                ib_result = await db.execute(
+                    sa_select(AgentModel).options(selectinload(AgentModel.information_bases)).where(AgentModel.id == agent_id)
+                )
+                ib_agent = ib_result.scalar_one_or_none()
+                if ib_agent and ib_agent.information_bases:
+                    base_codes = [b.code for b in ib_agent.information_bases if b.is_active]
+                    if base_codes:
+                        possible_ids = []
+                        ctx = context_data or {}
+                        for v in ctx.values():
+                            if isinstance(v, str) and v.strip():
+                                possible_ids.append(v.strip())
+                        if session_id:
+                            possible_ids.append(str(session_id))
+                        
+                        weaviate_cl = get_weaviate()
+                        if weaviate_cl and possible_ids:
+                            all_info_nodes = []
+                            for uid in possible_ids:
+                                info_nodes = await weaviate_cl.search_information_bases(
+                                    base_codes=base_codes, user_id=uid, query=message, limit=5
+                                )
+                                if info_nodes:
+                                    all_info_nodes.extend(info_nodes)
+                            if all_info_nodes:
+                                seen = set()
+                                unique_nodes = [n for n in all_info_nodes if n['content'] not in seen and not seen.add(n['content'])]
+                                print(f"[Task] \U0001f4da Retrieved {len(unique_nodes)} Information Base contexts")
+                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
+                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## Contextualiza\u00e7\u00e3o Personalizada Externa\n\nInforma\u00e7\u00f5es anexadas aos bancos de dados do usu\u00e1rio logado:\n{info_str}\n"
+            except Exception as ib_err:
+                print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
             
             # Invoke structured
             result = await factory.invoke_agent_structured(

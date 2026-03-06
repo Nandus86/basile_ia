@@ -21,6 +21,16 @@ const routes = [
         component: () => import('@/views/MCP.vue')
       },
       {
+        path: 'skills',
+        name: 'Skills',
+        component: () => import('@/views/Skills.vue')
+      },
+      {
+        path: 'information-bases',
+        name: 'InformationBases',
+        component: () => import('@/views/InformationBases.vue')
+      },
+      {
         path: 'database',
         name: 'Database',
         component: () => import('@/views/Database.vue')

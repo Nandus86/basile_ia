@@ -170,6 +170,73 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
         contact_id = state.get("session_id")
         current_message = state["original_message"]
         
+        # Information Bases Retrieval
+        info_base_context_data = state.get("context_data") or {}
+        print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent_id={agent_id}, context_data={info_base_context_data}")
+        if agent_id:
+            try:
+                from app.models.agent import Agent
+                from sqlalchemy import select
+                from sqlalchemy.orm import selectinload
+                result = await self.db.execute(
+                    select(Agent).options(selectinload(Agent.information_bases)).where(Agent.id == agent_id)
+                )
+                agent_obj = result.scalar_one_or_none()
+                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent_obj={agent_obj}, has_bases={bool(agent_obj and agent_obj.information_bases)}")
+                if agent_obj and agent_obj.information_bases:
+                    print(f"[Supervisor] 🔍 INFO_BASE DEBUG: bases={[(b.code, b.is_active) for b in agent_obj.information_bases]}")
+                    base_codes = [b.code for b in agent_obj.information_bases if b.is_active]
+                    print(f"[Supervisor] 🔍 INFO_BASE DEBUG: active base_codes={base_codes}")
+                    if base_codes:
+                        # Collect all possible user IDs from context_data values
+                        possible_ids = []
+                        for v in info_base_context_data.values():
+                            if isinstance(v, str) and v.strip():
+                                possible_ids.append(v.strip())
+                        # Also try session_id as fallback
+                        if contact_id:
+                            possible_ids.append(str(contact_id))
+                        print(f"[Supervisor] 🔍 INFO_BASE DEBUG: possible_ids={possible_ids}")
+                        
+                        from app.weaviate_client import get_weaviate
+                        weaviate_client = get_weaviate()
+                        print(f"[Supervisor] 🔍 INFO_BASE DEBUG: weaviate_client={weaviate_client}")
+                        if weaviate_client and possible_ids:
+                            all_info_nodes = []
+                            for uid in possible_ids:
+                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: searching base_codes={base_codes}, user_id={uid}, query={current_message}")
+                                info_nodes = await weaviate_client.search_information_bases(
+                                    base_codes=base_codes,
+                                    user_id=uid,
+                                    query=current_message,
+                                    limit=5
+                                )
+                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: search returned {len(info_nodes)} nodes for uid={uid}")
+                                if info_nodes:
+                                    all_info_nodes.extend(info_nodes)
+                            print(f"[Supervisor] 🔍 INFO_BASE DEBUG: total all_info_nodes={len(all_info_nodes)}")
+                            if all_info_nodes:
+                                # Deduplicate by content
+                                seen = set()
+                                unique_nodes = []
+                                for n in all_info_nodes:
+                                    if n['content'] not in seen:
+                                        seen.add(n['content'])
+                                        unique_nodes.append(n)
+                                print(f"[Supervisor] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
+                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
+                                system_addition = f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
+                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + system_addition
+                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: system_prompt updated, length={len(agent_config['system_prompt'])}")
+                            else:
+                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: no nodes found for any user ID")
+                else:
+                    print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent has no information_bases linked")
+            except Exception as e:
+                import traceback
+                print(f"[Supervisor] Failed to retrieve Information Bases context: {e}")
+                traceback.print_exc()
+        
         # Vector Memory Retrieval
         if vector_memory_enabled and agent_id and contact_id:
             try:

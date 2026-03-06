@@ -1,6 +1,3 @@
-"""
-Agent Schemas with Access Levels and Collaboration
-"""
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -8,6 +5,7 @@ from uuid import UUID
 from enum import Enum
 
 from app.schemas.emotional_profile import EmotionalProfileSummary
+from app.schemas.skill import SkillSummary
 
 
 class AccessLevelEnum(str, Enum):
@@ -71,6 +69,7 @@ class AgentCreate(AgentBase):
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
     mcp_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos MCPs com acesso")
+    skill_ids: Optional[List[UUID]] = Field(default=[], description="IDs das Skills com acesso")
     is_orchestrator: bool = False
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: str = "medium"
@@ -93,6 +92,7 @@ class AgentUpdate(BaseModel):
     access_level: Optional[AccessLevelEnum] = None
     collaboration_enabled: Optional[bool] = None
     mcp_ids: Optional[List[UUID]] = None
+    skill_ids: Optional[List[UUID]] = None
     is_orchestrator: Optional[bool] = None
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
@@ -127,6 +127,7 @@ class AgentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []
+    skills: List[SkillSummary] = []
     collaborators: List[CollaboratorSummary] = []
 
     model_config = ConfigDict(from_attributes=True)

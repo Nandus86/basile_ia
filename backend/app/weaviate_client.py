@@ -28,14 +28,20 @@ class WeaviateClient:
         if not self.client:
             with self._lock:
                 if not self.client:  # Double-check after lock
+                    import os
                     parsed = urlparse(settings.WEAVIATE_URL)
+                    headers = {}
+                    openai_key = os.environ.get("OPENAI_API_KEY", "")
+                    if openai_key:
+                        headers["X-Openai-Api-Key"] = openai_key
                     self.client = weaviate.connect_to_custom(
                         http_host=parsed.hostname,
                         http_port=parsed.port or 8080,
                         http_secure=parsed.scheme == "https",
                         grpc_host=parsed.hostname,
                         grpc_port=50051,
-                        grpc_secure=False
+                        grpc_secure=False,
+                        headers=headers
                     )
         return self.client
     
@@ -120,6 +126,38 @@ class WeaviateClient:
             )
         except Exception as e:
             print(f"Error searching contact memories: {e}")
+            return []
+
+    async def save_information_base_node(
+        self,
+        base_code: str,
+        user_id: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Save a new node into a generic Information Base collection (async-safe)"""
+        try:
+            return await asyncio.to_thread( # type: ignore
+                self._sync_save_information_base_node, base_code, user_id, content, metadata
+            )
+        except Exception as e:
+            print(f"Error saving information base node: {e}")
+            return False
+
+    async def search_information_bases(
+        self,
+        base_codes: List[str],
+        user_id: str,
+        query: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Search specific Information Bases for a user (async-safe)"""
+        try:
+            return await asyncio.to_thread( # type: ignore
+                self._sync_search_information_bases, base_codes, user_id, query, limit
+            )
+        except Exception as e:
+            print(f"Error searching information bases: {e}")
             return []
     
     # ==================== Sync Internals (run in thread) ====================
@@ -245,6 +283,96 @@ class WeaviateClient:
             })
             
         return memories
+
+    def _sync_save_information_base_node(
+        self,
+        base_code: str,
+        user_id: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        client = self._ensure_connected()
+        collection_name = "InformationBaseNode"
+        
+        # Ensure collection exists (lazy creation with vectorizer)
+        if collection_name not in client.collections.list_all():
+            client.collections.create(
+                name=collection_name,
+                description="Custom user-defined Information Bases",
+                vectorizer_config=weaviate.classes.config.Configure.Vectorizer.text2vec_openai(),
+                properties=[
+                    weaviate.classes.config.Property(name="base_code", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="user_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="content", data_type=weaviate.classes.config.DataType.TEXT),
+                    weaviate.classes.config.Property(name="metadata", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="created_at", data_type=weaviate.classes.config.DataType.DATE, skip_vectorization=True),
+                ]
+            )
+            
+        collection = client.collections.get(collection_name)
+        
+        import json
+        from datetime import datetime, timezone
+        
+        props = {
+            "base_code": str(base_code),
+            "user_id": str(user_id),
+            "content": content,
+            "metadata": json.dumps(metadata) if metadata else "{}",
+            "created_at": datetime.now(timezone.utc)
+        }
+        
+        collection.data.insert(properties=props)
+        return True
+
+    def _sync_search_information_bases(
+        self,
+        base_codes: List[str],
+        user_id: str,
+        query: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        if not base_codes:
+            return []
+            
+        client = self._ensure_connected()
+        collection_name = "InformationBaseNode"
+        
+        if collection_name not in client.collections.list_all():
+            return []
+            
+        collection = client.collections.get(collection_name)
+        
+        filter_user = weaviate.classes.query.Filter.by_property("user_id").equal(str(user_id))
+        
+        # Filter by multiple base codes
+        code_filters = []
+        for code in base_codes:
+            code_filters.append(weaviate.classes.query.Filter.by_property("base_code").equal(str(code)))
+        
+        combined_code_filter = code_filters[0]
+        for cf in code_filters[1:]:
+            combined_code_filter = combined_code_filter | cf
+            
+        combined_filter = filter_user & combined_code_filter
+        
+        results = collection.query.near_text(
+            query=query,
+            limit=limit,
+            filters=combined_filter
+        )
+        
+        Nodes = []
+        for obj in results.objects:
+            props = dict(obj.properties)
+            Nodes.append({
+                "base_code": props.get("base_code", ""),
+                "content": props.get("content", ""),
+                "metadata": props.get("metadata", "{}"),
+                "distance": obj.metadata.distance if obj.metadata else None
+            })
+            
+        return Nodes
 
 
 # Global instance

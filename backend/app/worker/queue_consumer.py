@@ -130,6 +130,54 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             except Exception:
                                 pass
 
+                            # Information Bases Retrieval for structured agents
+                            try:
+                                from app.models.agent import Agent as AgentModel
+                                from sqlalchemy import select as sa_select
+                                from sqlalchemy.orm import selectinload
+                                from app.weaviate_client import get_weaviate
+                                
+                                ib_result = await db.execute(
+                                    sa_select(AgentModel).options(selectinload(AgentModel.information_bases)).where(AgentModel.id == agent_id)
+                                )
+                                ib_agent = ib_result.scalar_one_or_none()
+                                if ib_agent and ib_agent.information_bases:
+                                    base_codes = [b.code for b in ib_agent.information_bases if b.is_active]
+                                    if base_codes:
+                                        # Collect possible user IDs from context_data values
+                                        possible_ids = []
+                                        ctx = context_data or {}
+                                        for v in ctx.values():
+                                            if isinstance(v, str) and v.strip():
+                                                possible_ids.append(v.strip())
+                                        if session_id:
+                                            possible_ids.append(str(session_id))
+                                        
+                                        weaviate_client = get_weaviate()
+                                        if weaviate_client and possible_ids:
+                                            all_info_nodes = []
+                                            for uid in possible_ids:
+                                                info_nodes = await weaviate_client.search_information_bases(
+                                                    base_codes=base_codes,
+                                                    user_id=uid,
+                                                    query=message_text,
+                                                    limit=5
+                                                )
+                                                if info_nodes:
+                                                    all_info_nodes.extend(info_nodes)
+                                            if all_info_nodes:
+                                                seen = set()
+                                                unique_nodes = []
+                                                for n in all_info_nodes:
+                                                    if n['content'] not in seen:
+                                                        seen.add(n['content'])
+                                                        unique_nodes.append(n)
+                                                logger.info(f"[Consumer] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
+                                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
+                                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
+                            except Exception as ib_err:
+                                logger.error(f"[Consumer] Failed to retrieve Information Bases: {ib_err}")
+
                             result_dict = await factory.invoke_agent_structured(
                                 agent_config=agent_config,
                                 messages=messages,

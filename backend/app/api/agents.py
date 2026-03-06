@@ -11,6 +11,8 @@ from uuid import UUID
 from app.database import get_db
 from app.models.agent import Agent, AgentCollaborator, CollaborationStatus, AccessLevel
 from app.models.mcp import MCP
+from app.models.skill import Skill
+from app.models.information_base import InformationBase
 from app.schemas.agent import (
     AgentCreate, AgentUpdate, AgentResponse, AgentList, AgentListItem,
     CollaboratorsUpdateRequest, CollaboratorSummary, AccessLevelEnum, CollaborationStatusEnum
@@ -39,6 +41,8 @@ async def list_agents(
     """
     query = select(Agent).options(
         selectinload(Agent.mcps),
+        selectinload(Agent.skills),
+        selectinload(Agent.information_bases),
         selectinload(Agent.collaborator_settings)
     )
     
@@ -90,6 +94,8 @@ async def get_agent(
         select(Agent)
         .options(
             selectinload(Agent.mcps),
+            selectinload(Agent.skills),
+            selectinload(Agent.information_bases),
             selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator),
             selectinload(Agent.emotional_profile)
         )
@@ -147,6 +153,8 @@ async def get_agent(
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
+        skills=[{"id": s.id, "name": s.name, "is_active": s.is_active} for s in agent.skills],
+        information_bases=[{"id": ib.id, "name": ib.name, "is_active": ib.is_active} for ib in agent.information_bases],
         collaborators=collaborators
     )
 
@@ -222,6 +230,22 @@ async def update_agent(
         )
         mcps = mcp_result.scalars().all()
         agent.mcps = list(mcps)
+        
+    # Update Skills if provided
+    if hasattr(agent_data, 'skill_ids') and agent_data.skill_ids is not None:
+        skill_result = await db.execute(
+            select(Skill).where(Skill.id.in_(agent_data.skill_ids))
+        )
+        skills = skill_result.scalars().all()
+        agent.skills = list(skills)
+        
+    # Update Information Bases if provided
+    if hasattr(agent_data, 'information_base_ids') and agent_data.information_base_ids is not None:
+        ib_result = await db.execute(
+            select(InformationBase).where(InformationBase.id.in_(agent_data.information_base_ids))
+        )
+        bases = ib_result.scalars().all()
+        agent.information_bases = list(bases)
     
     await db.commit()
     await db.refresh(agent)
@@ -514,6 +538,231 @@ async def remove_mcp_from_agent(
         raise HTTPException(status_code=404, detail="MCP not associated with this agent")
     
     agent.mcps.remove(mcp_to_remove)
+    await db.commit()
+
+
+# ==================== Agent Skills Endpoints ====================
+
+class AgentSkillItem(BaseModel):
+    """Skill summary for agent"""
+    id: UUID
+    name: str
+    is_active: bool
+
+class AgentSkillList(BaseModel):
+    """List of Skills for an agent"""
+    agent_id: UUID
+    agent_name: str
+    skills: List[AgentSkillItem]
+    total: int
+
+
+@router.get("/{agent_id}/skills", response_model=AgentSkillList)
+async def list_agent_skills(
+    agent_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all Skills associated with an agent"""
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.skills))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    skill_items = [
+        AgentSkillItem(
+            id=skill.id,
+            name=skill.name,
+            is_active=skill.is_active
+        )
+        for skill in agent.skills
+    ]
+    
+    return AgentSkillList(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        skills=skill_items,
+        total=len(skill_items)
+    )
+
+
+@router.post("/{agent_id}/skills/{skill_id}", response_model=AgentSkillItem)
+async def add_skill_to_agent(
+    agent_id: UUID,
+    skill_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a Skill to an agent"""
+    # Check agent exists
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.skills)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Check Skill exists
+    skill_result = await db.execute(select(Skill).where(Skill.id == skill_id))
+    skill = skill_result.scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    
+    # Check if already added
+    if skill in agent.skills:
+        raise HTTPException(status_code=400, detail="Skill already associated with this agent")
+    
+    # Add Skill to agent
+    agent.skills.append(skill)
+    await db.commit()
+    
+    return AgentSkillItem(
+        id=skill.id,
+        name=skill.name,
+        is_active=skill.is_active
+    )
+
+
+@router.delete("/{agent_id}/skills/{skill_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_skill_from_agent(
+    agent_id: UUID,
+    skill_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove a Skill from an agent"""
+    # Check agent exists
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.skills)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Find and remove Skill
+    skill_to_remove = None
+    for skill in agent.skills:
+        if skill.id == skill_id:
+            skill_to_remove = skill
+            break
+    
+    if not skill_to_remove:
+        raise HTTPException(status_code=404, detail="Skill not associated with this agent")
+    
+    agent.skills.remove(skill_to_remove)
+    await db.commit()
+
+
+# ==================== Agent Information Bases Endpoints ====================
+
+class AgentInfoBaseItem(BaseModel):
+    """Information Base summary for agent"""
+    id: UUID
+    name: str
+    is_active: bool
+
+class AgentInfoBaseList(BaseModel):
+    """List of Information Bases for an agent"""
+    agent_id: UUID
+    agent_name: str
+    information_bases: List[AgentInfoBaseItem]
+    total: int
+
+@router.get("/{agent_id}/information-bases", response_model=AgentInfoBaseList)
+async def list_agent_information_bases(
+    agent_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all Information Bases associated with an agent"""
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.information_bases))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    ib_items = [
+        AgentInfoBaseItem(
+            id=ib.id,
+            name=ib.name,
+            is_active=ib.is_active
+        )
+        for ib in agent.information_bases
+    ]
+    
+    return AgentInfoBaseList(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        information_bases=ib_items,
+        total=len(ib_items)
+    )
+
+@router.post("/{agent_id}/information-bases/{base_id}", response_model=AgentInfoBaseItem)
+async def add_information_base_to_agent(
+    agent_id: UUID,
+    base_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add an Information Base to an agent"""
+    # Check agent exists
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.information_bases)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Check Base exists
+    ib_result = await db.execute(select(InformationBase).where(InformationBase.id == base_id))
+    ib = ib_result.scalar_one_or_none()
+    if not ib:
+        raise HTTPException(status_code=404, detail="Information Base not found")
+    
+    # Check if already added
+    if ib in agent.information_bases:
+        raise HTTPException(status_code=400, detail="Information Base already associated with this agent")
+    
+    # Add to agent
+    agent.information_bases.append(ib)
+    await db.commit()
+    
+    return AgentInfoBaseItem(
+        id=ib.id,
+        name=ib.name,
+        is_active=ib.is_active
+    )
+
+@router.delete("/{agent_id}/information-bases/{base_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_information_base_from_agent(
+    agent_id: UUID,
+    base_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove an Information Base from an agent"""
+    # Check agent exists
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.information_bases)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Find and remove
+    ib_to_remove = None
+    for ib in agent.information_bases:
+        if ib.id == base_id:
+            ib_to_remove = ib
+            break
+    
+    if not ib_to_remove:
+        raise HTTPException(status_code=404, detail="Information Base not associated with this agent")
+    
+    agent.information_bases.remove(ib_to_remove)
     await db.commit()
 
 

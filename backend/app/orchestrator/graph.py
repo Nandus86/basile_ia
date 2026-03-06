@@ -197,9 +197,60 @@ Cite a fonte (nome do documento) quando usar informações do contexto acima.
                 print(f"[Response] Failed to get RAG context: {e}")
                 
         # Get Intelligent Vector Memory (Contact qualitative data)
-        vector_memory_enabled = agent_info.get("vector_memory_enabled", False) if agent_info else False
         contact_id = state.get("session_id") # Use session_id as the surrogate contact identifier
         current_message = state["message"]
+        
+        # Information Bases Retrieval
+        info_base_context_data = state.get("context_data") or {}
+        if agent_id and db:
+            try:
+                from app.models.agent import Agent
+                from sqlalchemy import select
+                from sqlalchemy.orm import selectinload
+                result = await db.execute(
+                    select(Agent).options(selectinload(Agent.information_bases)).where(Agent.id == agent_id)
+                )
+                agent_obj = result.scalar_one_or_none()
+                if agent_obj and agent_obj.information_bases:
+                    base_codes = [b.code for b in agent_obj.information_bases if b.is_active]
+                    if base_codes:
+                        # Collect all possible user IDs from context_data values
+                        possible_ids = []
+                        for v in info_base_context_data.values():
+                            if isinstance(v, str) and v.strip():
+                                possible_ids.append(v.strip())
+                        # Also try session_id as fallback
+                        if contact_id:
+                            possible_ids.append(str(contact_id))
+                        
+                        from app.weaviate_client import get_weaviate
+                        weaviate_client = get_weaviate()
+                        if weaviate_client and possible_ids:
+                            all_info_nodes = []
+                            for uid in possible_ids:
+                                info_nodes = await weaviate_client.search_information_bases(
+                                    base_codes=base_codes,
+                                    user_id=uid,
+                                    query=current_message,
+                                    limit=5
+                                )
+                                if info_nodes:
+                                    all_info_nodes.extend(info_nodes)
+                            if all_info_nodes:
+                                # Deduplicate by content
+                                seen = set()
+                                unique_nodes = []
+                                for n in all_info_nodes:
+                                    if n['content'] not in seen:
+                                        seen.add(n['content'])
+                                        unique_nodes.append(n)
+                                print(f"[Response] \U0001f4da Retrieved {len(unique_nodes)} Information Base contexts")
+                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
+                                system_prompt += f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
+            except Exception as e:
+                import traceback
+                print(f"[Response] Failed to retrieve Information Bases context: {e}")
+                traceback.print_exc()
         
         if vector_memory_enabled and agent_id and contact_id:
             try:

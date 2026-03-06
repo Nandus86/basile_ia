@@ -142,6 +142,22 @@ class Agent(Base):
         cascade="all, delete-orphan"
     )
     
+    # Skills the agent can use
+    skills = relationship(
+        "Skill",
+        secondary="agent_skill_access",
+        back_populates="agents",
+        lazy="selectin"
+    )
+
+    # Information Bases the agent can use for RAG
+    information_bases = relationship(
+        "InformationBase",
+        secondary="agent_info_base_access",
+        back_populates="agents",
+        lazy="selectin"
+    )
+    
     # Collaboration settings (agents this agent can collaborate with)
     collaborator_settings = relationship(
         "AgentCollaborator",

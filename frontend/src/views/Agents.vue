@@ -199,11 +199,13 @@
         <v-tabs v-model="activeTab" bg-color="surface" color="primary">
           <v-tab value="general"><v-icon start>mdi-information</v-icon>Geral</v-tab>
           <v-tab value="personality" :disabled="!editing"><v-icon start>mdi-heart</v-icon>Personalidade</v-tab>
+          <v-tab value="skills" :disabled="!editing"><v-icon start>mdi-star-shooting-outline</v-icon>Skills</v-tab>
           <v-tab value="tools" :disabled="!editing"><v-icon start>mdi-tools</v-icon>Ferramentas</v-tab>
           <v-tab value="input" :disabled="!editing"><v-icon start>mdi-application-import</v-icon>Entrada</v-tab>
           <v-tab value="output" :disabled="!editing"><v-icon start>mdi-code-json</v-icon>Saída</v-tab>
           <v-tab value="resilience" :disabled="!editing"><v-icon start>mdi-shield-check</v-icon>Resiliência</v-tab>
           <v-tab value="knowledge" :disabled="!editing"><v-icon start>mdi-book-open-page-variant</v-icon>Conhecimento</v-tab>
+          <v-tab value="information_bases" :disabled="!editing"><v-icon start>mdi-database-search</v-icon>Bases de Infor.</v-tab>
         </v-tabs>
 
         <v-card-text class="pa-6" style="min-height: 400px">
@@ -552,6 +554,94 @@
                     </v-btn>
                   </v-card-text>
                 </v-card>
+              </div>
+            </v-window-item>
+
+            <!-- Tab: Skills -->
+            <v-window-item value="skills">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para associar Skills de comportamento especializado.
+              </v-alert>
+
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">
+                    <v-icon size="20" class="mr-1">mdi-star-shooting-outline</v-icon>
+                    Skills do Agente
+                  </h3>
+                  <v-btn size="small" variant="text" color="primary" to="/skills" target="_blank">
+                    Criar Nova Skill <v-icon end>mdi-open-in-new</v-icon>
+                  </v-btn>
+                </div>
+
+                <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                  <template v-slot:prepend>
+                    <v-icon>mdi-information</v-icon>
+                  </template>
+                  Selecione os comportamentos e regras de instrução especializadas que o agente deve seguir. Skills inativas não serão enviadas para a IA.
+                </v-alert>
+
+                <div class="d-flex align-center gap-2 mb-4">
+                  <v-select
+                    v-model="selectedSkillToAdd"
+                    :items="availableSkills"
+                    item-title="name"
+                    item-value="id"
+                    label="Vincular Skill"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    placeholder="Selecione uma Skill..."
+                    :disabled="availableSkills.length === 0"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon color="info">mdi-star-circle</v-icon>
+                        </template>
+                        <template v-slot:subtitle>
+                          <span class="text-caption">{{ item.raw.intent?.substring(0, 40) }}...</span>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                  <v-btn color="primary" @click="addSkill" :disabled="!selectedSkillToAdd" :loading="addingSkill">
+                    <v-icon start>mdi-plus</v-icon>
+                    Adicionar
+                  </v-btn>
+                </div>
+
+                <v-list border rounded>
+                  <v-list-subheader>
+                    <v-icon size="18" class="mr-1">mdi-star-shooting</v-icon>
+                    Skills Associadas ({{ agentSkills.length }})
+                  </v-list-subheader>
+                  <v-list-item v-if="agentSkills.length === 0">
+                    <v-list-item-title class="text-center py-6 text-medium-emphasis">
+                      <v-icon size="48" color="grey-lighten-1" class="mb-2 d-block mx-auto">mdi-star-off-outline</v-icon>
+                      Nenhuma skill associada a este agente
+                    </v-list-item-title>
+                  </v-list-item>
+                  <v-list-item v-for="skill in agentSkills" :key="skill.id">
+                    <template v-slot:prepend>
+                      <v-avatar color="info" size="36">
+                        <v-icon color="white" size="18">mdi-star-circle</v-icon>
+                      </v-avatar>
+                    </template>
+                    <v-list-item-title class="font-weight-medium">{{ skill.name }}</v-list-item-title>
+                    <v-list-item-subtitle>
+                      <v-chip size="x-small" :color="skill.is_active ? 'success' : 'error'" variant="tonal">
+                        {{ skill.is_active ? 'Ativa' : 'Inativa' }}
+                      </v-chip>
+                    </v-list-item-subtitle>
+                    <template v-slot:append>
+                      <v-btn icon variant="text" color="error" size="small" @click="removeSkill(skill)" :loading="removingSkill === skill.id">
+                        <v-icon>mdi-link-variant-off</v-icon>
+                        <v-tooltip activator="parent" location="top">Remover skill</v-tooltip>
+                      </v-btn>
+                    </template>
+                  </v-list-item>
+                </v-list>
               </div>
             </v-window-item>
 
@@ -1088,6 +1178,72 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: Information Bases -->
+            <v-window-item value="information_bases">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para associar Bases de Informações.
+              </v-alert>
+
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">Bases de Informações Estruturadas</h3>
+                  <v-btn size="small" variant="text" color="primary" to="/information-bases" target="_blank">
+                    Gerenciar Bases <v-icon end>mdi-open-in-new</v-icon>
+                  </v-btn>
+                </div>
+
+                <div class="d-flex align-center gap-2 mb-2">
+                  <v-select
+                    v-model="selectedBaseToAdd"
+                    :items="availableBases"
+                    item-title="name"
+                    item-value="id"
+                    label="Vincular Base de Informações"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    placeholder="Selecione uma Base..."
+                    :disabled="availableBases.length === 0"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon color="success">mdi-database-search</v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                  <v-btn color="primary" @click="addBase" :disabled="!selectedBaseToAdd" :loading="addingBase">
+                    <v-icon start>mdi-plus</v-icon>
+                    Adicionar
+                  </v-btn>
+                </div>
+
+                <v-list border rounded>
+                   <v-list-subheader>Bases Associadas ({{ agentBases.length }})</v-list-subheader>
+                   <v-list-item v-if="agentBases.length === 0">
+                     <v-list-item-title class="text-center py-4 text-medium-emphasis">
+                       Nenhuma Base de Informações associada
+                     </v-list-item-title>
+                   </v-list-item>
+                   <v-list-item v-for="base in agentBases" :key="base.id">
+                     <template v-slot:prepend>
+                       <v-icon color="primary">mdi-database-search</v-icon>
+                     </template>
+                     <v-list-item-title>{{ base.name }}</v-list-item-title>
+                     <v-list-item-subtitle>
+                       ID: {{ base.code }}
+                     </v-list-item-subtitle>
+                     <template v-slot:append>
+                       <v-btn icon variant="text" color="error" size="small" @click="removeBase(base)" :loading="removingBase === base.id">
+                         <v-icon>mdi-link-variant-off</v-icon>
+                       </v-btn>
+                     </template>
+                   </v-list-item>
+                </v-list>
+              </div>
+            </v-window-item>
+
           </v-window>
         </v-card-text>
         
@@ -1387,6 +1543,20 @@ const addingMcp = ref(false)
 const removingMcp = ref(null)
 const addingDoc = ref(false)
 
+// Information Bases Data
+const allBases = ref([])
+const agentBases = ref([])
+const selectedBaseToAdd = ref(null)
+const addingBase = ref(false)
+const removingBase = ref(null)
+
+// Skills Data
+const allSkills = ref([])
+const agentSkills = ref([])
+const selectedSkillToAdd = ref(null)
+const addingSkill = ref(false)
+const removingSkill = ref(null)
+
 // Collaborators dialog
 const collabDialog = ref(false)
 const selectedAgent = ref(null)
@@ -1506,6 +1676,18 @@ const availableDocs = computed(() => {
 const availableMcps = computed(() => {
   const assocIds = new Set(agentMcps.value.map(m => m.id))
   return allMcps.value.filter(m => !assocIds.has(m.id) && m.is_active)
+})
+
+// Available Skills (not already associated with this agent)
+const availableSkills = computed(() => {
+  const assocIds = new Set(agentSkills.value.map(s => s.id))
+  return allSkills.value.filter(s => !assocIds.has(s.id) && s.is_active)
+})
+
+// Available Information Bases (not already associated)
+const availableBases = computed(() => {
+  const assocIds = new Set(agentBases.value.map(b => b.id))
+  return allBases.value.filter(b => !assocIds.has(b.id) && b.is_active)
 })
 
 // Helpers
@@ -1733,6 +1915,42 @@ async function fetchAgentMcps(agentId) {
   }
 }
 
+async function fetchAllSkills() {
+  try {
+    const response = await axios.get('/skills')
+    allSkills.value = response.data.skills || []
+  } catch (error) {
+    console.error('Error fetching skills:', error)
+  }
+}
+
+async function fetchAllBases() {
+  try {
+    const response = await axios.get('/information-bases')
+    allBases.value = response.data.information_bases || []
+  } catch (error) {
+    console.error('Error fetching information bases:', error)
+  }
+}
+
+async function fetchAgentBases(agentId) {
+  try {
+    const response = await axios.get(`/agents/${agentId}/information-bases`)
+    agentBases.value = response.data.information_bases || []
+  } catch (error) {
+    console.error('Error fetching agent information bases:', error)
+  }
+}
+
+async function fetchAgentSkills(agentId) {
+  try {
+    const response = await axios.get(`/agents/${agentId}/skills`)
+    agentSkills.value = response.data.skills || []
+  } catch (error) {
+    console.error('Error fetching agent skills:', error)
+  }
+}
+
 async function fetchAgentDocuments(agentId) {
   try {
     const response = await axios.get(`/agents/${agentId}/documents`)
@@ -1817,8 +2035,12 @@ async function openDialog(agent = null) {
         fetchAgentConfig(fullAgent.id),
         fetchAgentDocuments(fullAgent.id),
         fetchAgentMcps(fullAgent.id),
+        fetchAgentSkills(fullAgent.id),
         fetchDocuments(),
         fetchAllMcps(),
+        fetchAllSkills(),
+        fetchAllBases(),
+        fetchAgentBases(fullAgent.id),
         fetchEmotionalProfiles()
       ])
     } catch (error) {
@@ -1954,6 +2176,68 @@ async function removeMcp(mcp) {
     showSnackbar('Erro ao remover MCP', 'error')
   } finally {
     removingMcp.value = null
+  }
+}
+
+async function addSkill() {
+  if (!selectedSkillToAdd.value) return
+  
+  addingSkill.value = true
+  try {
+    await axios.post(`/agents/${formData.id}/skills/${selectedSkillToAdd.value}`)
+    await fetchAgentSkills(formData.id)
+    selectedSkillToAdd.value = null
+    showSnackbar('Skill adicionada com sucesso!')
+  } catch (error) {
+    console.error('Error adding skill:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao adicionar skill', 'error')
+  } finally {
+    addingSkill.value = false
+  }
+}
+
+async function removeSkill(skill) {
+  removingSkill.value = skill.id
+  try {
+    await axios.delete(`/agents/${formData.id}/skills/${skill.id}`)
+    await fetchAgentSkills(formData.id)
+    showSnackbar('Skill removida!')
+  } catch (error) {
+    console.error('Error removing skill:', error)
+    showSnackbar('Erro ao remover skill', 'error')
+  } finally {
+    removingSkill.value = null
+  }
+}
+
+async function addBase() {
+  if (!selectedBaseToAdd.value) return
+  
+  addingBase.value = true
+  try {
+    await axios.post(`/agents/${formData.id}/information-bases/${selectedBaseToAdd.value}`)
+    await fetchAgentBases(formData.id)
+    selectedBaseToAdd.value = null
+    showSnackbar('Base adicionada com sucesso!')
+  } catch (error) {
+    console.error('Error adding base:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao adicionar base', 'error')
+  } finally {
+    addingBase.value = false
+  }
+}
+
+async function removeBase(base) {
+  removingBase.value = base.id
+  try {
+    await axios.delete(`/agents/${formData.id}/information-bases/${base.id}`)
+    await fetchAgentBases(formData.id)
+    showSnackbar('Base removida!')
+  } catch (error) {
+    console.error('Error removing base:', error)
+    showSnackbar('Erro ao remover base', 'error')
+  } finally {
+    removingBase.value = null
   }
 }
 

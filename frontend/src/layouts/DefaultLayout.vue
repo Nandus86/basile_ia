@@ -131,6 +131,8 @@ const menuItems = [
   { title: 'Meus Agentes', icon: 'mdi-robot-outline', to: '/agents' },
   { title: 'Conhecimento', icon: 'mdi-book-open-page-variant-outline', to: '/documents' },
   { title: 'Integrações MCP', icon: 'mdi-connection', to: '/mcp' },
+  { title: 'Criador de Skills', icon: 'mdi-star-shooting-outline', to: '/skills' },
+  { title: 'Bases de Informações', icon: 'mdi-database-search', to: '/information-bases' },
   { title: 'Banco de Dados', icon: 'mdi-database-outline', to: '/database' },
   { title: 'Configurações de IA', icon: 'mdi-cog-box', to: '/ia-settings' }
 ]
