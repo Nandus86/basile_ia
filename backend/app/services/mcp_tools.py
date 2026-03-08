@@ -3,6 +3,8 @@ MCP Tools Service - Converts MCP tools to LangChain tools for agents
 """
 import asyncio
 import json
+import re
+import ast
 from typing import List, Dict, Any, Optional, Callable
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
@@ -16,6 +18,66 @@ from app.models.agent import Agent
 from app.services.mcp_client import MCPClient, execute_mcp_protocol
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_from_ai_params(text: str) -> dict:
+    params = {}
+    if not text:
+        return params
+    matches = re.finditer(r'\{\{\s*\$fromAI\((.*?)\)\s*\}\}', text)
+    for m in matches:
+        args_str = m.group(1)
+        try:
+            # Safely evaluate arguments without regex guessing
+            args = ast.literal_eval(f'({args_str},)')
+            if not args:
+                continue
+            name = args[0]
+            desc = args[1] if len(args) > 1 else f"Parameter {name}"
+            type_str = args[2] if len(args) > 2 else "string"
+            default = args[3] if len(args) > 3 else None
+            
+            params[name] = {
+                "description": desc,
+                "type": type_str,
+                "default": default
+            }
+        except:
+            pass
+    return params
+
+def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
+    """Replace {{ $fromAI(...) }} with real values from kwargs"""
+    if not text:
+        return text, set()
+    
+    used_args = set()
+    def replacer(match):
+        args_str = match.group(1)
+        try:
+            args = ast.literal_eval(f'({args_str},)')
+            if not args:
+                return match.group(0)
+            name = args[0]
+            default = args[3] if len(args) > 3 else None
+            
+            val = kwargs.get(name)
+            if val is not None:
+                used_args.add(name)
+                if isinstance(val, bool):
+                     return "true" if val else "false"
+                return str(val)
+            elif default is not None:
+                used_args.add(name)
+                if isinstance(default, bool):
+                     return "true" if default else "false"
+                return str(default)
+            return match.group(0)
+        except:
+            return match.group(0)
+            
+    result = re.sub(r'\{\{\s*\$fromAI\((.*?)\)\s*\}\}', replacer, text)
+    return result, used_args
 
 
 def _is_mcp_error_response(text: str) -> bool:
@@ -100,34 +162,89 @@ class MCPToolExecutor:
         return result.scalar_one_or_none()
     
     async def get_agent_mcps(self, agent_id: str) -> List[MCP]:
-        """Get all MCPs associated with an agent"""
+        """Get all MCPs associated with an agent (direct + via groups)"""
         from uuid import UUID
+        from app.models.mcp_group import MCPGroup
         result = await self.db.execute(
             select(Agent)
-            .options(selectinload(Agent.mcps))
+            .options(
+                selectinload(Agent.mcps),
+                selectinload(Agent.mcp_groups).selectinload(MCPGroup.mcps)
+            )
             .where(Agent.id == UUID(agent_id))
         )
         agent = result.scalar_one_or_none()
-        if agent and agent.mcps:
-            return [mcp for mcp in agent.mcps if mcp.is_active]
-        return []
+        
+        all_mcps = []
+        seen_ids = set()
+        
+        if agent:
+            if agent.mcps:
+                for mcp in agent.mcps:
+                    if mcp.is_active and mcp.id not in seen_ids:
+                        # Store group context magically if needed, but for normal fetch just return the mcp
+                        all_mcps.append(mcp)
+                        seen_ids.add(mcp.id)
+                        
+            if getattr(agent, "mcp_groups", None):
+                for group in agent.mcp_groups:
+                    if group.is_active and group.mcps:
+                        for mcp in group.mcps:
+                            if mcp.is_active and mcp.id not in seen_ids:
+                                # Inject group description as an attribute for later use in create_langchain_tools
+                                mcp._group_description_context = group.description
+                                all_mcps.append(mcp)
+                                seen_ids.add(mcp.id)
+                                
+        return all_mcps
     
     async def discover_mcp_tools(self, mcp: MCP) -> List[Dict[str, Any]]:
         """Discover available tools from an MCP server"""
         if mcp.protocol != "mcp":
+            # Extract $fromAI parameters
+            ai_params = {}
+            if mcp.endpoint:
+                import urllib.parse
+                decoded_endpoint = urllib.parse.unquote(mcp.endpoint)
+                ai_params.update(_extract_from_ai_params(decoded_endpoint))
+            if mcp.headers:
+                ai_params.update(_extract_from_ai_params(json.dumps(mcp.headers)))
+            if mcp.body_template:
+                ai_params.update(_extract_from_ai_params(json.dumps(mcp.body_template)))
+            query_template = getattr(mcp, "query_template", {}) or {}
+            if query_template:
+                ai_params.update(_extract_from_ai_params(json.dumps(query_template)))
+            
+            schema_properties = {
+                "params": {
+                    "type": "object",
+                    "description": "Parameters to send to the endpoint"
+                }
+            }
+            required_fields = []
+            
+            for p_name, p_info in ai_params.items():
+                schema_properties[p_name] = {
+                    "type": p_info["type"],
+                    "description": p_info["description"]
+                }
+                if p_info["default"] is None:
+                    required_fields.append(p_name)
+            
+            if not ai_params:
+                required_fields = []
+
+            import re
+            safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', mcp.name)
+            
             # For non-MCP protocols, return a single "execute" tool
             return [{
-                "name": f"execute_{mcp.name.lower().replace(' ', '_')}",
+                "name": f"execute_{safe_name}",
                 "description": mcp.description or f"Execute {mcp.name}",
                 "input_schema": {
                     "type": "object",
-                    "properties": {
-                        "params": {
-                            "type": "object",
-                            "description": "Parameters to send to the endpoint"
-                        }
-                    },
-                    "required": []
+                    "properties": schema_properties,
+                    "required": required_fields
                 },
                 "mcp_id": str(mcp.id),
                 "protocol": mcp.protocol
@@ -149,10 +266,13 @@ class MCPToolExecutor:
         )
         
         if result.get("success") and result.get("result", {}).get("tools"):
+            import re
             tools = []
             for tool in result["result"]["tools"]:
+                raw_name = tool.get("name", "unknown")
+                safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', raw_name)
                 tools.append({
-                    "name": tool.get("name", "unknown"),
+                    "name": safe_name,
                     "description": tool.get("description", ""),
                     "input_schema": tool.get("input_schema", {"type": "object", "properties": {}}),
                     "mcp_id": str(mcp.id),
@@ -202,10 +322,25 @@ class MCPToolExecutor:
                     val = flat_context[param]
                     final_args[param] = str(val) if not isinstance(val, (dict, list)) else val
                 else:
-                    env_key = param.upper().replace('-', '_')
-                    env_val = os.environ.get(env_key) or os.environ.get(param)
-                    if env_val:
-                        final_args[param] = env_val
+                    # Smart fallback for context
+                    found_fallback = False
+                    for ctx_key, ctx_val in flat_context.items():
+                        if param in ctx_key or ctx_key in param:
+                            final_args[param] = str(ctx_val) if not isinstance(ctx_val, (dict, list)) else ctx_val
+                            found_fallback = True
+                            break
+                        # Also check if just the suffix matches (e.g. member-phone matches global-phone)
+                        if '-' in param and '-' in ctx_key:
+                            if param.split('-', 1)[-1] == ctx_key.split('-', 1)[-1]:
+                                final_args[param] = str(ctx_val) if not isinstance(ctx_val, (dict, list)) else ctx_val
+                                found_fallback = True
+                                break
+                    
+                    if not found_fallback:
+                        env_key = param.upper().replace('-', '_')
+                        env_val = os.environ.get(env_key) or os.environ.get(param)
+                        if env_val:
+                            final_args[param] = env_val
             
             # Include any extra LLM kwargs not in all_params
             for k, v in kwargs.items():
@@ -248,14 +383,51 @@ class MCPToolExecutor:
                 else:
                     import httpx
                     timeout = float(mcp.timeout_seconds or 30)
-                    body = {**mcp.body_template} if mcp.body_template else {}
-                    body.update(final_args)
+                    
+                    import urllib.parse
+                    body_str = json.dumps(mcp.body_template or {})
+                    headers_str = json.dumps(mcp.headers or {})
+                    query_template = getattr(mcp, "query_template", {}) or {}
+                    query_str = json.dumps(query_template)
+                    endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
+                    
+                    used_all = set()
+                    body_str, u_body = _inject_from_ai_params(body_str, final_args)
+                    headers_str, u_headers = _inject_from_ai_params(headers_str, final_args)
+                    query_str, u_query = _inject_from_ai_params(query_str, final_args)
+                    endpoint_str, u_endpoint = _inject_from_ai_params(endpoint_str, final_args)
+                    
+                    used_all.update(u_body, u_headers, u_query, u_endpoint)
+                    
+                    body = json.loads(body_str)
+                    headers = json.loads(headers_str)
+                    query = json.loads(query_str)
+                    
+                    # Also include explicit 'params' object passed by the LLM (legacy behavior)
+                    if "params" in final_args and isinstance(final_args["params"], dict):
+                        if mcp.method.upper() == "GET":
+                            query.update(final_args["params"])
+                        else:
+                            body.update(final_args["params"])
+                    else:
+                        # Forward remaining non-macro args into body/query, skipping ones already used in macros
+                        for k, v in final_args.items():
+                            if k not in ["params"] and k not in used_all:
+                                if mcp.method.upper() == "GET":
+                                    query[k] = v
+                                else:
+                                    body[k] = v
+                    
+                    # Prevent httpx 'ascii' codec error handling non-ASCII headers
+                    safe_headers = {}
+                    for hk, hv in headers.items():
+                        safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
                     
                     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
                         if mcp.method.upper() == "GET":
-                            response = await client.get(mcp.endpoint, headers=mcp.headers, params=body)
+                            response = await client.get(endpoint_str, headers=safe_headers, params=query)
                         else:
-                            response = await client.post(mcp.endpoint, headers=mcp.headers, json=body)
+                            response = await client.post(endpoint_str, headers=safe_headers, params=query, json=body)
                         
                         response.raise_for_status()
                         return json.dumps(response.json(), indent=2, ensure_ascii=False)
@@ -332,7 +504,15 @@ class MCPToolExecutor:
             
             for tool_def in discovered_tools:
                 tool_name = tool_def["name"]
-                description = tool_def.get("description", f"Execute {tool_name}")
+                base_desc = tool_def.get("description", f"Execute {tool_name}")
+                
+                # If this tool came from a folder, append the folder's description to the LLM
+                group_desc = getattr(mcp, "_group_description_context", None)
+                if group_desc:
+                    description = f"[Pasta/Grupo: {group_desc}] {base_desc}"
+                else:
+                    description = base_desc
+                    
                 input_schema = tool_def.get("input_schema", {})
                 
                 # ALL params the MCP expects (including context ones)

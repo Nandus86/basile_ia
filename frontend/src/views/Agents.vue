@@ -736,6 +736,85 @@
                     </template>
                   </v-list-item>
                 </v-list>
+
+                <v-divider class="my-6"></v-divider>
+
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">
+                    <v-icon size="20" class="mr-1">mdi-folder-multiple</v-icon>
+                    Grupos de MCP
+                  </h3>
+                  <v-btn size="small" variant="text" color="primary" to="/mcp" target="_blank">
+                    Gerenciar Grupos <v-icon end>mdi-open-in-new</v-icon>
+                  </v-btn>
+                </div>
+
+                <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                  <template v-slot:prepend>
+                    <v-icon>mdi-information</v-icon>
+                  </template>
+                  Vincular um Grupo fará com que todas as ferramentas MCP contidas nele fiquem disponíveis para o Agente.
+                </v-alert>
+
+                <div class="d-flex align-center gap-2 mb-4">
+                  <v-select
+                    v-model="selectedMcpGroupToAdd"
+                    :items="availableMcpGroups"
+                    item-title="name"
+                    item-value="id"
+                    label="Adicionar Grupo de MCP"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    placeholder="Selecione um Grupo..."
+                    :disabled="availableMcpGroups.length === 0"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon color="primary">mdi-folder</v-icon>
+                        </template>
+                        <template v-slot:subtitle>
+                          <span class="text-caption">{{ item.raw.description?.substring(0, 40) }}...</span>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                  <v-btn color="primary" @click="addMcpGroup" :disabled="!selectedMcpGroupToAdd" :loading="addingMcpGroup">
+                    <v-icon start>mdi-plus</v-icon>
+                    Adicionar
+                  </v-btn>
+                </div>
+
+                <v-list border rounded>
+                  <v-list-subheader>
+                    <v-icon size="18" class="mr-1">mdi-folder-multiple</v-icon>
+                    Grupos de MCP Associados ({{ agentMcpGroups.length }})
+                  </v-list-subheader>
+                  <v-list-item v-if="agentMcpGroups.length === 0">
+                    <v-list-item-title class="text-center py-6 text-medium-emphasis">
+                      <v-icon size="48" color="grey-lighten-1" class="mb-2 d-block mx-auto">mdi-folder-off</v-icon>
+                      Nenhum Grupo de MCP associado
+                    </v-list-item-title>
+                  </v-list-item>
+                  <v-list-item v-for="group in agentMcpGroups" :key="group.id">
+                    <template v-slot:prepend>
+                      <v-avatar color="primary" size="36">
+                        <v-icon color="white" size="18">mdi-folder</v-icon>
+                      </v-avatar>
+                    </template>
+                    <v-list-item-title class="font-weight-medium">{{ group.name }}</v-list-item-title>
+                    <v-list-item-subtitle v-if="group.description">
+                      {{ group.description }}
+                    </v-list-item-subtitle>
+                    <template v-slot:append>
+                      <v-btn icon variant="text" color="error" size="small" @click="removeMcpGroup(group)" :loading="removingMcpGroup === group.id">
+                        <v-icon>mdi-link-variant-off</v-icon>
+                        <v-tooltip activator="parent" location="top">Remover acesso</v-tooltip>
+                      </v-btn>
+                    </template>
+                  </v-list-item>
+                </v-list>
               </div>
             </v-window-item>
 
@@ -1543,6 +1622,13 @@ const addingMcp = ref(false)
 const removingMcp = ref(null)
 const addingDoc = ref(false)
 
+// MCP Groups Data
+const allMcpGroups = ref([])
+const agentMcpGroups = ref([])
+const selectedMcpGroupToAdd = ref(null)
+const addingMcpGroup = ref(false)
+const removingMcpGroup = ref(null)
+
 // Information Bases Data
 const allBases = ref([])
 const agentBases = ref([])
@@ -1676,6 +1762,12 @@ const availableDocs = computed(() => {
 const availableMcps = computed(() => {
   const assocIds = new Set(agentMcps.value.map(m => m.id))
   return allMcps.value.filter(m => !assocIds.has(m.id) && m.is_active)
+})
+
+// Available MCP Groups (not already associated with this agent)
+const availableMcpGroups = computed(() => {
+  const assocIds = new Set(agentMcpGroups.value.map(g => g.id))
+  return allMcpGroups.value.filter(g => !assocIds.has(g.id))
 })
 
 // Available Skills (not already associated with this agent)
@@ -1897,6 +1989,15 @@ async function fetchAllMcps() {
   }
 }
 
+async function fetchAllMcpGroups() {
+  try {
+    const response = await axios.get('/mcp-groups')
+    allMcpGroups.value = response.data || []
+  } catch (error) {
+    console.error('Error fetching MCP Groups:', error)
+  }
+}
+
 async function fetchEmotionalProfiles() {
   try {
     const response = await axios.get('/emotional-profiles')
@@ -1912,6 +2013,15 @@ async function fetchAgentMcps(agentId) {
     agentMcps.value = response.data.mcps || []
   } catch (error) {
     console.error('Error fetching agent MCPs:', error)
+  }
+}
+
+async function fetchAgentMcpGroups(agentId) {
+  try {
+    const response = await axios.get(`/agents/${agentId}/mcp-groups`)
+    agentMcpGroups.value = response.data.mcp_groups || []
+  } catch (error) {
+    console.error('Error fetching agent MCP Groups:', error)
   }
 }
 
@@ -2035,9 +2145,11 @@ async function openDialog(agent = null) {
         fetchAgentConfig(fullAgent.id),
         fetchAgentDocuments(fullAgent.id),
         fetchAgentMcps(fullAgent.id),
+        fetchAgentMcpGroups(fullAgent.id),
         fetchAgentSkills(fullAgent.id),
         fetchDocuments(),
         fetchAllMcps(),
+        fetchAllMcpGroups(),
         fetchAllSkills(),
         fetchAllBases(),
         fetchAgentBases(fullAgent.id),
@@ -2179,6 +2291,37 @@ async function removeMcp(mcp) {
   }
 }
 
+async function addMcpGroup() {
+  if (!selectedMcpGroupToAdd.value) return
+  
+  addingMcpGroup.value = true
+  try {
+    await axios.post(`/agents/${formData.id}/mcp-groups/${selectedMcpGroupToAdd.value}`)
+    await fetchAgentMcpGroups(formData.id)
+    selectedMcpGroupToAdd.value = null
+    showSnackbar('Grupo de MCP adicionado com sucesso!')
+  } catch (error) {
+    console.error('Error adding MCP Group:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao adicionar Grupo', 'error')
+  } finally {
+    addingMcpGroup.value = false
+  }
+}
+
+async function removeMcpGroup(group) {
+  removingMcpGroup.value = group.id
+  try {
+    await axios.delete(`/agents/${formData.id}/mcp-groups/${group.id}`)
+    await fetchAgentMcpGroups(formData.id)
+    showSnackbar('Grupo de MCP removido!')
+  } catch (error) {
+    console.error('Error removing MCP Group:', error)
+    showSnackbar('Erro ao remover Grupo', 'error')
+  } finally {
+    removingMcpGroup.value = null
+  }
+}
+
 async function addSkill() {
   if (!selectedSkillToAdd.value) return
   
@@ -2315,6 +2458,7 @@ async function saveCollaborators() {
 onMounted(() => {
   fetchAgents()
   fetchModels()
+  fetchAllMcpGroups()
 })
 </script>
 

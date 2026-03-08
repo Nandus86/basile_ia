@@ -31,6 +31,15 @@ class MCPSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MCPGroupSummary(BaseModel):
+    """Summary of an MCP Group linked to agent"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CollaboratorSummary(BaseModel):
     """Summary of a collaborator agent"""
     id: UUID
@@ -69,6 +78,7 @@ class AgentCreate(AgentBase):
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
     mcp_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos MCPs com acesso")
+    mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
     skill_ids: Optional[List[UUID]] = Field(default=[], description="IDs das Skills com acesso")
     is_orchestrator: bool = False
     emotional_profile_id: Optional[UUID] = None
@@ -92,6 +102,7 @@ class AgentUpdate(BaseModel):
     access_level: Optional[AccessLevelEnum] = None
     collaboration_enabled: Optional[bool] = None
     mcp_ids: Optional[List[UUID]] = None
+    mcp_group_ids: Optional[List[UUID]] = None
     skill_ids: Optional[List[UUID]] = None
     is_orchestrator: Optional[bool] = None
     emotional_profile_id: Optional[UUID] = None
@@ -127,6 +138,7 @@ class AgentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []
+    mcp_groups: List[MCPGroupSummary] = []
     skills: List[SkillSummary] = []
     collaborators: List[CollaboratorSummary] = []
 

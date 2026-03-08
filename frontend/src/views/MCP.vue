@@ -4,16 +4,27 @@
     <div class="page-header">
       <div class="header-content">
         <div class="header-icon">
-          <v-icon size="32" color="primary">mdi-connection</v-icon>
+          <v-icon size="32" color="primary">mdi-folder-network</v-icon>
         </div>
         <div class="header-text">
           <h1>MCP - Model Context Protocol</h1>
-          <p>Integrações com APIs externas e ferramentas</p>
+          <p v-if="!currentFolder">Integrações com APIs externas e ferramentas</p>
+          <p v-else>
+            {{ currentFolder.name }}
+          </p>
         </div>
       </div>
-      <v-btn color="primary" size="large" prepend-icon="mdi-plus" @click="openDialog()" elevation="3">
-        Novo MCP
-      </v-btn>
+      <div>
+        <v-btn v-if="currentFolder" color="secondary" size="large" prepend-icon="mdi-arrow-left" @click="backToFolders()" elevation="3" class="mr-3">
+          Voltar as Pastas
+        </v-btn>
+        <v-btn v-if="!currentFolder" color="secondary" size="large" prepend-icon="mdi-folder-plus" @click="openGroupDialog()" elevation="3" class="mr-3">
+          Nova Pasta
+        </v-btn>
+        <v-btn color="primary" size="large" prepend-icon="mdi-plus" @click="openDialog()" elevation="3">
+          Novo MCP
+        </v-btn>
+      </div>
     </div>
 
     <!-- Stats Cards -->
@@ -72,11 +83,50 @@
       </v-col>
     </v-row>
 
+    <!-- Folders View (Only shown at root level, not inside a folder) -->
+    <v-row v-if="!currentFolder && mcpGroups.length > 0" class="mb-6">
+      <v-col cols="12">
+        <h2 class="text-h6 mb-2">Pastas de Integração</h2>
+      </v-col>
+      <!-- User Folders -->
+      <v-col cols="12" sm="6" md="4" lg="3" v-for="group in mcpGroups" :key="group.id">
+        <v-card class="folder-card glass-card h-100 d-flex flex-column" hover>
+          <div class="d-flex justify-end pa-2 pb-0">
+            <v-menu position="bottom end">
+              <template v-slot:activator="{ props }">
+                <v-btn icon="mdi-dots-vertical" variant="text" size="small" v-bind="props"></v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item @click="openGroupDialog(group)">
+                  <template v-slot:prepend><v-icon size="small">mdi-pencil</v-icon></template>
+                  <v-list-item-title>Editar</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="deleteGroup(group.id)" class="text-error">
+                  <template v-slot:prepend><v-icon color="error" size="small">mdi-delete</v-icon></template>
+                  <v-list-item-title>Excluir</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+          </div>
+          <v-card-text class="flex-grow-1 d-flex flex-column align-center justify-center pt-0 pb-6 px-6 text-center cursor-pointer" @click="openFolder(group)">
+            <v-icon size="64" color="secondary" class="mb-4">mdi-folder</v-icon>
+            <h3 class="text-h6 mb-2">{{ group.name }}</h3>
+            <p class="text-body-2 text-medium-emphasis mb-3 line-clamp-2" style="min-height: 40px">
+              {{ group.description || 'Sem descrição' }}
+            </p>
+            <v-chip size="small" color="primary" variant="tonal">
+              {{ mcps.filter(m => m.group_id === group.id).length }} itens
+            </v-chip>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- MCP Table -->
     <v-card class="mcp-card glass-card">
       <v-card-title class="d-flex align-center px-6 py-4">
         <v-icon class="mr-2" color="primary">mdi-view-list</v-icon>
-        <span class="text-white">Integrações MCP</span>
+        <span class="text-white">{{ currentFolder ? `Ferramentas em: ${currentFolder.name}` : 'Ferramentas sem pasta' }}</span>
         <v-spacer></v-spacer>
         <v-text-field
           v-model="search"
@@ -137,6 +187,14 @@
             <v-icon start size="14">{{ item.is_active ? 'mdi-check' : 'mdi-close' }}</v-icon>
             {{ item.is_active ? 'Ativo' : 'Inativo' }}
           </v-chip>
+        </template>
+        
+        <template v-slot:item.group_id="{ item }">
+          <v-chip v-if="item.group_id" size="small" variant="outlined" color="secondary">
+            <v-icon start size="14">mdi-folder</v-icon>
+            {{ getGroupName(item.group_id) }}
+          </v-chip>
+          <span v-else class="text-caption text-medium-emphasis">-</span>
         </template>
         
         <template v-slot:item.actions="{ item }">
@@ -201,6 +259,17 @@
                 ></v-text-field>
               </v-col>
               <v-col cols="12" md="4">
+                <v-select
+                  v-model="formData.group_id"
+                  :items="mcpGroups"
+                  item-title="name"
+                  item-value="id"
+                  label="Pasta / Grupo"
+                  prepend-inner-icon="mdi-folder"
+                  clearable
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="2">
                 <v-switch
                   v-model="formData.is_active"
                   label="Ativo"
@@ -319,6 +388,26 @@
                   density="compact"
                   :error-messages="bodyError"
                   @blur="validateBody"
+                ></v-textarea>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+            
+            <v-row>
+              <v-col cols="12" md="12">
+                <p class="text-subtitle-2 text-medium-emphasis mb-2">
+                  <v-icon size="18" class="mr-1">mdi-magnify</v-icon>
+                  Query Template (JSON)
+                </p>
+                <v-textarea
+                  v-model="queryTemplateJson"
+                  placeholder='{"search": "{{ $fromAI(\"query\", \"The search query\", \"string\") }}"}'
+                  rows="2"
+                  variant="outlined"
+                  density="compact"
+                  :error-messages="queryTemplateError"
+                  @blur="validateQueryTemplate"
                 ></v-textarea>
               </v-col>
             </v-row>
@@ -483,6 +572,55 @@
       </v-card>
     </v-dialog>
 
+    <!-- Group Management Dialog -->
+    <v-dialog v-model="groupDialog" max-width="500">
+      <v-card>
+        <v-card-title class="d-flex align-center px-6 py-4 bg-secondary">
+          <v-icon class="mr-2" color="white">{{ editingGroup ? 'mdi-pencil' : 'mdi-folder-plus' }}</v-icon>
+          <span class="text-white">{{ editingGroup ? 'Editar Pasta' : 'Nova Pasta' }}</span>
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" @click="groupDialog = false" color="white">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        
+        <v-card-text class="pa-6">
+          <v-form ref="groupFormRef" v-model="groupFormValid" @submit.prevent="saveGroup">
+            <v-row class="mb-2">
+              <v-col cols="12" md="12">
+                <v-text-field
+                  v-model="newGroup.name"
+                  label="Nome da Pasta"
+                  :rules="[v => !!v || 'Nome é obrigatório']"
+                  density="compact"
+                  variant="outlined"
+                  hide-details="auto"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="12">
+                <v-textarea
+                  v-model="newGroup.description"
+                  label="Descrição (Para ajudar a IA a entender como usar)"
+                  density="compact"
+                  variant="outlined"
+                  rows="3"
+                  hide-details="auto"
+                ></v-textarea>
+              </v-col>
+            </v-row>
+          </v-form>
+        </v-card-text>
+        <v-divider></v-divider>
+        <v-card-actions class="pa-4">
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" @click="groupDialog = false">Cancelar</v-btn>
+          <v-btn color="primary" @click="saveGroup" :loading="savingGroup" :disabled="!groupFormValid">
+            <v-icon start>mdi-content-save</v-icon> {{ editingGroup ? 'Salvar' : 'Criar' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Snackbar -->
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.message }}
@@ -501,6 +639,10 @@ import axios from '@/plugins/axios'
 
 // State
 const mcps = ref([])
+const mcpGroups = ref([])
+const selectedGroupId = ref(null)
+const currentView = ref('folders')
+const currentFolder = ref(null)
 const loading = ref(false)
 const search = ref('')
 
@@ -520,16 +662,27 @@ const formData = reactive({
   protocol: 'http',
   headers: {},
   body_template: {},
+  query_template: {},
   response_mapping: {},
   trigger_keywords: [],
   timeout_seconds: 30,
-  is_active: true
+  is_active: true,
+  group_id: null
 })
 const headersJson = ref('{}')
 const bodyJson = ref('{}')
+const queryTemplateJson = ref('{}')
 const responseMappingJson = ref('{}')
 const headersError = ref('')
 const bodyError = ref('')
+const queryTemplateError = ref('')
+
+// Group Dialog
+const groupDialog = ref(false)
+const groupFormValid = ref(false)
+const savingGroup = ref(false)
+const editingGroup = ref(false)
+const newGroup = reactive({ id: null, name: '', description: '' })
 
 // Execute dialog
 const executeDialog = ref(false)
@@ -575,10 +728,25 @@ const headers = [
 ]
 
 // Computed
+const filterGroupOptions = computed(() => {
+  return [{ id: null, name: 'Todos' }, ...mcpGroups.value]
+})
+
 const filteredMcps = computed(() => {
-  if (!search.value) return mcps.value
+  let filtered = mcps.value
+  
+  // Se estiver dentro de uma pasta, filtra só os MCPs daquela pasta
+  if (currentFolder.value) {
+    filtered = filtered.filter(m => m.group_id === currentFolder.value.id)
+  } else {
+    // Se estiver na raiz, mostra só os MCPs que não têm pasta
+    filtered = filtered.filter(m => !m.group_id)
+  }
+  
+  if (!search.value) return filtered
+  
   const s = search.value.toLowerCase()
-  return mcps.value.filter(m => 
+  return filtered.filter(m => 
     m.name?.toLowerCase().includes(s) || 
     m.description?.toLowerCase().includes(s) ||
     m.endpoint?.toLowerCase().includes(s)
@@ -596,6 +764,12 @@ const formatResult = computed(() => {
 })
 
 // Helpers
+function getGroupName(groupId) {
+  if (!groupId) return ''
+  const g = mcpGroups.value.find(item => item.id === groupId)
+  return g ? g.name : ''
+}
+
 function getMethodColor(method) {
   const colors = { GET: 'info', POST: 'success', PUT: 'warning', DELETE: 'error' }
   return colors[method] || 'grey'
@@ -636,6 +810,15 @@ function validateBody() {
   }
 }
 
+function validateQueryTemplate() {
+  try {
+    JSON.parse(queryTemplateJson.value)
+    queryTemplateError.value = ''
+  } catch (e) {
+    queryTemplateError.value = 'JSON inválido'
+  }
+}
+
 function resetForm() {
   Object.assign(formData, {
     id: null,
@@ -646,16 +829,20 @@ function resetForm() {
     protocol: 'http',
     headers: {},
     body_template: {},
+    query_template: {},
     response_mapping: {},
     trigger_keywords: [],
     timeout_seconds: 30,
-    is_active: true
+    is_active: true,
+    group_id: null
   })
   headersJson.value = '{}'
   bodyJson.value = '{}'
+  queryTemplateJson.value = '{}'
   responseMappingJson.value = '{}'
   headersError.value = ''
   bodyError.value = ''
+  queryTemplateError.value = ''
 }
 
 function getProtocolColor(protocol) {
@@ -687,6 +874,79 @@ async function fetchMcps() {
   }
 }
 
+async function fetchMcpGroups() {
+  try {
+    const response = await axios.get('/mcp-groups')
+    mcpGroups.value = response.data || []
+  } catch (error) {
+    console.error('Error fetching MCP Groups:', error)
+  }
+}
+
+function openGroupDialog(group = null) {
+  if (group) {
+    editingGroup.value = true
+    newGroup.id = group.id
+    newGroup.name = group.name
+    newGroup.description = group.description || ''
+  } else {
+    editingGroup.value = false
+    newGroup.id = null
+    newGroup.name = ''
+    newGroup.description = ''
+  }
+  groupDialog.value = true
+}
+
+async function saveGroup() {
+  if (!newGroup.name) return
+  savingGroup.value = true
+  try {
+    const payload = { 
+      name: newGroup.name,
+      description: newGroup.description
+    }
+    
+    if (editingGroup.value) {
+      await axios.put(`/mcp-groups/${newGroup.id}`, payload)
+      showSnackbar('Grupo atualizado com sucesso!')
+    } else {
+      await axios.post('/mcp-groups', payload)
+      showSnackbar('Grupo criado com sucesso!')
+    }
+    
+    groupDialog.value = false
+    await fetchMcpGroups()
+  } catch (error) {
+    console.error('Error saving group:', error)
+    showSnackbar('Erro ao salvar grupo', 'error')
+  } finally {
+    savingGroup.value = false
+  }
+}
+
+function openFolder(group) {
+  currentFolder.value = group
+  search.value = ''
+}
+
+function backToFolders() {
+  currentFolder.value = null
+  search.value = ''
+}
+
+async function deleteGroup(id) {
+  if (!confirm('Tem certeza que deseja deletar este grupo? Os MCPs ficarão sem grupo.')) return
+  try {
+    await axios.delete(`/mcp-groups/${id}`)
+    showSnackbar('Grupo excluído!')
+    await fetchMcpGroups()
+    await fetchMcps()
+  } catch (error) {
+    showSnackbar('Erro ao excluir grupo', 'error')
+  }
+}
+
 function openDialog(mcp = null) {
   if (mcp) {
     editing.value = true
@@ -698,14 +958,17 @@ function openDialog(mcp = null) {
       method: mcp.method || 'POST',
       headers: mcp.headers || {},
       body_template: mcp.body_template || {},
+      query_template: mcp.query_template || {},
       response_mapping: mcp.response_mapping || {},
       trigger_keywords: mcp.trigger_keywords || [],
       protocol: mcp.protocol || 'http',
       timeout_seconds: mcp.timeout_seconds || 30,
-      is_active: mcp.is_active ?? true
+      is_active: mcp.is_active ?? true,
+      group_id: mcp.group_id || null
     })
     headersJson.value = JSON.stringify(mcp.headers || {}, null, 2)
     bodyJson.value = JSON.stringify(mcp.body_template || {}, null, 2)
+    queryTemplateJson.value = JSON.stringify(mcp.query_template || {}, null, 2)
     responseMappingJson.value = JSON.stringify(mcp.response_mapping || {}, null, 2)
   } else {
     editing.value = false
@@ -727,9 +990,11 @@ async function saveMcp() {
       timeout_seconds: parseInt(formData.timeout_seconds) || 30,
       headers: JSON.parse(headersJson.value || '{}'),
       body_template: JSON.parse(bodyJson.value || '{}'),
+      query_template: JSON.parse(queryTemplateJson.value || '{}'),
       response_mapping: JSON.parse(responseMappingJson.value || '{}'),
       trigger_keywords: formData.trigger_keywords,
-      is_active: formData.is_active
+      is_active: formData.is_active,
+      group_id: formData.group_id || null
     }
     
     if (editing.value) {
@@ -805,7 +1070,10 @@ async function runMcp() {
   }
 }
 
-onMounted(fetchMcps)
+onMounted(() => {
+  fetchMcps()
+  fetchMcpGroups()
+})
 </script>
 
 <style scoped>

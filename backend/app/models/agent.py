@@ -19,6 +19,14 @@ agent_mcp_access = Table(
     Column("mcp_id", UUID(as_uuid=True), ForeignKey("mcps.id", ondelete="CASCADE"), primary_key=True)
 )
 
+# Association table for agents <-> mcp_groups (many-to-many)
+agent_mcp_group_access = Table(
+    "agent_mcp_group_access",
+    Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("mcp_group_id", UUID(as_uuid=True), ForeignKey("mcp_groups.id", ondelete="CASCADE"), primary_key=True)
+)
+
 
 class AccessLevel(str, enum.Enum):
     """Vertical access levels for agents - hierarchical permission system"""
@@ -122,6 +130,13 @@ class Agent(Base):
     mcps = relationship(
         "MCP",
         secondary=agent_mcp_access,
+        lazy="selectin"
+    )
+    
+    # MCP Groups the agent can use
+    mcp_groups = relationship(
+        "MCPGroup",
+        secondary=agent_mcp_group_access,
         lazy="selectin"
     )
     

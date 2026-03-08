@@ -1,8 +1,9 @@
 """
 MCP (Model Context Protocol) Model
 """
-from sqlalchemy import Column, String, Boolean, DateTime, Text, JSON, Enum, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, Text, JSON, Enum, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 import uuid
 import enum
@@ -30,12 +31,16 @@ class MCP(Base):
     protocol = Column(String(20), default="http")  # http, sse, websocket, stdio
     headers = Column(JSON, default=dict)
     body_template = Column(JSON, default=dict)
+    query_template = Column(JSON, default=dict)
     response_mapping = Column(JSON, default=dict)
     trigger_keywords = Column(JSON, default=list)
     timeout_seconds = Column(Integer, default=30)  # Timeout for requests
+    group_id = Column(UUID(as_uuid=True), ForeignKey("mcp_groups.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    
+    group = relationship("MCPGroup", back_populates="mcps")
     
     def __repr__(self):
         return f"<MCP {self.name}>"

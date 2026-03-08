@@ -11,6 +11,7 @@ from uuid import UUID
 from app.database import get_db
 from app.models.agent import Agent, AgentCollaborator, CollaborationStatus, AccessLevel
 from app.models.mcp import MCP
+from app.models.mcp_group import MCPGroup
 from app.models.skill import Skill
 from app.models.information_base import InformationBase
 from app.schemas.agent import (
@@ -41,6 +42,7 @@ async def list_agents(
     """
     query = select(Agent).options(
         selectinload(Agent.mcps),
+        selectinload(Agent.mcp_groups),
         selectinload(Agent.skills),
         selectinload(Agent.information_bases),
         selectinload(Agent.collaborator_settings)
@@ -94,6 +96,7 @@ async def get_agent(
         select(Agent)
         .options(
             selectinload(Agent.mcps),
+            selectinload(Agent.mcp_groups),
             selectinload(Agent.skills),
             selectinload(Agent.information_bases),
             selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator),
@@ -153,6 +156,7 @@ async def get_agent(
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
+        mcp_groups=[{"id": g.id, "name": g.name, "description": g.description} for g in agent.mcp_groups],
         skills=[{"id": s.id, "name": s.name, "is_active": s.is_active} for s in agent.skills],
         information_bases=[{"id": ib.id, "name": ib.name, "is_active": ib.is_active} for ib in agent.information_bases],
         collaborators=collaborators
@@ -165,9 +169,10 @@ async def create_agent(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new agent"""
-    # Extract mcp_ids before creating agent
+    # Extract lists before creating agent
     mcp_ids = agent_data.mcp_ids or []
-    agent_dict = agent_data.model_dump(exclude={"mcp_ids"})
+    mcp_group_ids = agent_data.mcp_group_ids or []
+    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids"})
     
     # Convert enum to model enum
     agent_dict["access_level"] = AccessLevel(agent_dict["access_level"].value)
@@ -185,6 +190,14 @@ async def create_agent(
         )
         mcps = result.scalars().all()
         agent.mcps = list(mcps)
+        
+    # Link MCP Groups if provided
+    if mcp_group_ids:
+        grp_result = await db.execute(
+            select(MCPGroup).where(MCPGroup.id.in_(mcp_group_ids))
+        )
+        groups = grp_result.scalars().all()
+        agent.mcp_groups = list(groups)
     
     db.add(agent)
     await db.commit()
@@ -202,7 +215,7 @@ async def update_agent(
     """Update an existing agent"""
     result = await db.execute(
         select(Agent)
-        .options(selectinload(Agent.mcps))
+        .options(selectinload(Agent.mcps), selectinload(Agent.mcp_groups))
         .where(Agent.id == agent_id)
     )
     agent = result.scalar_one_or_none()
@@ -214,7 +227,7 @@ async def update_agent(
         )
     
     # Update only provided fields
-    update_data = agent_data.model_dump(exclude_unset=True, exclude={"mcp_ids"})
+    update_data = agent_data.model_dump(exclude_unset=True, exclude={"mcp_ids", "mcp_group_ids"})
     
     # Handle access_level enum conversion
     if "access_level" in update_data and update_data["access_level"] is not None:
@@ -230,6 +243,14 @@ async def update_agent(
         )
         mcps = mcp_result.scalars().all()
         agent.mcps = list(mcps)
+        
+    # Update MCP Groups if provided
+    if hasattr(agent_data, 'mcp_group_ids') and agent_data.mcp_group_ids is not None:
+        grp_result = await db.execute(
+            select(MCPGroup).where(MCPGroup.id.in_(agent_data.mcp_group_ids))
+        )
+        groups = grp_result.scalars().all()
+        agent.mcp_groups = list(groups)
         
     # Update Skills if provided
     if hasattr(agent_data, 'skill_ids') and agent_data.skill_ids is not None:
@@ -539,6 +560,122 @@ async def remove_mcp_from_agent(
     
     agent.mcps.remove(mcp_to_remove)
     await db.commit()
+
+
+# ==================== Agent MCP Groups Endpoints ====================
+
+class AgentMCPGroupItem(BaseModel):
+    """MCP Group summary for agent"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+
+class AgentMCPGroupList(BaseModel):
+    """List of MCP Groups for an agent"""
+    agent_id: UUID
+    agent_name: str
+    mcp_groups: List[AgentMCPGroupItem]
+    total: int
+
+
+@router.get("/{agent_id}/mcp-groups", response_model=AgentMCPGroupList)
+async def list_agent_mcp_groups(
+    agent_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all MCP Groups associated with an agent"""
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.mcp_groups))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    group_items = [
+        AgentMCPGroupItem(
+            id=group.id,
+            name=group.name,
+            description=group.description
+        )
+        for group in agent.mcp_groups
+    ]
+    
+    return AgentMCPGroupList(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        mcp_groups=group_items,
+        total=len(group_items)
+    )
+
+
+@router.post("/{agent_id}/mcp-groups/{group_id}", response_model=AgentMCPGroupItem)
+async def add_mcp_group_to_agent(
+    agent_id: UUID,
+    group_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add an MCP Group to an agent"""
+    # Check agent exists
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.mcp_groups)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Check MCP Group exists
+    group_result = await db.execute(select(MCPGroup).where(MCPGroup.id == group_id))
+    group = group_result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="MCP Group not found")
+    
+    # Check if already added
+    if group in agent.mcp_groups:
+        raise HTTPException(status_code=400, detail="MCP Group already associated with this agent")
+    
+    # Add group to agent
+    agent.mcp_groups.append(group)
+    await db.commit()
+    
+    return AgentMCPGroupItem(
+        id=group.id,
+        name=group.name,
+        description=group.description
+    )
+
+
+@router.delete("/{agent_id}/mcp-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_mcp_group_from_agent(
+    agent_id: UUID,
+    group_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove an MCP Group from an agent"""
+    # Check agent exists
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.mcp_groups)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Find and remove Group
+    group_to_remove = None
+    for group in agent.mcp_groups:
+        if group.id == group_id:
+            group_to_remove = group
+            break
+    
+    if not group_to_remove:
+        raise HTTPException(status_code=404, detail="MCP Group not associated with this agent")
+    
+    agent.mcp_groups.remove(group_to_remove)
+    await db.commit()
+
+
 
 
 # ==================== Agent Skills Endpoints ====================

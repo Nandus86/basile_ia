@@ -26,10 +26,12 @@ class MCPBase(BaseModel):
     protocol: str = Field(default="http", description="Protocol: http, sse, websocket, stdio")
     headers: Dict[str, str] = Field(default_factory=dict)
     body_template: Dict[str, Any] = Field(default_factory=dict)
+    query_template: Dict[str, Any] = Field(default_factory=dict)
     response_mapping: Dict[str, str] = Field(default_factory=dict)
     trigger_keywords: List[str] = Field(default_factory=list)
     timeout_seconds: int = Field(default=30, description="Timeout in seconds")
     is_active: bool = True
+    group_id: Optional[UUID] = None
 
 
 class MCPCreate(MCPBase):
@@ -46,10 +48,12 @@ class MCPUpdate(BaseModel):
     protocol: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
     body_template: Optional[Dict[str, Any]] = None
+    query_template: Optional[Dict[str, Any]] = None
     response_mapping: Optional[Dict[str, str]] = None
     trigger_keywords: Optional[List[str]] = None
     timeout_seconds: Optional[int] = None
     is_active: Optional[bool] = None
+    group_id: Optional[UUID] = None
 
 
 class MCPResponse(MCPBase):
