@@ -142,9 +142,9 @@ async def _enrich_agent_prompt(
         except Exception as e:
             print(f"[Task] Failed to launch extraction task: {e}")
 
-    # 4. Orchestrator Pre-Consultation
+    # 4. Orchestrator Pre-Consultation (fires for any agent with collaboration or orchestrator mode)
     agent_model = agent_config.get("agent_model")
-    if agent_model and getattr(agent_model, "is_orchestrator", False) and getattr(agent_model, "collaboration_enabled", False):
+    if agent_model and (getattr(agent_model, "is_orchestrator", False) or getattr(agent_model, "collaboration_enabled", False)):
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
 
