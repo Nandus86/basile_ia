@@ -144,16 +144,23 @@ async def _enrich_agent_prompt(
 
     # 4. Orchestrator Pre-Consultation (fires for any agent with collaboration or orchestrator mode)
     agent_model = agent_config.get("agent_model")
+    print(f"[Task] 🔍 ORCH DEBUG: agent_model={agent_model}, type={type(agent_model)}")
+    if agent_model:
+        print(f"[Task] 🔍 ORCH DEBUG: is_orchestrator={getattr(agent_model, 'is_orchestrator', 'MISSING')}, collaboration_enabled={getattr(agent_model, 'collaboration_enabled', 'MISSING')}")
+    
     if agent_model and (getattr(agent_model, "is_orchestrator", False) or getattr(agent_model, "collaboration_enabled", False)):
+        print(f"[Task] 🔍 ORCH DEBUG: ENTERING pre-consultation block for {agent_config['name']}")
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
 
             orchestrator = AgentOrchestrator(db)
+            print(f"[Task] 🔍 ORCH DEBUG: Calling gather_subordinate_responses with agent_id={getattr(agent_model, 'id', 'UNKNOWN')}")
             subordinate_context = await orchestrator.gather_subordinate_responses(
                 message=message,
                 primary_agent=agent_model,
                 context=rag_context or "",
             )
+            print(f"[Task] 🔍 ORCH DEBUG: gather_subordinate_responses returned: '{subordinate_context[:200] if subordinate_context else 'EMPTY'}'")
             if subordinate_context:
                 print(f"[Task] 🎭 Orchestrator pre-consult loaded for {agent_config['name']}")
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
@@ -162,10 +169,14 @@ async def _enrich_agent_prompt(
                     f"Sintetize e utilize as informações relevantes para construir a resposta final:\n"
                     f"{subordinate_context}\n"
                 )
+            else:
+                print(f"[Task] 🔍 ORCH DEBUG: No subordinate context returned (empty string)")
         except Exception as e:
             import traceback
             print(f"[Task] Orchestrator pre-consultation error: {e}")
             traceback.print_exc()
+    else:
+        print(f"[Task] 🔍 ORCH DEBUG: SKIPPING pre-consultation (condition not met)")
 
     return rag_context
 
