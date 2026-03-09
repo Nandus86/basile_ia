@@ -357,9 +357,15 @@ async def update_collaborators(
             detail="Agent not found"
         )
     
-    # Delete existing collaborator settings
-    for setting in agent.collaborator_settings:
+        # Delete existing collaborator settings
+    # We must await flush here to actually remove them from the identity map
+    # before we try to insert new ones with potentially the same keys.
+    for setting in list(agent.collaborator_settings):
+        # Prevent "already attached" by removing from collection
+        agent.collaborator_settings.remove(setting)
         await db.delete(setting)
+        
+    await db.flush()
     
     # Create new settings
     for collab in request.collaborators:

@@ -58,13 +58,13 @@ class RedisClient:
         client = await self.connect()
         await client.delete(key)
     
-    async def add_message(self, session_id: str, role: str, content: str):
-        """Add message to conversation history"""
+    async def add_message(self, session_id: str, role: str, content: str, ttl_seconds: int = 86400):
+        """Add message to conversation history with configurable TTL"""
         client = await self.connect()
         key = f"conversation:{session_id}"
         message = json.dumps({"role": role, "content": content})
         await client.rpush(key, message)
-        await client.expire(key, 86400)  # 24 hours
+        await client.expire(key, ttl_seconds)
     
     async def get_conversation(self, session_id: str, limit: int = 20) -> List[dict]:
         """Get conversation history"""

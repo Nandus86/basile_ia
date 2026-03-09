@@ -170,6 +170,28 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
         contact_id = state.get("session_id")
         current_message = state["original_message"]
         
+        # Obtain agent model to verify orchestrator status
+        agent_model = agent_config.get("agent_model")
+        
+        # Determine if Orchestrator Collaboration Pre-Consultation is needed
+        if agent_model and getattr(agent_model, "is_orchestrator", False) and getattr(agent_model, "collaboration_enabled", False):
+            try:
+                from app.orchestrator.agent_orchestrator import AgentOrchestrator
+                orchestrator = AgentOrchestrator(self.db)
+                subordinate_context = await orchestrator.gather_subordinate_responses(
+                    message=current_message,
+                    primary_agent=agent_model,
+                    context=rag_context or ""
+                )
+                if subordinate_context:
+                    print(f"[Supervisor] 🎭 Orchestrator Pre-consult loaded for {agent_name}")
+                    system_addition = f"\n\n## Colaboradores (Subordinados)\nOs seguintes especialistas forneceram análises sobre a solicitação do usuário. Sintetize e utilize as informações relevantes para construir a resposta final:\n{subordinate_context}\n"
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + system_addition
+            except Exception as e:
+                import traceback
+                print(f"[Supervisor] Orchestrator pre-consultation error: {e}")
+                traceback.print_exc()
+        
         # Information Bases Retrieval
         info_base_context_data = state.get("context_data") or {}
         print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent_id={agent_id}, context_data={info_base_context_data}")
@@ -318,7 +340,8 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             print(f"[Supervisor] ✅ {agent_name} responded")
             
             # Check if collaboration is needed
-            if agent_config.get("collaboration_enabled", False):
+            is_orchestrator = getattr(agent_model, "is_orchestrator", False) if agent_model else False
+            if agent_config.get("collaboration_enabled", False) and not is_orchestrator:
                 state["next_action"] = "check_collaboration"
             else:
                 state["next_action"] = "synthesize"

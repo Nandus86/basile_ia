@@ -79,15 +79,38 @@ async def process_message(
         set_request_context({})
     
     try:
-        # Get conversation history
-        history = await redis.get_conversation(request.session_id)
+        # Resolve STM configuration
+        stm_enabled = True
+        stm_ttl_seconds = 86400
         
-        # Store response in history
-        await redis.add_message(
-            session_id=request.session_id,
-            role="user",
-            content=request.message
-        )
+        # We need the DB session to resolve the agent
+        # /process handles mostly standard orchestrator v2, but we can fetch agent to get its config
+        from app.orchestrator.agent_factory import AgentFactory
+        factory = AgentFactory(db)
+        
+        if request.agent_id:
+            agent = await factory.get_agent_by_id(request.agent_id)
+        else:
+            agents = await factory.get_accessible_agents(request.user_access_level)
+            agent = agents[0] if agents else None
+            
+        if agent and agent.config:
+            stm_enabled = agent.config.get("short_term_memory_enabled", True)
+            stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
+            stm_ttl_seconds = int(stm_ttl_hours * 3600)
+            
+        # Get conversation history
+        history = []
+        if stm_enabled:
+            history = await redis.get_conversation(request.session_id)
+            
+            # Store user message in history
+            await redis.add_message(
+                session_id=request.session_id,
+                role="user",
+                content=request.message,
+                ttl_seconds=stm_ttl_seconds
+            )
         
         # Log to DB
         job_log = JobLog(
@@ -112,11 +135,13 @@ async def process_message(
         )
         
         # Store response in history
-        await redis.add_message(
-            session_id=request.session_id,
-            role="assistant",
-            content=result["response"]
-        )
+        if stm_enabled:
+            await redis.add_message(
+                session_id=request.session_id,
+                role="assistant",
+                content=result["response"],
+                ttl_seconds=stm_ttl_seconds
+            )
         
         processing_time = (time.time() - start_time) * 1000
         
@@ -179,15 +204,35 @@ async def process_message_structured(
     start_time = time.time()
     
     try:
-        # Get conversation history
-        history = await redis.get_conversation(request.session_id)
+        # Initialize factory and resolve STM
+        factory = AgentFactory(db)
         
-        # Add current message to history
-        await redis.add_message(
-            session_id=request.session_id,
-            role="user",
-            content=request.message
-        )
+        # Get agent
+        if request.agent_id:
+            agent = await factory.get_agent_by_id(request.agent_id)
+        else:
+            agents = await factory.get_accessible_agents(request.user_access_level)
+            agent = agents[0] if agents else None
+            
+        stm_enabled = True
+        stm_ttl_seconds = 86400
+        if agent and agent.config:
+            stm_enabled = agent.config.get("short_term_memory_enabled", True)
+            stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
+            stm_ttl_seconds = int(stm_ttl_hours * 3600)
+            
+        # Get conversation history
+        history = []
+        if stm_enabled:
+            history = await redis.get_conversation(request.session_id)
+            
+            # Add current message to history
+            await redis.add_message(
+                session_id=request.session_id,
+                role="user",
+                content=request.message,
+                ttl_seconds=stm_ttl_seconds
+            )
         
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
@@ -198,16 +243,6 @@ async def process_message_structured(
         db.add(job_log)
         await db.commit()
         await db.refresh(job_log)
-        
-        # Initialize factory
-        factory = AgentFactory(db)
-        
-        # Get agent
-        if request.agent_id:
-            agent = await factory.get_agent_by_id(request.agent_id)
-        else:
-            agents = await factory.get_accessible_agents(request.user_access_level)
-            agent = agents[0] if agents else None
         
         if not agent:
             processing_time = (time.time() - start_time) * 1000
@@ -247,11 +282,13 @@ async def process_message_structured(
         
         # Store response in history
         output_text = result.get("output", str(result))
-        await redis.add_message(
-            session_id=request.session_id,
-            role="assistant",
-            content=output_text
-        )
+        if stm_enabled:
+            await redis.add_message(
+                session_id=request.session_id,
+                role="assistant",
+                content=output_text,
+                ttl_seconds=stm_ttl_seconds
+            )
         
         processing_time = (time.time() - start_time) * 1000
         
@@ -427,15 +464,29 @@ async def process_dynamic_webhook(
         if token != config.access_token:
             raise HTTPException(status_code=403, detail="Invalid token")
             
-    # Set target agent
+    # Resolve agent for STM config
+    from app.orchestrator.agent_factory import AgentFactory
+    factory = AgentFactory(db)
     target_agent_id = str(config.target_agent_id) if config.target_agent_id else request.agent_id
+    agent = None
+    if target_agent_id:
+        agent = await factory.get_agent_by_id(target_agent_id)
+    
+    stm_enabled = True
+    stm_ttl_seconds = 86400
+    if agent and agent.config:
+        stm_enabled = agent.config.get("short_term_memory_enabled", True)
+        stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
+        stm_ttl_seconds = int(stm_ttl_hours * 3600)
     
     # Store message in history first to ensure sync
-    await redis.add_message(
-        session_id=request.session_id,
-        role="user",
-        content=request.message
-    )
+    if stm_enabled:
+        await redis.add_message(
+            session_id=request.session_id,
+            role="user",
+            content=request.message,
+            ttl_seconds=stm_ttl_seconds
+        )
     
     job_id = f"job_{uuid.uuid4().hex}"
     

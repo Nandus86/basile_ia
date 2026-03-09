@@ -58,19 +58,17 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             except Exception as e:
                 logger.error(f"Failed to update JobLog in_progress: {e}")
 
-            # Get history
-            history = await redis_client.get_conversation(session_id)
-
             async with async_session_maker() as db:
                 from app.orchestrator.agent_factory import AgentFactory
                 from langchain_core.messages import HumanMessage, AIMessage
 
                 # Check if target agent exists and has output schema
                 agent_config = None
+                agent = None
                 logger.info(f"[Consumer] agent_id={agent_id}, session={session_id}")
                 
+                factory = AgentFactory(db)
                 if agent_id:
-                    factory = AgentFactory(db)
                     agent = await factory.get_agent_by_id(agent_id)
                     logger.info(f"[Consumer] Agent found: {agent.name if agent else 'None'}, has output_schema: {bool(agent.output_schema) if agent else False}")
                     
@@ -98,6 +96,19 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         logger.info(f"[Consumer] Using STRUCTURED mode with schema keys: {list(agent.output_schema.keys())}")
                 else:
                     logger.warning(f"[Consumer] No agent_id provided, falling back to standard orchestrator")
+
+                # Resolve STM configuration
+                stm_enabled = True
+                stm_ttl_seconds = 86400
+                if agent and agent.config:
+                    stm_enabled = agent.config.get("short_term_memory_enabled", True)
+                    stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
+                    stm_ttl_seconds = int(stm_ttl_hours * 3600)
+                    
+                # Get history
+                history = []
+                if stm_enabled:
+                    history = await redis_client.get_conversation(session_id)
 
                 # Configure resilience
                 max_retries = 3
@@ -190,11 +201,13 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             # Store serialized dictionary response
                             response_text = result_dict if isinstance(result_dict, dict) else result_dict.get("output", str(result_dict))
                             
-                            await redis_client.add_message(
-                                session_id=session_id,
-                                role="assistant",
-                                content=str(response_text)
-                            )
+                            if stm_enabled:
+                                await redis_client.add_message(
+                                    session_id=session_id,
+                                    role="assistant",
+                                    content=str(response_text),
+                                    ttl_seconds=stm_ttl_seconds
+                                )
                             final_result = response_text
                             agent_used = agent_config["name"]
                         
@@ -211,11 +224,13 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                 context_data=context_data
                             )
 
-                            await redis_client.add_message(
-                                session_id=session_id,
-                                role="assistant",
-                                content=result["response"]
-                            )
+                            if stm_enabled:
+                                await redis_client.add_message(
+                                    session_id=session_id,
+                                    role="assistant",
+                                    content=result["response"],
+                                    ttl_seconds=stm_ttl_seconds
+                                )
                             final_result = result["response"]
                             agent_used = result.get("agent_used")
                         

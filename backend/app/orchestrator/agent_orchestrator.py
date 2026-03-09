@@ -237,6 +237,55 @@ Combine as informações em uma resposta única, coesa e natural.
         except Exception as e:
             print(f"[Orchestrator] Error combining responses: {e}")
             return primary_response
+            
+    async def gather_subordinate_responses(
+        self,
+        message: str,
+        primary_agent: Agent,
+        context: str = ""
+    ) -> str:
+        """
+        Consult subordinate agents BEFORE the primary orchestrator responds.
+        Returns a formatted string of their responses.
+        """
+        agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
+        if not agent_with_settings or not agent_with_settings.collaborator_settings:
+            return ""
+        
+        enabled = []
+        neutral = []
+        for setting in agent_with_settings.collaborator_settings:
+            if setting.status == CollaborationStatus.ENABLED:
+                enabled.append(setting.collaborator)
+            elif setting.status == CollaborationStatus.NEUTRAL:
+                neutral.append(setting.collaborator)
+                
+        # Ask LLM if we should collaborate and who to consult
+        decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
+        
+        if not decision["should_collaborate"] or not decision["agents_to_consult"]:
+            return ""
+            
+        collaborator_responses = {}
+        for agent_id in decision["agents_to_consult"]:
+            agent = await self.get_agent_with_collaborators(agent_id)
+            if agent:
+                response = await self.consult_agent(
+                    agent=agent,
+                    message=message,
+                    context=context,
+                    primary_response=""  # No primary response yet
+                )
+                if response:
+                    collaborator_responses[agent.name] = response
+                    
+        if collaborator_responses:
+            return "\n\n".join([
+                f"[{name}]: {response}"
+                for name, response in collaborator_responses.items()
+            ])
+            
+        return ""
     
     async def orchestrate(
         self,

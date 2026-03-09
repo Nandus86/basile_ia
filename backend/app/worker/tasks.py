@@ -29,29 +29,45 @@ async def process_message_task(
     start_time = time.time()
     
     try:
-        # Get conversation history from Redis
-        history = await redis_client.get_conversation(session_id)
-        
-        # Add message to history
-        await redis_client.add_message(
-            session_id=session_id,
-            role="user",
-            content=message
-        )
-        
         # Create a fresh DB session for this worker task
         async with AsyncSessionLocal() as db:
             from app.orchestrator.agent_factory import AgentFactory
             
             # Check if target agent exists and has output schema
             agent_config = None
+            factory = AgentFactory(db)
             if agent_id:
-                factory = AgentFactory(db)
                 agent = await factory.get_agent_by_id(agent_id)
-                if agent and agent.output_schema:
+                if agent:
                     agent_config = await factory.get_agent_config(agent)
+            else:
+                agents = await factory.get_accessible_agents(user_access_level)
+                if agents:
+                    agent_config = await factory.get_agent_config(agents[0])
 
-            if agent_config:
+            # Resolve STM configuration
+            stm_enabled = True
+            stm_ttl_seconds = 86400
+            if agent_config and "config" in agent_config:
+                cfg = agent_config["config"]
+                stm_enabled = cfg.get("short_term_memory_enabled", True)
+                stm_ttl_hours = cfg.get("short_term_memory_ttl_hours", 24)
+                stm_ttl_seconds = int(stm_ttl_hours * 3600)
+
+            # Get conversation history from Redis
+            history = []
+            if stm_enabled:
+                history = await redis_client.get_conversation(session_id)
+                
+                # Add message to history
+                await redis_client.add_message(
+                    session_id=session_id,
+                    role="user",
+                    content=message,
+                    ttl_seconds=stm_ttl_seconds
+                )
+
+            if agent_config and agent_config.get("output_schema"):
                 from langchain_core.messages import HumanMessage, AIMessage
                 # Run Structured Agent
                 messages = []
@@ -139,11 +155,13 @@ async def process_message_task(
                 agent_used = result.get("agent_used")
 
         # Store response in history
-        await redis_client.add_message(
-            session_id=session_id,
-            role="assistant",
-            content=str(final_result)
-        )
+        if stm_enabled:
+            await redis_client.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=str(final_result),
+                ttl_seconds=stm_ttl_seconds
+            )
         
         processing_time = (time.time() - start_time) * 1000
         
@@ -197,16 +215,6 @@ async def process_message_structured_task(
     start_time = time.time()
     
     try:
-        # Get conversation history
-        history = await redis_client.get_conversation(session_id)
-        
-        # Add message to history
-        await redis_client.add_message(
-            session_id=session_id,
-            role="user",
-            content=message
-        )
-        
         async with AsyncSessionLocal() as db:
             factory = AgentFactory(db)
             
@@ -226,6 +234,28 @@ async def process_message_structured_task(
                 }
             
             agent_config = await factory.get_agent_config(agent)
+            
+            # Resolve STM configuration
+            stm_enabled = True
+            stm_ttl_seconds = 86400
+            if agent_config and "config" in agent_config:
+                cfg = agent_config["config"]
+                stm_enabled = cfg.get("short_term_memory_enabled", True)
+                stm_ttl_hours = cfg.get("short_term_memory_ttl_hours", 24)
+                stm_ttl_seconds = int(stm_ttl_hours * 3600)
+                
+            # Get conversation history
+            history = []
+            if stm_enabled:
+                history = await redis_client.get_conversation(session_id)
+                
+                # Add message to history
+                await redis_client.add_message(
+                    session_id=session_id,
+                    role="user",
+                    content=message,
+                    ttl_seconds=stm_ttl_seconds
+                )
             
             # Build messages
             messages = []
@@ -294,11 +324,13 @@ async def process_message_structured_task(
         
         # Store response
         output_text = result.get("output", str(result))
-        await redis_client.add_message(
-            session_id=session_id,
-            role="assistant",
-            content=output_text
-        )
+        if stm_enabled:
+            await redis_client.add_message(
+                session_id=session_id,
+                role="assistant",
+                content=output_text,
+                ttl_seconds=stm_ttl_seconds
+            )
         
         processing_time = (time.time() - start_time) * 1000
         

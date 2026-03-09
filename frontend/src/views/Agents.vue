@@ -403,6 +403,34 @@
                     </v-switch>
                   </v-col>
                 </v-row>
+                
+                <v-row class="mt-2">
+                  <v-col cols="12" md="6">
+                    <v-switch
+                      v-model="formData.config.short_term_memory_enabled"
+                      label="Memória de Curto Prazo (STM)"
+                      color="teal"
+                      hide-details
+                    >
+                      <template v-slot:prepend>
+                        <v-icon :color="formData.config.short_term_memory_enabled ? 'teal' : 'grey'">mdi-history</v-icon>
+                      </template>
+                    </v-switch>
+                  </v-col>
+                  <v-col cols="12" md="6">
+                    <v-text-field
+                      v-model="formData.config.short_term_memory_ttl_hours"
+                      label="Tempo de Retenção (Horas)"
+                      type="number"
+                      min="1"
+                      max="720"
+                      prepend-inner-icon="mdi-clock-outline"
+                      :disabled="!formData.config.short_term_memory_enabled"
+                      hint="Tempo que o agente lembrará da conversa"
+                      persistent-hint
+                    ></v-text-field>
+                  </v-col>
+                </v-row>
               </v-form>
             </v-window-item>
 
@@ -1496,7 +1524,9 @@ const formData = reactive({
   config: {
     is_reasoning_model: false,
     reasoning_effort: 'medium',
-    max_completion_tokens: 16384
+    max_completion_tokens: 16384,
+    short_term_memory_enabled: true,
+    short_term_memory_ttl_hours: 24
   }
 })
 
@@ -1837,7 +1867,9 @@ function resetForm() {
     config: {
       is_reasoning_model: false,
       reasoning_effort: 'medium',
-      max_completion_tokens: 16384
+      max_completion_tokens: 16384,
+      short_term_memory_enabled: true,
+      short_term_memory_ttl_hours: 24
     }
   })
   outputSchemaJson.value = ''
@@ -2104,6 +2136,8 @@ async function openDialog(agent = null) {
           is_reasoning_model: fullAgent.config?.is_reasoning_model ?? false,
           reasoning_effort: fullAgent.config?.reasoning_effort || 'medium',
           max_completion_tokens: fullAgent.config?.max_completion_tokens || 16384,
+          short_term_memory_enabled: fullAgent.config?.short_term_memory_enabled ?? true,
+          short_term_memory_ttl_hours: fullAgent.config?.short_term_memory_ttl_hours || 24,
           ...(fullAgent.config || {})
         }
       })
