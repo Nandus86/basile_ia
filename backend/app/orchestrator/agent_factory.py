@@ -282,6 +282,37 @@ Se uma ferramenta retornar um erro de validação com campos NULL, tente UMA vez
             context_section = format_context_data_for_prompt(context_data, input_schema)
             if context_section:
                 system_prompt += context_section
+                
+        # Determine if Collaboration Pre-Consultation is needed
+        # Fires for orchestrators OR any agent with collaboration enabled
+        agent_model = agent_config.get("agent_model")
+        if agent_model and getattr(agent_model, "collaboration_enabled", False):
+            try:
+                from app.orchestrator.agent_orchestrator import AgentOrchestrator
+                import asyncio
+                # Extract the last user message for context
+                current_message = ""
+                from langchain_core.messages import HumanMessage
+                for msg in reversed(messages):
+                    if isinstance(msg, HumanMessage):
+                        current_message = str(msg.content)
+                        break
+                        
+                if current_message:
+                    orchestrator = AgentOrchestrator(self.db)
+                    subordinate_context = await orchestrator.gather_subordinate_responses(
+                        message=current_message,
+                        primary_agent=agent_model,
+                        context=rag_context or ""
+                    )
+                    if subordinate_context:
+                        print(f"[AgentFactory] 🎭 Orchestrator Pre-consult loaded for {agent_config['name']} (Structured)")
+                        system_addition = f"\n\n## Colaboradores (Subordinados)\nOs seguintes especialistas forneceram análises sobre a solicitação do usuário. Sintetize e utilize as informações relevantes para construir a resposta final estruturada:\n{subordinate_context}\n"
+                        system_prompt += system_addition
+            except Exception as e:
+                import traceback
+                print(f"[AgentFactory] Orchestrator pre-consultation error: {e}")
+                traceback.print_exc()
         
         # Add RAG context if available
         if rag_context:
