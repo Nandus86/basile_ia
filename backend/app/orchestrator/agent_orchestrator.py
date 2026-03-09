@@ -183,13 +183,26 @@ Seja conciso e objetivo - sua resposta será combinada com outras.
 """
         
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content=collaboration_prompt),
-                HumanMessage(content=message)
-            ])
-            return response.content
+            from app.orchestrator.agent_factory import AgentFactory
+            factory = AgentFactory(self.db)
+            base_config = await factory.get_agent_config(agent)
+            
+            # Create a shallow copy so we don't mutate the cached config
+            agent_config = dict(base_config)
+            agent_config["system_prompt"] = collaboration_prompt
+            
+            messages = [HumanMessage(content=message)]
+            
+            response = await factory.invoke_agent(
+                agent_config=agent_config,
+                messages=messages,
+                rag_context=None
+            )
+            return response
         except Exception as e:
             print(f"[Orchestrator] Error consulting {agent.name}: {e}")
+            import traceback
+            traceback.print_exc()
             return ""
     
     async def combine_responses(
