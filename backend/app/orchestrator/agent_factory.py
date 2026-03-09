@@ -283,9 +283,10 @@ Se uma ferramenta retornar um erro de validação com campos NULL, tente UMA vez
             if context_section:
                 system_prompt += context_section
                 
-        # Determine if Orchestrator Collaboration Pre-Consultation is needed
+        # Determine if Collaboration Pre-Consultation is needed
+        # Fires for orchestrators OR any agent with collaboration enabled
         agent_model = agent_config.get("agent_model")
-        if agent_model and getattr(agent_model, "is_orchestrator", False) and getattr(agent_model, "collaboration_enabled", False):
+        if agent_model and getattr(agent_model, "collaboration_enabled", False):
             try:
                 from app.orchestrator.agent_orchestrator import AgentOrchestrator
                 import asyncio

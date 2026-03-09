@@ -403,6 +403,29 @@
                     </v-switch>
                   </v-col>
                 </v-row>
+
+                <v-row class="mt-0">
+                  <v-col cols="12" md="4">
+                    <v-switch
+                      v-model="formData.is_orchestrator"
+                      label="Modo Orquestrador"
+                      color="purple"
+                      hide-details
+                    >
+                      <template v-slot:prepend>
+                        <v-icon :color="formData.is_orchestrator ? 'purple' : 'grey'">mdi-account-supervisor</v-icon>
+                      </template>
+                    </v-switch>
+                  </v-col>
+                  <v-col cols="12" md="8" v-if="formData.is_orchestrator">
+                    <v-alert type="info" variant="tonal" density="compact">
+                      <template v-slot:prepend>
+                        <v-icon>mdi-information</v-icon>
+                      </template>
+                      Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
+                    </v-alert>
+                  </v-col>
+                </v-row>
                 
                 <v-row class="mt-2">
                   <v-col cols="12" md="6">
