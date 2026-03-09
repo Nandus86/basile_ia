@@ -477,16 +477,18 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.skills-page {
+  padding: 0;
+  width: 100%;
+}
+
 .skills-card {
   border-radius: 12px;
   overflow: hidden;
   margin-bottom: 24px;
 }
-.stat-card {
-  border-radius: 12px;
-  height: 100%;
-}
-.stat-avatar {
-  background: linear-gradient(135deg, var(--v-theme-primary), var(--v-theme-info));
+
+:deep(.v-data-table) {
+  background: transparent !important;
 }
 </style>

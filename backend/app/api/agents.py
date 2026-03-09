@@ -172,7 +172,8 @@ async def create_agent(
     # Extract lists before creating agent
     mcp_ids = agent_data.mcp_ids or []
     mcp_group_ids = agent_data.mcp_group_ids or []
-    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids"})
+    skill_ids = agent_data.skill_ids or []
+    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids", "skill_ids"})
     
     # Convert enum to model enum
     agent_dict["access_level"] = AccessLevel(agent_dict["access_level"].value)
@@ -198,6 +199,14 @@ async def create_agent(
         )
         groups = grp_result.scalars().all()
         agent.mcp_groups = list(groups)
+    
+    # Link Skills if provided
+    if skill_ids:
+        skill_result = await db.execute(
+            select(Skill).where(Skill.id.in_(skill_ids))
+        )
+        skills = skill_result.scalars().all()
+        agent.skills = list(skills)
     
     db.add(agent)
     await db.commit()

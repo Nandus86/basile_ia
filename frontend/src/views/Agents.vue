@@ -2468,68 +2468,6 @@ onMounted(() => {
   width: 100%;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-
-.header-content {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-icon {
-  width: 50px;
-  height: 50px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, rgba(157, 78, 221, 0.2), rgba(0, 242, 254, 0.1));
-  border: 1px solid rgba(157, 78, 221, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.header-text h1 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  margin: 0;
-  color: #FFF;
-  letter-spacing: -0.02em;
-}
-
-.header-text p {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 0.9rem;
-}
-
-.glass-card {
-  background: rgba(16, 20, 34, 0.5) !important;
-  border-radius: 16px;
-  box-shadow: 0 4px 30px rgba(0,0,0,0.1);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.stat-card {
-  transition: transform 0.2s, box-shadow 0.2s;
-  overflow: hidden;
-}
-
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 20px rgba(157, 78, 221, 0.2);
-}
-
-.stat-avatar {
-  background: linear-gradient(135deg, rgba(157, 78, 221, 0.6), rgba(0, 242, 254, 0.3)) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 .agents-card {
   border-radius: 16px;
 }
@@ -2543,18 +2481,6 @@ onMounted(() => {
 :deep(.v-data-table) {
   background: transparent !important;
 }
-:deep(.v-data-table th) {
-  background: transparent !important;
-  border-bottom: 1px solid rgba(255,255,255,0.05) !important;
-  color: rgba(255,255,255,0.6) !important;
-}
-:deep(.v-data-table td) {
-  background: transparent !important;
-  border-bottom: 1px solid rgba(255,255,255,0.03) !important;
-}
-:deep(.v-data-table tbody tr:hover td) {
-  background: rgba(255,255,255,0.02) !important;
-}
 
 .search-field :deep(.v-field) {
   border-radius: 8px;
@@ -2562,15 +2488,9 @@ onMounted(() => {
   border: 1px solid rgba(255,255,255,0.05);
 }
 
-.gap-1 {
-  gap: 4px;
-}
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
 
-.gap-2 {
-  gap: 8px;
-}
-
-/* Emotional Profile Chips */
 .profile-chip {
   cursor: pointer;
   transition: all 0.2s ease-in-out;

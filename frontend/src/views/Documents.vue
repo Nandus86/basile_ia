@@ -3,282 +3,375 @@
     <!-- Header -->
     <div class="page-header">
       <div class="header-content">
-        <div class="title-section">
-          <h1>📚 Base de Conhecimento</h1>
-          <p class="subtitle">Gerencie documentos para RAG (Retrieval-Augmented Generation)</p>
+        <div class="header-icon">
+          <v-icon size="32" color="primary">mdi-book-open-page-variant-outline</v-icon>
         </div>
-        <div class="actions">
-          <button class="btn btn-primary" @click="showUploadModal = true">
-            <span class="icon">📤</span>
-            Upload de Documento
-          </button>
+        <div class="header-text">
+          <h1>Base de Conhecimento</h1>
+          <p>Gerencie documentos para RAG (Retrieval-Augmented Generation)</p>
         </div>
       </div>
-      
-      <!-- Stats -->
-      <div class="stats-bar">
-        <div class="stat-item">
-          <span class="stat-value">{{ documents.length }}</span>
-          <span class="stat-label">Documentos</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-value">{{ readyCount }}</span>
-          <span class="stat-label">Prontos</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-value">{{ totalChunks }}</span>
-          <span class="stat-label">Chunks</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-value">{{ globalCount }}</span>
-          <span class="stat-label">Globais</span>
-        </div>
-      </div>
+      <v-btn color="primary" size="large" prepend-icon="mdi-upload" @click="showUploadModal = true" elevation="3">
+        Upload de Documento
+      </v-btn>
     </div>
+
+    <!-- Stats Cards -->
+    <v-row class="mb-6">
+      <v-col cols="12" sm="6" md="3">
+        <v-card class="stat-card glass-card">
+          <v-card-text class="d-flex align-center">
+            <v-avatar class="mr-4 stat-avatar" size="48">
+              <v-icon color="white">mdi-file-document-multiple</v-icon>
+            </v-avatar>
+            <div>
+              <p class="text-h4 font-weight-bold mb-0">{{ documents.length }}</p>
+              <p class="text-caption text-medium-emphasis mb-0">Documentos</p>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="12" sm="6" md="3">
+        <v-card class="stat-card glass-card">
+          <v-card-text class="d-flex align-center">
+            <v-avatar class="mr-4 stat-avatar" size="48">
+              <v-icon color="white">mdi-check-circle</v-icon>
+            </v-avatar>
+            <div>
+              <p class="text-h4 font-weight-bold mb-0">{{ readyCount }}</p>
+              <p class="text-caption text-medium-emphasis mb-0">Prontos</p>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="12" sm="6" md="3">
+        <v-card class="stat-card glass-card">
+          <v-card-text class="d-flex align-center">
+            <v-avatar class="mr-4 stat-avatar" size="48">
+              <v-icon color="white">mdi-puzzle</v-icon>
+            </v-avatar>
+            <div>
+              <p class="text-h4 font-weight-bold mb-0">{{ totalChunks }}</p>
+              <p class="text-caption text-medium-emphasis mb-0">Chunks</p>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+      <v-col cols="12" sm="6" md="3">
+        <v-card class="stat-card glass-card">
+          <v-card-text class="d-flex align-center">
+            <v-avatar class="mr-4 stat-avatar" size="48">
+              <v-icon color="white">mdi-earth</v-icon>
+            </v-avatar>
+            <div>
+              <p class="text-h4 font-weight-bold mb-0">{{ globalCount }}</p>
+              <p class="text-caption text-medium-emphasis mb-0">Globais</p>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
 
     <!-- Filters -->
-    <div class="filters-section">
-      <div class="search-box">
-        <input 
-          v-model="searchQuery" 
-          type="text" 
+    <v-card class="glass-card mb-6 pa-4">
+      <div class="d-flex align-center flex-wrap ga-3">
+        <v-text-field
+          v-model="searchQuery"
+          prepend-inner-icon="mdi-magnify"
           placeholder="Buscar documentos..."
-          class="search-input"
-        />
+          variant="outlined"
+          density="compact"
+          hide-details
+          style="max-width: 320px; min-width: 200px;"
+        ></v-text-field>
+
+        <v-btn-toggle v-model="statusFilter" density="compact" variant="outlined" color="primary" divided rounded="lg">
+          <v-btn :value="null" size="small">Todos</v-btn>
+          <v-btn value="ready" size="small">
+            <v-icon start size="14" color="success">mdi-check-circle</v-icon>
+            Prontos
+          </v-btn>
+          <v-btn value="processing" size="small">
+            <v-icon start size="14" color="info">mdi-progress-clock</v-icon>
+            Processando
+          </v-btn>
+          <v-btn value="error" size="small">
+            <v-icon start size="14" color="error">mdi-alert-circle</v-icon>
+            Erro
+          </v-btn>
+        </v-btn-toggle>
       </div>
-      <div class="filter-pills">
-        <button 
-          :class="['filter-pill', { active: statusFilter === null }]"
-          @click="statusFilter = null"
-        >
-          Todos
-        </button>
-        <button 
-          :class="['filter-pill', { active: statusFilter === 'ready' }]"
-          @click="statusFilter = 'ready'"
-        >
-          ✅ Prontos
-        </button>
-        <button 
-          :class="['filter-pill', { active: statusFilter === 'processing' }]"
-          @click="statusFilter = 'processing'"
-        >
-          ⏳ Processando
-        </button>
-        <button 
-          :class="['filter-pill', { active: statusFilter === 'error' }]"
-          @click="statusFilter = 'error'"
-        >
-          ❌ Erro
-        </button>
-      </div>
-    </div>
+    </v-card>
 
     <!-- Documents Grid -->
-    <div class="documents-grid" v-if="filteredDocuments.length > 0">
-      <div 
-        v-for="doc in filteredDocuments" 
-        :key="doc.id" 
-        class="document-card"
-        :class="{ 'is-global': doc.is_global }"
-      >
-        <div class="card-header">
-          <div class="doc-icon">{{ getFileIcon(doc.file_type) }}</div>
-          <div class="doc-status" :class="doc.status">
-            {{ getStatusLabel(doc.status) }}
-          </div>
-        </div>
-        
-        <div class="card-body">
-          <h3 class="doc-name">{{ doc.name }}</h3>
-          <div class="doc-meta">
-            <span class="meta-item">
-              <span class="meta-icon">📄</span>
-              {{ doc.file_type.toUpperCase() }}
-            </span>
-            <span class="meta-item">
-              <span class="meta-icon">🧩</span>
-              {{ doc.chunk_count }} chunks
-            </span>
-            <span class="meta-item" v-if="doc.is_global">
-              <span class="meta-icon">🌍</span>
-              Global
-            </span>
-          </div>
-        </div>
-        
-        <div class="card-footer">
-          <button class="btn-icon" @click="viewDocument(doc)" title="Ver detalhes">
-            👁️
-          </button>
-          <button 
-            class="btn-icon" 
-            @click="reprocessDocument(doc)" 
-            title="Reprocessar"
-            :disabled="doc.status === 'processing'"
-          >
-            🔄
-          </button>
-          <button class="btn-icon danger" @click="confirmDelete(doc)" title="Excluir">
-            🗑️
-          </button>
-        </div>
-      </div>
-    </div>
+    <v-row v-if="filteredDocuments.length > 0">
+      <v-col cols="12" sm="6" md="4" lg="3" v-for="doc in filteredDocuments" :key="doc.id">
+        <v-card class="glass-card doc-card h-100 d-flex flex-column" :class="{ 'global-border': doc.is_global }">
+          <v-card-text class="pa-4 d-flex flex-column flex-grow-1">
+            <!-- Top -->
+            <div class="d-flex justify-space-between align-start mb-3">
+              <v-avatar :color="getFileColor(doc.file_type)" size="40" rounded="lg">
+                <v-icon color="white" size="22">{{ getFileIcon(doc.file_type) }}</v-icon>
+              </v-avatar>
+              <v-chip
+                :color="getStatusColor(doc.status)"
+                size="x-small"
+                variant="tonal"
+                :prepend-icon="getStatusIcon(doc.status)"
+              >
+                {{ getStatusLabel(doc.status) }}
+              </v-chip>
+            </div>
+
+            <!-- Name & Meta -->
+            <h3 class="text-body-1 font-weight-bold mb-2 text-truncate">{{ doc.name }}</h3>
+            <div class="d-flex flex-wrap ga-2 mb-3">
+              <v-chip size="x-small" variant="outlined" color="grey">{{ doc.file_type?.toUpperCase() }}</v-chip>
+              <v-chip size="x-small" variant="outlined" color="grey" prepend-icon="mdi-puzzle-outline">{{ doc.chunk_count }} chunks</v-chip>
+              <v-chip v-if="doc.is_global" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-earth">Global</v-chip>
+            </div>
+
+            <v-spacer />
+
+            <!-- Actions -->
+            <div class="d-flex justify-end ga-1 mt-auto">
+              <v-btn icon variant="text" size="small" color="primary" @click="viewDocument(doc)">
+                <v-icon size="20">mdi-eye-outline</v-icon>
+                <v-tooltip activator="parent" location="top">Ver detalhes</v-tooltip>
+              </v-btn>
+              <v-btn icon variant="text" size="small" color="info" @click="reprocessDocument(doc)" :disabled="doc.status === 'processing'">
+                <v-icon size="20">mdi-refresh</v-icon>
+                <v-tooltip activator="parent" location="top">Reprocessar</v-tooltip>
+              </v-btn>
+              <v-btn icon variant="text" size="small" color="error" @click="confirmDelete(doc)">
+                <v-icon size="20">mdi-delete-outline</v-icon>
+                <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
+              </v-btn>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
 
     <!-- Empty State -->
-    <div class="empty-state" v-else>
-      <div class="empty-icon">📭</div>
-      <h3>Nenhum documento encontrado</h3>
-      <p>Faça upload do primeiro documento para começar</p>
-      <button class="btn btn-primary" @click="showUploadModal = true">
+    <v-card v-else class="glass-card py-16 text-center">
+      <v-icon size="64" color="grey-lighten-1" class="mb-4">mdi-file-document-remove-outline</v-icon>
+      <h3 class="text-h6 text-medium-emphasis mb-2">Nenhum documento encontrado</h3>
+      <p class="text-body-2 text-medium-emphasis mb-4">Faça upload do primeiro documento para começar</p>
+      <v-btn color="primary" prepend-icon="mdi-upload" @click="showUploadModal = true">
         Upload de Documento
-      </button>
-    </div>
+      </v-btn>
+    </v-card>
 
-    <!-- Upload Modal -->
-    <div class="modal-overlay" v-if="showUploadModal" @click.self="showUploadModal = false">
-      <div class="modal">
-        <div class="modal-header">
-          <h2>📤 Upload de Documento</h2>
-          <button class="btn-close" @click="showUploadModal = false">✕</button>
-        </div>
+    <!-- Upload Dialog -->
+    <v-dialog v-model="showUploadModal" max-width="600" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center px-6 py-4 bg-primary">
+          <v-icon class="mr-2" color="white">mdi-upload</v-icon>
+          <span class="text-white">Upload de Documento</span>
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" @click="showUploadModal = false" color="white">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
         
-        <div class="modal-body">
-          <div 
-            class="upload-zone"
-            :class="{ 'drag-over': isDragOver }"
+        <v-card-text class="pa-6">
+          <!-- Drop Zone -->
+          <div
+            class="upload-zone mb-4"
+            :class="{ 'drag-active': isDragOver }"
             @drop.prevent="handleDrop"
             @dragover.prevent="isDragOver = true"
             @dragleave="isDragOver = false"
           >
-            <div v-if="!selectedFile">
-              <div class="upload-icon">📁</div>
-              <p>Arraste um arquivo aqui ou</p>
-              <label class="file-input-label">
-                <input type="file" @change="handleFileSelect" accept=".pdf,.txt,.md,.docx,.html,.json,.csv" />
+            <div v-if="!selectedFile" class="text-center">
+              <v-icon size="48" color="primary" class="mb-3">mdi-cloud-upload-outline</v-icon>
+              <p class="text-body-1 mb-2">Arraste um arquivo aqui</p>
+              <v-btn variant="outlined" color="primary" size="small" @click="$refs.fileInput.click()">
                 Selecione um arquivo
-              </label>
-              <p class="file-types">Tipos aceitos: PDF, TXT, MD, DOCX, HTML, JSON, CSV</p>
+              </v-btn>
+              <input ref="fileInput" type="file" @change="handleFileSelect" accept=".pdf,.txt,.md,.docx,.html,.json,.csv" style="display:none" />
+              <p class="text-caption text-medium-emphasis mt-2">PDF, TXT, MD, DOCX, HTML, JSON, CSV</p>
             </div>
-            <div v-else class="file-selected">
-              <div class="file-info">
-                <span class="file-icon">{{ getFileIcon(getFileExtension(selectedFile.name)) }}</span>
-                <span class="file-name">{{ selectedFile.name }}</span>
-                <span class="file-size">({{ formatFileSize(selectedFile.size) }})</span>
+            <div v-else class="d-flex align-center justify-space-between pa-2">
+              <div class="d-flex align-center">
+                <v-avatar :color="getFileColor(getFileExtension(selectedFile.name))" size="36" rounded="lg" class="mr-3">
+                  <v-icon color="white" size="18">{{ getFileIcon(getFileExtension(selectedFile.name)) }}</v-icon>
+                </v-avatar>
+                <div>
+                  <span class="font-weight-medium">{{ selectedFile.name }}</span>
+                  <span class="text-caption text-medium-emphasis ml-2">({{ formatFileSize(selectedFile.size) }})</span>
+                </div>
               </div>
-              <button class="btn-icon" @click="selectedFile = null">✕</button>
+              <v-btn icon variant="text" size="small" color="error" @click="selectedFile = null">
+                <v-icon>mdi-close</v-icon>
+              </v-btn>
             </div>
           </div>
 
-          <div class="form-group">
-            <label>Nome do Documento</label>
-            <input v-model="uploadForm.name" type="text" placeholder="Nome personalizado (opcional)" />
-          </div>
+          <v-text-field
+            v-model="uploadForm.name"
+            label="Nome do Documento (opcional)"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+          ></v-text-field>
 
-          <div class="form-group">
-            <label>Descrição</label>
-            <textarea v-model="uploadForm.description" placeholder="Descrição do documento..."></textarea>
-          </div>
+          <v-textarea
+            v-model="uploadForm.description"
+            label="Descrição"
+            variant="outlined"
+            density="compact"
+            rows="2"
+            class="mb-3"
+          ></v-textarea>
 
-          <div class="form-row">
-            <div class="form-group">
-              <label>Tamanho do Chunk</label>
-              <input v-model.number="uploadForm.chunk_size" type="number" min="100" max="4000" />
-            </div>
-            <div class="form-group">
-              <label>Overlap</label>
-              <input v-model.number="uploadForm.chunk_overlap" type="number" min="0" max="1000" />
-            </div>
-          </div>
+          <v-row>
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="uploadForm.chunk_size"
+                label="Tamanho do Chunk"
+                type="number"
+                min="100"
+                max="4000"
+                variant="outlined"
+                density="compact"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="uploadForm.chunk_overlap"
+                label="Overlap"
+                type="number"
+                min="0"
+                max="1000"
+                variant="outlined"
+                density="compact"
+              ></v-text-field>
+            </v-col>
+          </v-row>
 
-          <div class="form-group checkbox-group">
-            <label>
-              <input type="checkbox" v-model="uploadForm.is_global" />
-              <span>Documento Global</span>
-              <small>Disponível para todos os agentes</small>
-            </label>
-          </div>
-        </div>
-
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showUploadModal = false">Cancelar</button>
-          <button 
-            class="btn btn-primary" 
-            @click="uploadDocument" 
-            :disabled="!selectedFile || uploading"
-          >
-            {{ uploading ? 'Enviando...' : 'Enviar' }}
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Document Details Modal -->
-    <div class="modal-overlay" v-if="selectedDocument" @click.self="selectedDocument = null">
-      <div class="modal modal-large">
-        <div class="modal-header">
-          <h2>{{ getFileIcon(selectedDocument.file_type) }} {{ selectedDocument.name }}</h2>
-          <button class="btn-close" @click="selectedDocument = null">✕</button>
-        </div>
+          <v-switch
+            v-model="uploadForm.is_global"
+            label="Documento Global (disponível para todos os agentes)"
+            color="warning"
+            hide-details
+            density="compact"
+          ></v-switch>
+        </v-card-text>
         
-        <div class="modal-body">
-          <div class="detail-grid">
-            <div class="detail-item">
-              <label>Status</label>
-              <span :class="['status-badge', selectedDocument.status]">
+        <v-divider></v-divider>
+        
+        <v-card-actions class="pa-4">
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" @click="showUploadModal = false" :disabled="uploading">Cancelar</v-btn>
+          <v-btn color="primary" @click="uploadDocument" :loading="uploading" :disabled="!selectedFile">
+            <v-icon start>mdi-upload</v-icon>
+            Enviar
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Document Details Dialog -->
+    <v-dialog v-model="detailsDialog" max-width="700">
+      <v-card v-if="selectedDocument">
+        <v-card-title class="d-flex align-center px-6 py-4 bg-primary">
+          <v-icon class="mr-2" color="white">{{ getFileIcon(selectedDocument.file_type) }}</v-icon>
+          <span class="text-white text-truncate">{{ selectedDocument.name }}</span>
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" @click="detailsDialog = false" color="white">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        
+        <v-card-text class="pa-6">
+          <v-row>
+            <v-col cols="6" sm="4">
+              <div class="text-caption text-medium-emphasis mb-1">Status</div>
+              <v-chip :color="getStatusColor(selectedDocument.status)" size="small" :prepend-icon="getStatusIcon(selectedDocument.status)">
                 {{ getStatusLabel(selectedDocument.status) }}
-              </span>
-            </div>
-            <div class="detail-item">
-              <label>Tipo</label>
-              <span>{{ selectedDocument.file_type.toUpperCase() }}</span>
-            </div>
-            <div class="detail-item">
-              <label>Chunks</label>
-              <span>{{ selectedDocument.chunk_count }}</span>
-            </div>
-            <div class="detail-item">
-              <label>Modelo de Embedding</label>
-              <span>{{ selectedDocument.embedding_model }}</span>
-            </div>
-            <div class="detail-item">
-              <label>Criado em</label>
-              <span>{{ formatDate(selectedDocument.created_at) }}</span>
-            </div>
-            <div class="detail-item" v-if="selectedDocument.processed_at">
-              <label>Processado em</label>
-              <span>{{ formatDate(selectedDocument.processed_at) }}</span>
-            </div>
-          </div>
+              </v-chip>
+            </v-col>
+            <v-col cols="6" sm="4">
+              <div class="text-caption text-medium-emphasis mb-1">Tipo</div>
+              <span class="font-weight-medium">{{ selectedDocument.file_type?.toUpperCase() }}</span>
+            </v-col>
+            <v-col cols="6" sm="4">
+              <div class="text-caption text-medium-emphasis mb-1">Chunks</div>
+              <span class="font-weight-medium">{{ selectedDocument.chunk_count }}</span>
+            </v-col>
+            <v-col cols="6" sm="4">
+              <div class="text-caption text-medium-emphasis mb-1">Modelo de Embedding</div>
+              <span class="font-weight-medium">{{ selectedDocument.embedding_model }}</span>
+            </v-col>
+            <v-col cols="6" sm="4">
+              <div class="text-caption text-medium-emphasis mb-1">Criado em</div>
+              <span class="font-weight-medium">{{ formatDate(selectedDocument.created_at) }}</span>
+            </v-col>
+            <v-col cols="6" sm="4" v-if="selectedDocument.processed_at">
+              <div class="text-caption text-medium-emphasis mb-1">Processado em</div>
+              <span class="font-weight-medium">{{ formatDate(selectedDocument.processed_at) }}</span>
+            </v-col>
+          </v-row>
 
-          <div v-if="selectedDocument.error_message" class="error-box">
-            <strong>Erro:</strong> {{ selectedDocument.error_message }}
-          </div>
+          <v-alert v-if="selectedDocument.error_message" type="error" variant="tonal" class="mt-4" density="compact">
+            {{ selectedDocument.error_message }}
+          </v-alert>
 
-          <div v-if="selectedDocument.description" class="description-box">
-            <label>Descrição</label>
-            <p>{{ selectedDocument.description }}</p>
+          <div v-if="selectedDocument.description" class="mt-4">
+            <div class="text-caption text-medium-emphasis mb-1">Descrição</div>
+            <p class="text-body-2">{{ selectedDocument.description }}</p>
           </div>
-        </div>
+        </v-card-text>
+        
+        <v-card-actions class="pa-4">
+          <v-btn variant="outlined" color="error" @click="confirmDelete(selectedDocument); detailsDialog = false" prepend-icon="mdi-delete">Excluir</v-btn>
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" @click="detailsDialog = false">Fechar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
-        <div class="modal-footer">
-          <button class="btn btn-danger" @click="confirmDelete(selectedDocument); selectedDocument = null">
-            🗑️ Excluir
-          </button>
-          <button class="btn btn-secondary" @click="selectedDocument = null">
-            Fechar
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- Delete Confirmation -->
+    <v-dialog v-model="deleteDialog" max-width="400">
+      <v-card>
+        <v-card-title class="d-flex align-center px-6 py-4 bg-error">
+          <v-icon class="mr-2" color="white">mdi-alert-circle</v-icon>
+          <span class="text-white">Confirmar Exclusão</span>
+        </v-card-title>
+        <v-card-text class="pa-6 text-center">
+          <v-icon size="64" color="error" class="mb-4">mdi-delete-alert</v-icon>
+          <p class="text-h6">Excluir documento?</p>
+          <p class="text-body-2 text-medium-emphasis">
+            <strong>{{ docToDelete?.name }}</strong><br>
+            Esta ação não pode ser desfeita.
+          </p>
+        </v-card-text>
+        <v-card-actions class="pa-4">
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" @click="deleteDialog = false">Cancelar</v-btn>
+          <v-btn color="error" @click="deleteDocument" :loading="deleting">
+            <v-icon start>mdi-delete</v-icon>
+            Excluir
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Snackbar -->
+    <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
+      {{ snackbar.message }}
+      <template v-slot:actions>
+        <v-btn variant="text" @click="snackbar.show = false"><v-icon>mdi-close</v-icon></v-btn>
+      </template>
+    </v-snackbar>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-
-const API_URL = '/api'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import axios from '@/plugins/axios'
 
 // State
 const documents = ref([])
@@ -287,9 +380,15 @@ const searchQuery = ref('')
 const statusFilter = ref(null)
 const showUploadModal = ref(false)
 const selectedDocument = ref(null)
+const detailsDialog = ref(false)
 const selectedFile = ref(null)
 const isDragOver = ref(false)
 const uploading = ref(false)
+
+// Delete
+const deleteDialog = ref(false)
+const docToDelete = ref(null)
+const deleting = ref(false)
 
 const uploadForm = ref({
   name: '',
@@ -299,33 +398,37 @@ const uploadForm = ref({
   is_global: false
 })
 
+// Snackbar
+const snackbar = reactive({ show: false, message: '', color: 'success' })
+function showSnackbar(msg, color = 'success') {
+  snackbar.message = msg
+  snackbar.color = color
+  snackbar.show = true
+}
+
 // Computed
 const filteredDocuments = computed(() => {
   let filtered = documents.value
-  
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
-    filtered = filtered.filter(d => d.name.toLowerCase().includes(query))
+    filtered = filtered.filter(d => d.name?.toLowerCase().includes(query))
   }
-  
   if (statusFilter.value) {
     filtered = filtered.filter(d => d.status === statusFilter.value)
   }
-  
   return filtered
 })
 
 const readyCount = computed(() => documents.value.filter(d => d.status === 'ready').length)
 const globalCount = computed(() => documents.value.filter(d => d.is_global).length)
-const totalChunks = computed(() => documents.value.reduce((sum, d) => sum + d.chunk_count, 0))
+const totalChunks = computed(() => documents.value.reduce((sum, d) => sum + (d.chunk_count || 0), 0))
 
-// Methods
+// API
 const fetchDocuments = async () => {
   loading.value = true
   try {
-    const response = await fetch(`${API_URL}/documents`)
-    const data = await response.json()
-    documents.value = data.documents || []
+    const response = await axios.get('/documents')
+    documents.value = response.data.documents || []
   } catch (error) {
     console.error('Failed to fetch documents:', error)
   } finally {
@@ -340,14 +443,11 @@ const handleFileSelect = (event) => {
 const handleDrop = (event) => {
   isDragOver.value = false
   const files = event.dataTransfer.files
-  if (files.length > 0) {
-    selectedFile.value = files[0]
-  }
+  if (files.length > 0) selectedFile.value = files[0]
 }
 
 const uploadDocument = async () => {
   if (!selectedFile.value) return
-  
   uploading.value = true
   try {
     const formData = new FormData()
@@ -358,19 +458,15 @@ const uploadDocument = async () => {
     formData.append('chunk_overlap', uploadForm.value.chunk_overlap)
     formData.append('is_global', uploadForm.value.is_global)
     
-    const response = await fetch(`${API_URL}/documents/upload`, {
-      method: 'POST',
-      body: formData
-    })
-    
-    if (response.ok) {
-      showUploadModal.value = false
-      selectedFile.value = null
-      uploadForm.value = { name: '', description: '', chunk_size: 1000, chunk_overlap: 200, is_global: false }
-      await fetchDocuments()
-    }
+    await axios.post('/documents/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+    showUploadModal.value = false
+    selectedFile.value = null
+    uploadForm.value = { name: '', description: '', chunk_size: 1000, chunk_overlap: 200, is_global: false }
+    showSnackbar('Documento enviado com sucesso!')
+    await fetchDocuments()
   } catch (error) {
     console.error('Upload failed:', error)
+    showSnackbar('Erro ao enviar documento', 'error')
   } finally {
     uploading.value = false
   }
@@ -378,8 +474,9 @@ const uploadDocument = async () => {
 
 const viewDocument = async (doc) => {
   try {
-    const response = await fetch(`${API_URL}/documents/${doc.id}`)
-    selectedDocument.value = await response.json()
+    const response = await axios.get(`/documents/${doc.id}`)
+    selectedDocument.value = response.data
+    detailsDialog.value = true
   } catch (error) {
     console.error('Failed to fetch document:', error)
   }
@@ -387,52 +484,62 @@ const viewDocument = async (doc) => {
 
 const reprocessDocument = async (doc) => {
   try {
-    await fetch(`${API_URL}/documents/${doc.id}/reprocess`, { method: 'POST' })
+    await axios.post(`/documents/${doc.id}/reprocess`)
+    showSnackbar('Reprocessamento iniciado!')
     await fetchDocuments()
   } catch (error) {
     console.error('Failed to reprocess:', error)
+    showSnackbar('Erro ao reprocessar', 'error')
   }
 }
 
-const confirmDelete = async (doc) => {
-  if (confirm(`Excluir documento "${doc.name}"?`)) {
-    try {
-      await fetch(`${API_URL}/documents/${doc.id}`, { method: 'DELETE' })
-      await fetchDocuments()
-    } catch (error) {
-      console.error('Failed to delete:', error)
-    }
+const confirmDelete = (doc) => {
+  docToDelete.value = doc
+  deleteDialog.value = true
+}
+
+const deleteDocument = async () => {
+  deleting.value = true
+  try {
+    await axios.delete(`/documents/${docToDelete.value.id}`)
+    showSnackbar('Documento excluído!')
+    deleteDialog.value = false
+    await fetchDocuments()
+  } catch (error) {
+    console.error('Failed to delete:', error)
+    showSnackbar('Erro ao excluir', 'error')
+  } finally {
+    deleting.value = false
   }
 }
 
+// Helpers
 const getFileIcon = (type) => {
-  const icons = {
-    pdf: '📕',
-    txt: '📄',
-    md: '📝',
-    markdown: '📝',
-    docx: '📘',
-    html: '🌐',
-    json: '🔧',
-    csv: '📊'
-  }
-  return icons[type] || '📄'
+  const icons = { pdf: 'mdi-file-pdf-box', txt: 'mdi-file-document', md: 'mdi-language-markdown', markdown: 'mdi-language-markdown', docx: 'mdi-file-word', html: 'mdi-language-html5', json: 'mdi-code-json', csv: 'mdi-file-delimited' }
+  return icons[type] || 'mdi-file-document'
+}
+
+const getFileColor = (type) => {
+  const colors = { pdf: '#EF4444', txt: '#6366F1', md: '#3B82F6', markdown: '#3B82F6', docx: '#2563EB', html: '#F97316', json: '#10B981', csv: '#8B5CF6' }
+  return colors[type] || '#64748B'
+}
+
+const getStatusColor = (status) => {
+  const map = { pending: 'warning', processing: 'info', ready: 'success', error: 'error', reprocessing: 'info' }
+  return map[status] || 'grey'
+}
+
+const getStatusIcon = (status) => {
+  const map = { pending: 'mdi-clock-outline', processing: 'mdi-progress-clock', ready: 'mdi-check-circle', error: 'mdi-alert-circle', reprocessing: 'mdi-refresh' }
+  return map[status] || 'mdi-help-circle'
 }
 
 const getStatusLabel = (status) => {
-  const labels = {
-    pending: '⏳ Pendente',
-    processing: '🔄 Processando',
-    ready: '✅ Pronto',
-    error: '❌ Erro',
-    reprocessing: '🔄 Reprocessando'
-  }
+  const labels = { pending: 'Pendente', processing: 'Processando', ready: 'Pronto', error: 'Erro', reprocessing: 'Reprocessando' }
   return labels[status] || status
 }
 
-const getFileExtension = (filename) => {
-  return filename.split('.').pop().toLowerCase()
-}
+const getFileExtension = (filename) => filename.split('.').pop().toLowerCase()
 
 const formatFileSize = (bytes) => {
   if (bytes < 1024) return bytes + ' B'
@@ -440,510 +547,50 @@ const formatFileSize = (bytes) => {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-const formatDate = (dateStr) => {
-  return new Date(dateStr).toLocaleString('pt-BR')
-}
+const formatDate = (dateStr) => new Date(dateStr).toLocaleString('pt-BR')
 
 // Lifecycle
+let pollInterval
 onMounted(() => {
   fetchDocuments()
-  // Poll for updates
-  setInterval(fetchDocuments, 10000)
+  pollInterval = setInterval(fetchDocuments, 15000)
+})
+onBeforeUnmount(() => {
+  clearInterval(pollInterval)
 })
 </script>
 
 <style scoped>
-.documents-page {
-  padding: 2rem;
-  max-width: 1400px;
-  margin: 0 auto;
+.doc-card {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Header */
-.page-header {
-  margin-bottom: 2rem;
+.doc-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(157, 78, 221, 0.2) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25) !important;
 }
 
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 1.5rem;
+.global-border {
+  border-color: rgba(245, 158, 11, 0.3) !important;
 }
 
-.title-section h1 {
-  font-size: 2rem;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.subtitle {
-  color: var(--text-secondary);
-  margin-top: 0.5rem;
-}
-
-/* Stats */
-.stats-bar {
-  display: flex;
-  gap: 2rem;
-  background: var(--bg-secondary);
-  padding: 1rem 1.5rem;
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
-}
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.stat-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: var(--primary);
-}
-
-.stat-label {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-}
-
-/* Filters */
-.filters-section {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
-}
-
-.search-box {
-  flex: 1;
-  min-width: 200px;
-}
-
-.search-input {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.filter-pills {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.filter-pill {
-  padding: 0.5rem 1rem;
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.filter-pill.active {
-  background: var(--primary);
-  color: white;
-  border-color: var(--primary);
-}
-
-/* Documents Grid */
-.documents-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.5rem;
-}
-
-.document-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  overflow: hidden;
-  transition: all 0.2s;
-}
-
-.document-card:hover {
-  border-color: var(--primary);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
-}
-
-.document-card.is-global {
-  border-color: #ffd700;
-}
-
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
-  background: var(--bg-tertiary);
-}
-
-.doc-icon {
-  font-size: 2rem;
-}
-
-.doc-status {
-  font-size: 0.75rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-weight: 500;
-}
-
-.doc-status.ready { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
-.doc-status.pending { background: rgba(234, 179, 8, 0.2); color: #eab308; }
-.doc-status.processing { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-.doc-status.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-.doc-status.reprocessing { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-
-.card-body {
-  padding: 1rem;
-}
-
-.doc-name {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 0.75rem 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.doc-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-}
-
-.card-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border-top: 1px solid var(--border-color);
-}
-
-.btn-icon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1.25rem;
-  padding: 0.5rem;
-  border-radius: 8px;
-  transition: background 0.2s;
-}
-
-.btn-icon:hover {
-  background: var(--bg-tertiary);
-}
-
-.btn-icon.danger:hover {
-  background: rgba(239, 68, 68, 0.2);
-}
-
-.btn-icon:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Empty State */
-.empty-state {
-  text-align: center;
-  padding: 4rem 2rem;
-  color: var(--text-secondary);
-}
-
-.empty-icon {
-  font-size: 4rem;
-  margin-bottom: 1rem;
-}
-
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-}
-
-.modal {
-  background: var(--bg-primary);
-  border-radius: 16px;
-  width: 90%;
-  max-width: 500px;
-  max-height: 90vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-large {
-  max-width: 700px;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1.5rem;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.modal-header h2 {
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.btn-close {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  cursor: pointer;
-  color: var(--text-secondary);
-}
-
-.modal-body {
-  padding: 1.5rem;
-  overflow-y: auto;
-}
-
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 1rem;
-  padding: 1rem 1.5rem;
-  border-top: 1px solid var(--border-color);
-}
-
-/* Upload Zone */
 .upload-zone {
-  border: 2px dashed var(--border-color);
-  border-radius: 12px;
-  padding: 2rem;
+  border: 2px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 32px;
   text-align: center;
-  margin-bottom: 1.5rem;
-  transition: all 0.2s;
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.02);
 }
 
-.upload-zone.drag-over {
-  border-color: var(--primary);
-  background: rgba(99, 102, 241, 0.1);
+.upload-zone.drag-active {
+  border-color: rgba(157, 78, 221, 0.5);
+  background: rgba(157, 78, 221, 0.08);
 }
 
-.upload-icon {
-  font-size: 3rem;
-  margin-bottom: 1rem;
-}
-
-.file-input-label {
-  display: inline-block;
-  padding: 0.5rem 1rem;
-  background: var(--primary);
-  color: white;
-  border-radius: 8px;
-  cursor: pointer;
-  margin: 0.5rem 0;
-}
-
-.file-input-label input {
-  display: none;
-}
-
-.file-types {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  margin-top: 0.5rem;
-}
-
-.file-selected {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.file-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.file-icon {
-  font-size: 1.5rem;
-}
-
-.file-name {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.file-size {
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-}
-
-/* Form */
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-}
-
-.form-group input,
-.form-group textarea {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-
-.form-group textarea {
-  min-height: 80px;
-  resize: vertical;
-}
-
-.form-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-
-.checkbox-group label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-}
-
-.checkbox-group small {
-  color: var(--text-tertiary);
-  font-size: 0.75rem;
-}
-
-/* Buttons */
-.btn {
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-primary {
-  background: var(--primary);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: var(--primary-hover);
-}
-
-.btn-secondary {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-}
-
-.btn-danger {
-  background: #ef4444;
-  color: white;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Detail Grid */
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-}
-
-.detail-item {
-  background: var(--bg-secondary);
-  padding: 1rem;
-  border-radius: 8px;
-}
-
-.detail-item label {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  margin-bottom: 0.25rem;
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-size: 0.875rem;
-}
-
-.status-badge.ready { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
-.status-badge.pending { background: rgba(234, 179, 8, 0.2); color: #eab308; }
-.status-badge.processing { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-.status-badge.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-
-.error-box {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  padding: 1rem;
-  border-radius: 8px;
-  color: #ef4444;
-  margin-bottom: 1rem;
-}
-
-.description-box {
-  background: var(--bg-secondary);
-  padding: 1rem;
-  border-radius: 8px;
-}
-
-.description-box label {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  margin-bottom: 0.5rem;
-}
-
-.description-box p {
-  margin: 0;
-  color: var(--text-primary);
+.upload-zone:hover {
+  border-color: rgba(157, 78, 221, 0.3);
+  background: rgba(255, 255, 255, 0.03);
 }
 </style>
