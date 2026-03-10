@@ -24,6 +24,7 @@ class WebhookConfig(Base):
     
     # Routing
     target_agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True) # Specific agent or null for dynamic/Orchestrator
+    sync_mode = Column(Boolean, default=False, nullable=False) # Whether to run synchronously instead of using queue
     
     is_active = Column(Boolean, default=True)
     

@@ -23,9 +23,8 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         
-    # Connect to RabbitMQ and start consumer
+    # Connect to RabbitMQ for publishing messages
     await rabbitmq_client.connect()
-    asyncio.create_task(start_rabbitmq_consumer())
     
     yield
     # Shutdown: cleanup all connections

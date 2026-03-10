@@ -159,6 +159,9 @@ async def _enrich_agent_prompt(
                 message=message,
                 primary_agent=agent_model,
                 context=rag_context or "",
+                context_data=context_data,
+                history=history,
+                session_id=session_id,
             )
             print(f"[Task] 🔍 ORCH DEBUG: gather_subordinate_responses returned: '{subordinate_context[:200] if subordinate_context else 'EMPTY'}'")
             if subordinate_context:
