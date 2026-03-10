@@ -117,7 +117,7 @@ services:
       - basile-rabbitmq
     volumes:
       - ./backend:/app
-    command: [ "arq", "app.worker.settings.WorkerSettings" ]
+    command: [ "python", "run_worker.py" ]
     networks:
       - basile-network
 

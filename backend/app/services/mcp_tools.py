@@ -440,19 +440,14 @@ class MCPToolExecutor:
     
     def _schema_to_pydantic(self, schema: Dict[str, Any], tool_name: str) -> type:
         """Convert JSON schema to Pydantic model.
-        Context fields (body-*, member-*, church-*) are EXCLUDED so the LLM
-        only sees fields it needs to actively fill.
+        All fields are exposed to the AI, allowing it to satisfy $fromAI parameters.
+        Fallback to context data occurs in execute_tool if the AI leaves them null.
         """
         properties = schema.get("properties", {})
-        context_prefixes = ("body-", "member-", "church-")
         
         fields = {}
         for prop_name, prop_schema in properties.items():
             if not isinstance(prop_schema, dict):
-                continue
-            
-            # Skip context fields — auto-injected at execution time
-            if any(prop_name.startswith(p) for p in context_prefixes):
                 continue
                 
             prop_type = prop_schema.get("type", "string")

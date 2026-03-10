@@ -100,6 +100,11 @@
                 {{ item.require_token ? 'Requer Token' : 'Público' }}
               </v-chip>
             </template>
+            <template v-slot:item.sync_mode="{ item }">
+              <v-chip size="small" :color="item.sync_mode ? 'purple' : 'info'" variant="tonal">
+                {{ item.sync_mode ? 'Síncrono' : 'Fila (Job)' }}
+              </v-chip>
+            </template>
             <template v-slot:item.target_agent_id="{ item }">
               <span v-if="item.target_agent_id">{{ getAgentName(item.target_agent_id) }}</span>
               <v-chip v-else size="small" color="purple" variant="tonal">Orquestrador Global</v-chip>
@@ -255,6 +260,14 @@
               hide-details
             ></v-switch>
 
+            <v-switch
+              v-model="editedWebhook.sync_mode"
+              label="Processamento Síncrono (Ignorar fila de Jobs)"
+              color="purple"
+              class="mb-2"
+              hide-details
+            ></v-switch>
+
             <v-expand-transition>
               <div v-if="editedWebhook.require_token" class="mt-4">
                 <v-text-field
@@ -353,6 +366,7 @@ const webhookHeaders = [
   { title: 'Nome', key: 'name', sortable: true },
   { title: 'Path / Rota', key: 'path', sortable: true },
   { title: 'Autenticação', key: 'require_token', sortable: false },
+  { title: 'Modo Exec', key: 'sync_mode', sortable: false },
   { title: 'Alvo', key: 'target_agent_id', sortable: false },
   { title: 'Status', key: 'is_active', sortable: false },
   { title: 'Ações', key: 'actions', sortable: false, align: 'end' },
@@ -379,6 +393,7 @@ const editedWebhook = ref({
   require_token: false,
   access_token: '',
   target_agent_id: null,
+  sync_mode: false,
   is_active: true
 })
 
@@ -507,7 +522,7 @@ const openWebhookDialog = (item = null) => {
   if (item) {
     editedWebhook.value = { ...item, access_token: '' }
   } else {
-    editedWebhook.value = { name: '', path: '', require_token: false, access_token: '', target_agent_id: null, is_active: true }
+    editedWebhook.value = { name: '', path: '', require_token: false, access_token: '', target_agent_id: null, sync_mode: false, is_active: true }
   }
   webhookDialog.value = true
 }

@@ -1,13 +1,20 @@
 """
 Agent Orchestrator - Coordinates collaboration between specialist agents
+
+v0.0.8 - Single-graph architecture:
+  - ENABLED collaborators are always consulted (no LLM decision overhead)
+  - Collaborators use their own model/config/tools via AgentFactory.invoke_agent()
+  - Conversation history is passed to collaborators for STM awareness
+  - Parallel execution via asyncio.gather()
 """
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+import asyncio
+from typing import List, Optional, Dict, Any
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import List, Optional, Dict, Any
-from uuid import UUID
+from langchain_core.messages import HumanMessage, AIMessage
 
 from app.models.agent import Agent, AgentCollaborator, CollaborationStatus
 from app.config import settings
@@ -17,15 +24,17 @@ class AgentOrchestrator:
     """
     Orchestrates collaboration between specialist agents.
     
-    Flow:
-    1. Primary agent is selected based on message context
-    2. Orchestrator checks if collaboration is needed
-    3. Consults enabled/neutral collaborators as needed
-    4. Combines responses into final answer
+    v0.0.9 Flow:
+    1. Primary agent (orchestrator) receives message
+    2. LLM evaluates if collaboration is needed based on agent descriptions
+    3. Selected collaborators are invoked in parallel 
+    4. Collaborators receive clean context_data mapped to their input_schema
+    5. Collaborator responses are appended to orchestrator's system_prompt
     """
     
     def __init__(self, db: AsyncSession):
         self.db = db
+        from langchain_openai import ChatOpenAI
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
@@ -43,190 +52,308 @@ class AgentOrchestrator:
             .where(Agent.id == agent_id)
         )
         return result.scalar_one_or_none()
-    
+
     async def should_collaborate(
-        self, 
-        message: str, 
+        self,
+        message: str,
         primary_agent: Agent,
-        enabled_collaborators: List[Agent],
-        neutral_collaborators: List[Agent]
+        enabled_collaborators: list,
+        neutral_collaborators: list,
+        history: Optional[list] = None
     ) -> Dict[str, Any]:
-        """
-        Ask LLM if collaboration is needed and which agents to consult.
-        
-        Returns:
-            {
-                "should_collaborate": bool,
-                "agents_to_consult": List[UUID],
-                "reasoning": str
-            }
-        """
+        """Ask LLM if collaboration is needed and which agents to consult."""
         if not primary_agent.collaboration_enabled:
-            return {
-                "should_collaborate": False,
-                "agents_to_consult": [],
-                "reasoning": "Collaboration is disabled for this agent"
-            }
-        
+            return {"should_collaborate": False, "agents_to_consult": [], "reasoning": "disabled"}
+            
         if not enabled_collaborators and not neutral_collaborators:
-            return {
-                "should_collaborate": False,
-                "agents_to_consult": [],
-                "reasoning": "No collaborators available"
-            }
-        
-        # Build agent descriptions
-        enabled_desc = "\n".join([
-            f"- {a.name}: {a.description or 'Sem descrição'}"
-            for a in enabled_collaborators
-        ]) or "Nenhum"
-        
-        neutral_desc = "\n".join([
-            f"- {a.name}: {a.description or 'Sem descrição'}"
-            for a in neutral_collaborators
-        ]) or "Nenhum"
+            return {"should_collaborate": False, "agents_to_consult": [], "reasoning": "no collaborators"}
+
+        enabled_desc = "\n".join([f"- {a.name}: {a.description or 'Especialista'}" for a in enabled_collaborators]) or "Nenhum"
+        neutral_desc = "\n".join([f"- {a.name}: {a.description or 'Especialista'}" for a in neutral_collaborators]) or "Nenhum"
         
         prompt = f"""Você é um orquestrador que decide se um agente de IA precisa consultar outros especialistas.
+Abaixo estará todo o histórico da conversa e a última mensagem do usuário para você basear sua decisão.
 
 AGENTE PRIMÁRIO: {primary_agent.name}
 DESCRIÇÃO: {primary_agent.description or 'Especialista'}
 
-MENSAGEM DO USUÁRIO: "{message}"
-
 AGENTES PRIORITÁRIOS (consultar se relevante):
 {enabled_desc}
 
-AGENTES DISPONÍVEIS (usar apenas se realmente necessário):
+AGENTES DISPONÍVEIS (usar apenas se absolutamente necessário):
 {neutral_desc}
 
 REGRAS:
-1. Se o agente primário pode responder sozinho, não consulte ninguém
-2. Consulte agentes prioritários se a mensagem envolve suas especialidades
-3. Consulte agentes disponíveis apenas se absolutamente necessário
-4. Máximo de 2 consultas por mensagem
+1. Analise o ESTÁGIO e o fluxo do histórico para identificar a verdadeira necessidade.
+2. Se o agente primário pode responder sozinho, não consulte ninguém
+3. Consulte agentes prioritários se a mensagem atual envolver suas especialidades e precisar de coleta extra de dados
+4. Consulte agentes disponíveis apenas se absolutamente necessário
+5. Máximo de 2 consultas por mensagem
 
-Responda APENAS em JSON válido:
-{{"should_collaborate": true/false, "agents": ["Nome do Agente 1", "Nome do Agente 2"], "reasoning": "Explicação breve"}}
+Responda APENAS em JSON válido com este formato exato:
+{{"should_collaborate": true/false, "agents": [{{"name": "Nome 1", "orientation": "Instrução CLARA E DIRETA do que este agente deve buscar, analisar ou resolver com base na mensagem original."}}], "reasoning": "Motivo geral de acionamento"}}
 """
-        
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content=prompt)
-            ])
+            from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+            from langchain_core.runnables import RunnableConfig
+            
+            run_config = RunnableConfig(
+                run_name=f"{primary_agent.name} (Decidindo Colaboração)",
+                metadata={"agent_id": primary_agent.id, "structured": True}
+            )
+            
+            messages = [SystemMessage(content=prompt)]
+            history = history or []
+            
+            for msg in history[-10:]:
+                if msg.get("role") == "user":
+                    messages.append(HumanMessage(content=msg.get("content", "")))
+                elif msg.get("role") == "assistant":
+                    messages.append(AIMessage(content=msg.get("content", "")))
+                    
+            messages.append(HumanMessage(content=message))
+            
+            response = await self.llm.ainvoke(messages, config=run_config)
             
             import json
             result_text = response.content.strip()
-            
-            # Clean markdown if present
             if result_text.startswith("```"):
                 result_text = result_text.split("```")[1]
                 if result_text.startswith("json"):
                     result_text = result_text[4:]
             result_text = result_text.strip()
-            
             result = json.loads(result_text)
             
-            # Map agent names to UUIDs
             all_collaborators = enabled_collaborators + neutral_collaborators
             agents_to_consult = []
-            for name in result.get("agents", []):
+            for agent_info in result.get("agents", []):
+                name = agent_info.get("name") if isinstance(agent_info, dict) else agent_info
+                orientation = agent_info.get("orientation", "") if isinstance(agent_info, dict) else ""
+                
                 for agent in all_collaborators:
-                    if agent.name.lower() == name.lower():
-                        agents_to_consult.append(agent.id)
+                    if name and agent.name and agent.name.lower() == name.lower():
+                        agents_to_consult.append({"id": agent.id, "orientation": orientation})
                         break
-            
+                        
             return {
                 "should_collaborate": result.get("should_collaborate", False),
-                "agents_to_consult": agents_to_consult[:2],  # Max 2
+                "agents_to_consult": agents_to_consult[:2],
                 "reasoning": result.get("reasoning", "")
             }
-            
         except Exception as e:
             print(f"[Orchestrator] Error deciding collaboration: {e}")
-            return {
-                "should_collaborate": False,
-                "agents_to_consult": [],
-                "reasoning": f"Error: {str(e)}"
-            }
-    
-    async def consult_agent(
+            return {"should_collaborate": False, "agents_to_consult": [], "reasoning": str(e)}
+
+    async def _invoke_collaborator(
         self,
         agent: Agent,
         message: str,
+        history: list,
         context: str = "",
-        primary_response: str = ""
-    ) -> str:
+        context_data: Optional[Dict[str, Any]] = None,
+        orientation: str = "",
+    ) -> tuple:
         """
-        Consult a collaborator agent for additional information.
+        Invoke a single collaborator.
+        Directly injects context_data into the input message based on input_schema.
+        """
+        from app.orchestrator.agent_factory import AgentFactory
+        import json
         
-        Args:
-            agent: The collaborator agent to consult
-            message: Original user message
-            context: Any relevant context from materials
-            primary_response: Response from primary agent (if sequential)
-        """
-        collaboration_prompt = f"""Você é o agente "{agent.name}".
-{agent.system_prompt}
+        factory = AgentFactory(self.db)
+        agent_config = await factory.get_agent_config(agent, context_data=context_data)
+        
+        history = history or []
+        
+        # System Message Instruction
+        collab_instruction = (
+            "\n\n---\n"
+            "[SISTEMA ORQUESTRADOR]\n"
+            "Você é um especialista ativado pelo Agente Orquestrador para contribuir com esta solicitação."
+        )
+        if context:
+            collab_instruction += f"\n\n[INFORMAÇÕES DISPONÍVEIS NA PASTA]:\n{context}"
+            
+        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + collab_instruction
+        
+        # Build messages: History + Final Custom Human Message
+        messages = []
+        for msg in history:
+            if msg.get("role") == "user":
+                messages.append(HumanMessage(content=msg["content"]))
+            elif msg.get("role") == "assistant":
+                messages.append(AIMessage(content=msg["content"]))
+                
+        # To strictly place message -> orientation -> context data in the final human turn:
+        from app.schemas.structured_output import format_context_data_for_prompt
+        context_str = format_context_data_for_prompt(context_data, agent_config.get("input_schema"))
+        
+        final_user_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
+{message}
 
----
+[O QUE VOCÊ DEVE FAZER (Orientação do Orquestrador)]:
+{orientation}
+{context_str}"""
 
-Você está sendo consultado por outro agente para ajudar a responder uma pergunta.
-
-PERGUNTA DO USUÁRIO: "{message}"
-
-{"CONTEXTO PRÉVIO: " + primary_response if primary_response else ""}
-
-{"INFORMAÇÕES DISPONÍVEIS: " + context if context else ""}
-
-Forneça uma resposta focada na sua especialidade. 
-Seja conciso e objetivo - sua resposta será combinada com outras.
-"""
+        messages.append(HumanMessage(content=final_user_content))
         
         try:
-            from app.orchestrator.agent_factory import AgentFactory
-            factory = AgentFactory(self.db)
-            base_config = await factory.get_agent_config(agent)
+            # Let AgentFactory handle context_data structuring
+            if agent_config.get("output_schema"):
+                result = await factory.invoke_agent_structured(
+                    agent_config=agent_config,
+                    messages=messages,
+                    rag_context=None,
+                    context_data=context_data, # Let factory handle it
+                )
+                response_text = json.dumps(result, ensure_ascii=False)
+            else:
+                response_text = await factory.invoke_agent(
+                    agent_config=agent_config,
+                    messages=messages,
+                    rag_context=None,
+                    context_data=context_data, # Let factory handle it
+                )
             
-            # Create a shallow copy so we don't mutate the cached config
-            agent_config = dict(base_config)
-            agent_config["system_prompt"] = collaboration_prompt
+            print(f"[Orchestrator] ✅ Collaborator '{agent.name}' responded")
+            return (agent.name, response_text)
             
-            messages = [HumanMessage(content=message)]
-            
-            response = await factory.invoke_agent(
-                agent_config=agent_config,
-                messages=messages,
-                rag_context=None
-            )
-            return response
         except Exception as e:
-            print(f"[Orchestrator] Error consulting {agent.name}: {e}")
-            import traceback
-            traceback.print_exc()
-            return ""
-    
-    async def combine_responses(
+            print(f"[Orchestrator] ❌ Error consulting {agent.name}: {e}")
+            return (agent.name, "")
+
+    async def gather_subordinate_responses(
         self,
+        message: str,
+        primary_agent: Agent,
+        context: str = "",
+        context_data: Optional[Dict[str, Any]] = None,
+        history: Optional[list] = None,
+        session_id: Optional[str] = None,
+    ) -> str:
+        """Consult subordinate agents BEFORE the primary orchestrator responds."""
+        agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
+        if not agent_with_settings or not agent_with_settings.collaborator_settings:
+            return ""
+        
+        enabled = []
+        neutral = []
+        for setting in agent_with_settings.collaborator_settings:
+            if setting.status == CollaborationStatus.ENABLED:
+                enabled.append(setting.collaborator)
+            elif setting.status == CollaborationStatus.NEUTRAL:
+                neutral.append(setting.collaborator)
+        
+        # Use LLM decision to select subset of agents to consult
+        decision = await self.should_collaborate(message, primary_agent, enabled, neutral, history)
+        
+        if not decision["should_collaborate"] or not decision["agents_to_consult"]:
+            print(f"[Orchestrator] No collaboration needed: {decision.get('reasoning')}")
+            return ""
+            
+        # Filter enabled/neutral to only those selected
+        selected_collaborators = []
+        for agent_info in decision["agents_to_consult"]:
+            agent_id = agent_info.get("id")
+            orientation = agent_info.get("orientation", "")
+            for agent in (enabled + neutral):
+                if agent.id == agent_id:
+                    selected_collaborators.append((agent, orientation))
+                    break
+        
+        print(f"[Orchestrator] 🔄 Consulting {len(selected_collaborators)} selected collaborators")
+        
+        conversation_history = history or []
+        tasks = [
+            self._invoke_collaborator(
+                agent=collaborator,
+                message=message,
+                history=conversation_history,
+                context=context,
+                context_data=context_data,
+                orientation=orientation,
+            )
+            for collaborator, orientation in selected_collaborators
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        collaborator_responses = {}
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            name, response = result
+            if response:
+                collaborator_responses[name] = response
+        
+        if collaborator_responses:
+            formatted = "\n\n".join([f"[{name}]: {response}" for name, response in collaborator_responses.items()])
+            return formatted
+            
+        return ""
+    
+    async def orchestrate(
+        self,
+        message: str,
         primary_agent: Agent,
         primary_response: str,
-        collaborator_responses: Dict[str, str],
-        original_message: str
+        context: str = ""
     ) -> str:
-        """
-        Combine responses from primary agent and collaborators into a cohesive answer.
-        """
+        """Post-response orchestration fallback."""
+        if not hasattr(primary_agent, 'collaboration_enabled') or not primary_agent.collaboration_enabled:
+            return primary_response
+        
+        agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
+        if not agent_with_settings or not agent_with_settings.collaborator_settings:
+            return primary_response
+        
+        enabled = []
+        neutral = []
+        for setting in agent_with_settings.collaborator_settings:
+            if setting.status == CollaborationStatus.ENABLED:
+                enabled.append(setting.collaborator)
+            elif setting.status == CollaborationStatus.NEUTRAL:
+                neutral.append(setting.collaborator)
+        
+        decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
+        if not decision["should_collaborate"] or not decision["agents_to_consult"]:
+            return primary_response
+            
+        selected_collaborators = []
+        for agent_id in decision["agents_to_consult"]:
+            for agent in (enabled + neutral):
+                if agent.id == agent_id:
+                    selected_collaborators.append(agent)
+                    break
+        
+        tasks = [
+            self._invoke_collaborator(
+                agent=collaborator,
+                message=message,
+                history=[],
+                context=context,
+            )
+            for collaborator in selected_collaborators
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        collaborator_responses = {}
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            name, response = result
+            if response:
+                collaborator_responses[name] = response
+        
         if not collaborator_responses:
             return primary_response
         
-        collab_text = "\n\n".join([
-            f"[{name}]: {response}"
-            for name, response in collaborator_responses.items()
-            if response
-        ])
-        
+        from langchain_core.messages import SystemMessage
+        collab_text = "\n\n".join([f"[{name}]: {response}" for name, response in collaborator_responses.items() if response])
         combine_prompt = f"""Você é o agente "{primary_agent.name}" finalizando uma resposta.
 
-PERGUNTA ORIGINAL: "{original_message}"
+PERGUNTA ORIGINAL: "{message}"
 
 SUA RESPOSTA INICIAL:
 {primary_response}
@@ -241,135 +368,8 @@ Combine as informações em uma resposta única, coesa e natural.
 - Integre as informações de forma fluida
 - Se houver contradições, priorize sua resposta inicial
 """
-        
         try:
-            response = await self.llm.ainvoke([
-                SystemMessage(content=combine_prompt)
-            ])
+            response = await self.llm.ainvoke([SystemMessage(content=combine_prompt)])
             return response.content
         except Exception as e:
-            print(f"[Orchestrator] Error combining responses: {e}")
             return primary_response
-            
-    async def gather_subordinate_responses(
-        self,
-        message: str,
-        primary_agent: Agent,
-        context: str = ""
-    ) -> str:
-        """
-        Consult subordinate agents BEFORE the primary orchestrator responds.
-        Returns a formatted string of their responses.
-        """
-        agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
-        if not agent_with_settings or not agent_with_settings.collaborator_settings:
-            return ""
-        
-        enabled = []
-        neutral = []
-        for setting in agent_with_settings.collaborator_settings:
-            if setting.status == CollaborationStatus.ENABLED:
-                enabled.append(setting.collaborator)
-            elif setting.status == CollaborationStatus.NEUTRAL:
-                neutral.append(setting.collaborator)
-                
-        # Ask LLM if we should collaborate and who to consult
-        decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
-        
-        if not decision["should_collaborate"] or not decision["agents_to_consult"]:
-            return ""
-            
-        collaborator_responses = {}
-        for agent_id in decision["agents_to_consult"]:
-            agent = await self.get_agent_with_collaborators(agent_id)
-            if agent:
-                response = await self.consult_agent(
-                    agent=agent,
-                    message=message,
-                    context=context,
-                    primary_response=""  # No primary response yet
-                )
-                if response:
-                    collaborator_responses[agent.name] = response
-                    
-        if collaborator_responses:
-            return "\n\n".join([
-                f"[{name}]: {response}"
-                for name, response in collaborator_responses.items()
-            ])
-            
-        return ""
-    
-    async def orchestrate(
-        self,
-        message: str,
-        primary_agent: Agent,
-        primary_response: str,
-        context: str = ""
-    ) -> str:
-        """
-        Main orchestration method.
-        
-        Args:
-            message: User's original message
-            primary_agent: The primary agent handling the request
-            primary_response: Initial response from primary agent
-            context: Material context if available
-            
-        Returns:
-            Final combined response
-        """
-        # Check if collaboration is enabled
-        if not hasattr(primary_agent, 'collaboration_enabled') or not primary_agent.collaboration_enabled:
-            return primary_response
-        
-        # Get collaborators by status
-        agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
-        if not agent_with_settings or not agent_with_settings.collaborator_settings:
-            return primary_response
-        
-        enabled = []
-        neutral = []
-        for setting in agent_with_settings.collaborator_settings:
-            if setting.status == CollaborationStatus.ENABLED:
-                enabled.append(setting.collaborator)
-            elif setting.status == CollaborationStatus.NEUTRAL:
-                neutral.append(setting.collaborator)
-            # BLOCKED agents are completely ignored
-        
-        print(f"[Orchestrator] Agent '{primary_agent.name}' has {len(enabled)} enabled, {len(neutral)} neutral collaborators")
-        
-        # Ask LLM if we should collaborate
-        decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
-        
-        if not decision["should_collaborate"]:
-            print(f"[Orchestrator] No collaboration needed: {decision['reasoning']}")
-            return primary_response
-        
-        print(f"[Orchestrator] Consulting: {decision['agents_to_consult']}, reason: {decision['reasoning']}")
-        
-        # Consult selected collaborators
-        collaborator_responses = {}
-        for agent_id in decision["agents_to_consult"]:
-            agent = await self.get_agent_with_collaborators(agent_id)
-            if agent:
-                response = await self.consult_agent(
-                    agent=agent,
-                    message=message,
-                    context=context,
-                    primary_response=primary_response
-                )
-                if response:
-                    collaborator_responses[agent.name] = response
-        
-        # Combine all responses
-        if collaborator_responses:
-            final_response = await self.combine_responses(
-                primary_agent=primary_agent,
-                primary_response=primary_response,
-                collaborator_responses=collaborator_responses,
-                original_message=message
-            )
-            return final_response
-        
-        return primary_response

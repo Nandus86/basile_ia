@@ -436,7 +436,9 @@ async def get_job_status_endpoint(job_id: str):
     return JobStatusResponse(**result)
 
 
-@router.post("/{path}", response_model=AsyncProcessResponse)
+from typing import Union
+
+@router.post("/{path}", response_model=Union[AsyncProcessResponse, ProcessResponse])
 async def process_dynamic_webhook(
     path: str,
     request: ProcessRequest,
@@ -446,7 +448,7 @@ async def process_dynamic_webhook(
 ):
     """
     Process an incoming webhook using dynamic paths configured in WebhookConfig.
-    Validates token and publishes to RabbitMQ via `rabbitmq_client`.
+    Validates token and handles synchronously or publishes to RabbitMQ via `rabbitmq_client` based on sync_mode.
     """
     # Find webhook config
     query = select(WebhookConfig).where(WebhookConfig.path == path, WebhookConfig.is_active == True)
@@ -464,71 +466,104 @@ async def process_dynamic_webhook(
         if token != config.access_token:
             raise HTTPException(status_code=403, detail="Invalid token")
             
-    # Resolve agent for STM config
-    from app.orchestrator.agent_factory import AgentFactory
-    factory = AgentFactory(db)
+    # Resolve target agent
     target_agent_id = str(config.target_agent_id) if config.target_agent_id else request.agent_id
-    agent = None
-    if target_agent_id:
-        agent = await factory.get_agent_by_id(target_agent_id)
     
-    stm_enabled = True
-    stm_ttl_seconds = 86400
-    if agent and agent.config:
-        stm_enabled = agent.config.get("short_term_memory_enabled", True)
-        stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
-        stm_ttl_seconds = int(stm_ttl_hours * 3600)
-    
-    # Store message in history first to ensure sync
-    if stm_enabled:
-        await redis.add_message(
-            session_id=request.session_id,
-            role="user",
-            content=request.message,
-            ttl_seconds=stm_ttl_seconds
-        )
-    
-    job_id = f"job_{uuid.uuid4().hex}"
-    
-    # Init tracking status in Redis
-    import json
-    await redis.set(
-        f"job:{job_id}",
-        json.dumps({
-            "job_id": job_id,
-            "status": "queued",
-            "result": None
-        }),
-        expire=3600
-    )
-    
-    # Prepare payload
-    payload = request.model_dump()
-    payload["agent_id"] = target_agent_id
-    payload["callback_url"] = request.callback_url
-    
-    job_log = JobLog(
-        job_id=job_id,
-        webhook_path=path,
-        status="queued",
-        request_data=payload
-    )
-    db.add(job_log)
-    await db.commit()
-    
-    # Publish to RabbitMQ
-    success = await rabbitmq_client.publish_webhook_job(
-        payload=payload,
-        config_id=str(config.id),
-        session_id=request.session_id,
-        job_id=job_id
-    )
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to enqueue webhook job")
+    if getattr(config, "sync_mode", False):
+        # SYNCHRONOUS MODE
+        from app.worker.tasks import process_message_task
         
-    return AsyncProcessResponse(
-        job_id=job_id,
-        status="queued",
-        message="Webhook received and queued for processing"
-    )
+        start_time = time.time()
+        job_log = JobLog(
+            job_id=f"sync_{uuid.uuid4().hex}",
+            webhook_path=path,
+            status="in_progress",
+            request_data=request.model_dump()
+        )
+        db.add(job_log)
+        await db.commit()
+        await db.refresh(job_log)
+        
+        try:
+            result = await process_message_task(
+                ctx={},
+                message=request.message,
+                session_id=request.session_id,
+                agent_id=target_agent_id,
+                user_access_level=request.user_access_level,
+                context_data=request.context_data,
+                transition_data=request.transition_data,
+                callback_url=None
+            )
+            
+            processing_time = (time.time() - start_time) * 1000
+            job_log.status = "completed"
+            job_log.response_data = result
+            job_log.duration_ms = int(processing_time)
+            
+            from datetime import datetime, timezone
+            job_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            
+            return ProcessResponse(
+                response=result.get("response", ""),
+                agent_used=result.get("agent_used", target_agent_id),
+                processing_time_ms=processing_time,
+                transition_data=result.get("transition_data")
+            )
+        except Exception as e:
+            processing_time = (time.time() - start_time) * 1000
+            job_log.status = "failed"
+            job_log.error_message = str(e)
+            job_log.duration_ms = int(processing_time)
+            from datetime import datetime, timezone
+            job_log.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    else:
+        # ASYNCHRONOUS MODE (RabbitMQ/Queue)
+        job_id = f"job_{uuid.uuid4().hex}"
+        
+        # Init tracking status in Redis
+        import json
+        await redis.set(
+            f"job:{job_id}",
+            json.dumps({
+                "job_id": job_id,
+                "status": "queued",
+                "result": None
+            }),
+            expire=3600
+        )
+        
+        # Prepare payload
+        payload = request.model_dump()
+        payload["agent_id"] = target_agent_id
+        payload["callback_url"] = request.callback_url
+        
+        job_log = JobLog(
+            job_id=job_id,
+            webhook_path=path,
+            status="queued",
+            request_data=payload
+        )
+        db.add(job_log)
+        await db.commit()
+        
+        # Publish to RabbitMQ
+        success = await rabbitmq_client.publish_webhook_job(
+            payload=payload,
+            config_id=str(config.id),
+            session_id=request.session_id,
+            job_id=job_id
+        )
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to enqueue webhook job")
+            
+        return AsyncProcessResponse(
+            job_id=job_id,
+            status="queued",
+            message="Webhook received and queued for processing"
+        )

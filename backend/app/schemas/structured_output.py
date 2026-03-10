@@ -130,42 +130,40 @@ def format_context_data_for_prompt(
     input_schema: Optional[Dict[str, Any]] = None
 ) -> str:
     """
-    Format context_data into a readable section for injection into the system prompt.
-    Uses input_schema descriptions when available for better labeling.
-    
-    Returns empty string if no context_data provided.
+    Format context_data cleanly using strict JSON.
+    This preserves tags like {{ $fromAI(...) }} exactly as they came from the webhook
+    so the agent can use them to call MCP tools.
     """
     if not context_data:
         return ""
     
-    lines = []
-    for key, value in context_data.items():
-        # Use description from input_schema as label if available
-        label = key
-        if input_schema and key in input_schema:
-            field_desc = input_schema[key].get("description", "")
-            if field_desc:
-                label = field_desc
-        
-        # Format the value
-        if isinstance(value, dict):
-            lines.append(f"- **{label}**:")
-            for sub_key, sub_value in value.items():
-                lines.append(f"  - {sub_key}: {sub_value}")
-        elif isinstance(value, list):
-            lines.append(f"- **{label}**: {', '.join(str(v) for v in value)}")
-        else:
-            lines.append(f"- **{label}**: {value}")
+    import json
     
+    # FILTER context_data to ONLY include keys present in the agent's input_schema
+    # This ensures each agent only sees its own domain data, preventing cross-contamination
+    filtered_data = context_data
+    if input_schema and isinstance(input_schema, dict):
+        filtered_data = {
+            k: v for k, v in context_data.items()
+            if k in input_schema
+        }
+        
+    data_json = json.dumps(filtered_data, indent=2, ensure_ascii=False)
+    
+    schema_section = ""
+    if input_schema:
+        schema_json = json.dumps(input_schema, indent=2, ensure_ascii=False)
+        schema_section = f"O esquema esperado (Input Schema) é:\n{schema_json}\n\n"
+        
     return f"""
 
-## Dados de Contexto
+## Dados de Contexto (Context Data)
 
-Os seguintes dados foram fornecidos sobre o contexto atual:
+{schema_section}Os seguintes dados foram fornecidos no contexto atual:
+{data_json}
 
-{chr(10).join(lines)}
-
-Use esses dados conforme necessário para personalizar suas respostas e ações.
+Use esses dados conforme necessário para ferramentas MCP e para basear suas respostas.
+Não preencha tags {{{{ $fromAI }}}} no texto da resposta ao usuário, em vez disso, utilize-os para completar argumentos nas ferramentas que solicitar.
 """
 
 

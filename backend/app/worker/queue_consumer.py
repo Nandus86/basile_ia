@@ -91,32 +91,17 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         if c_data: context_data = c_data
                         if t_data: transition_data = t_data
 
-                    if agent and agent.output_schema:
-                        agent_config = await factory.get_agent_config(agent)
-                        logger.info(f"[Consumer] Using STRUCTURED mode with schema keys: {list(agent.output_schema.keys())}")
+                    if agent:
+                        logger.info(f"[Consumer] Agent found: {agent.name}")
                 else:
                     logger.warning(f"[Consumer] No agent_id provided, falling back to standard orchestrator")
-
-                # Resolve STM configuration
-                stm_enabled = True
-                stm_ttl_seconds = 86400
-                if agent and agent.config:
-                    stm_enabled = agent.config.get("short_term_memory_enabled", True)
-                    stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
-                    stm_ttl_seconds = int(stm_ttl_hours * 3600)
-                    
-                # Get history
-                history = []
-                if stm_enabled:
-                    history = await redis_client.get_conversation(session_id)
 
                 # Configure resilience
                 max_retries = 3
                 retry_delay = 1.0
-                if agent_config and "resilience" in agent_config:
-                    res = agent_config.get("resilience", {})
-                    max_retries = res.get("max_retries", 3)
-                    retry_delay = res.get("retry_delay_seconds", 1.0)
+                if agent and agent.resilience_config:
+                    max_retries = agent.resilience_config.max_retries
+                    retry_delay = getattr(agent.resilience_config, "retry_delay_seconds", 1.0)
                 
                 attempts = 0
                 last_exception = None
@@ -124,115 +109,37 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 while attempts <= max_retries:
                     attempts += 1
                     try:
-                        if agent_config:
-                            # Run Structured Agent
-                            messages = []
-                            for msg in history:
-                                if msg.get("role") == "user":
-                                    messages.append(HumanMessage(content=msg["content"]))
-                                elif msg.get("role") == "assistant":
-                                    messages.append(AIMessage(content=msg["content"]))
-                            messages.append(HumanMessage(content=message_text))
-
-                            rag_context = None
-                            try:
-                                from app.services.rag_service import get_rag_context
-                                rag_context = await get_rag_context(db, agent_config["id"], message_text, limit=5)
-                            except Exception:
-                                pass
-
-                            # Information Bases Retrieval for structured agents
-                            try:
-                                from app.models.agent import Agent as AgentModel
-                                from sqlalchemy import select as sa_select
-                                from sqlalchemy.orm import selectinload
-                                from app.weaviate_client import get_weaviate
-                                
-                                ib_result = await db.execute(
-                                    sa_select(AgentModel).options(selectinload(AgentModel.information_bases)).where(AgentModel.id == agent_id)
-                                )
-                                ib_agent = ib_result.scalar_one_or_none()
-                                if ib_agent and ib_agent.information_bases:
-                                    base_codes = [b.code for b in ib_agent.information_bases if b.is_active]
-                                    if base_codes:
-                                        # Collect possible user IDs from context_data values
-                                        possible_ids = []
-                                        ctx = context_data or {}
-                                        for v in ctx.values():
-                                            if isinstance(v, str) and v.strip():
-                                                possible_ids.append(v.strip())
-                                        if session_id:
-                                            possible_ids.append(str(session_id))
-                                        
-                                        weaviate_client = get_weaviate()
-                                        if weaviate_client and possible_ids:
-                                            all_info_nodes = []
-                                            for uid in possible_ids:
-                                                info_nodes = await weaviate_client.search_information_bases(
-                                                    base_codes=base_codes,
-                                                    user_id=uid,
-                                                    query=message_text,
-                                                    limit=5
-                                                )
-                                                if info_nodes:
-                                                    all_info_nodes.extend(info_nodes)
-                                            if all_info_nodes:
-                                                seen = set()
-                                                unique_nodes = []
-                                                for n in all_info_nodes:
-                                                    if n['content'] not in seen:
-                                                        seen.add(n['content'])
-                                                        unique_nodes.append(n)
-                                                logger.info(f"[Consumer] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
-                                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
-                                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
-                            except Exception as ib_err:
-                                logger.error(f"[Consumer] Failed to retrieve Information Bases: {ib_err}")
-
-                            result_dict = await factory.invoke_agent_structured(
-                                agent_config=agent_config,
-                                messages=messages,
-                                rag_context=rag_context,
-                                context_data=context_data
-                            )
-                            
-                            logger.info(f"[Consumer] Structured result keys: {list(result_dict.keys()) if isinstance(result_dict, dict) else 'NOT_DICT'}")
-                            
-                            # Store serialized dictionary response
-                            response_text = result_dict if isinstance(result_dict, dict) else result_dict.get("output", str(result_dict))
-                            
-                            if stm_enabled:
-                                await redis_client.add_message(
-                                    session_id=session_id,
-                                    role="assistant",
-                                    content=str(response_text),
-                                    ttl_seconds=stm_ttl_seconds
-                                )
-                            final_result = response_text
-                            agent_used = agent_config["name"]
+                        from app.worker.tasks import process_message_task
                         
+                        logger.info(f"[Consumer] Delegating to unified process_message_task")
+                        response_data = await process_message_task(
+                            ctx={},
+                            message=message_text,
+                            session_id=session_id,
+                            agent_id=agent_id,
+                            user_access_level=user_access_level,
+                            context_data=context_data,
+                            transition_data=None, # Passed later
+                            callback_url=None     # Handled later by consumer loop
+                        )
+                        
+                        if response_data.get("status") == "failed":
+                            raise Exception(response_data.get("error", "Unknown error in process_message_task"))
+                            
+                        # process_message_task handles STM internally
+                        
+                        # Extract final result
+                        if "output" in response_data:
+                            # Structured using output
+                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data"]}
+                        elif "response" in response_data:
+                            # Standard text response
+                            final_result = response_data["response"]
                         else:
-                            # Run Standard Orchestrator V2 (No custom output schema or agent not specified)
-                            logger.info(f"[Consumer] Using STANDARD mode (no output_schema)")
-                            result = await run_orchestrator_v2(
-                                message=message_text,
-                                session_id=session_id,
-                                history=history,
-                                agent_id=agent_id,
-                                db=db,
-                                user_access_level=user_access_level,
-                                context_data=context_data
-                            )
-
-                            if stm_enabled:
-                                await redis_client.add_message(
-                                    session_id=session_id,
-                                    role="assistant",
-                                    content=result["response"],
-                                    ttl_seconds=stm_ttl_seconds
-                                )
-                            final_result = result["response"]
-                            agent_used = result.get("agent_used")
+                            # Other structured formats
+                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data"]}
+                            
+                        agent_used = response_data.get("agent_used")
                         
                         # If execution succeeded, break retry loop
                         break
@@ -337,14 +244,52 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
 
 
 async def start_rabbitmq_consumer():
-    """Start listening to the webhook queue"""
-    if not rabbitmq_client.channel:
-        logger.error("RabbitMQ channel not available for consumer")
-        return
+    """
+    Start listening to the webhook queue with automatic reconnection.
+    Runs an infinite loop that reconnects on connection loss with exponential backoff.
+    """
+    base_delay = 5
+    max_delay = 60
+    delay = base_delay
 
-    try:
-        queue = await rabbitmq_client.channel.get_queue(rabbitmq_client.webhook_queue_name)
-        await queue.consume(process_webhook_message)
-        logger.info("RabbitMQ Consumer started listening for webhooks")
-    except Exception as e:
-        logger.error(f"Failed to start RabbitMQ consumer: {str(e)}")
+    while True:
+        try:
+            logger.info("Initializing RabbitMQ consumer...")
+
+            # Force a fresh connection each iteration
+            rabbitmq_client.channel = None
+            rabbitmq_client.connection = None
+            await rabbitmq_client.connect()
+
+            if not rabbitmq_client.channel:
+                logger.error(f"Failed to connect to RabbitMQ. Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, max_delay)
+                continue
+
+            # Reset delay on successful connection
+            delay = base_delay
+
+            queue = await rabbitmq_client.channel.get_queue(rabbitmq_client.webhook_queue_name)
+            await queue.consume(process_webhook_message)
+            logger.info(f"Started consuming messages from {rabbitmq_client.webhook_queue_name}")
+
+            # Keep alive: wait until the connection closes
+            # aio_pika.RobustConnection emits closing; we await it
+            if rabbitmq_client.connection:
+                close_event = asyncio.Event()
+
+                def on_close(*_args, **_kwargs):
+                    close_event.set()
+
+                rabbitmq_client.connection.close_callbacks.add(on_close)
+                await close_event.wait()
+                logger.warning("RabbitMQ connection closed. Reconnecting...")
+
+        except asyncio.CancelledError:
+            logger.info("Consumer task cancelled, shutting down.")
+            break
+        except Exception as e:
+            logger.error(f"RabbitMQ consumer error: {e}. Reconnecting in {delay}s...")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)

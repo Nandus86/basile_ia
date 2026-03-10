@@ -194,10 +194,12 @@ Cite a fonte quando usar informações do contexto acima.
             # Use ReAct agent with tools
             tool_instructions = """
 
-## Instruções de Ferramentas
+## Instruções de Ferramentas e Resiliência (MUITO IMPORTANTE)
 
-Você tem ferramentas disponíveis. USE-AS quando necessário para completar tarefas.
-Se uma ferramenta retornar um erro de validação com campos NULL, tente UMA vez preencher os valores corretos usando as sugestões fornecidas. Se falhar de novo, informe o usuário.
+Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que necessário para completar suas tarefas ou consultar o banco.
+ REGRA CRÍTICA DE RETENTATIVA: Se a execução de uma ferramenta retornar qualquer ERRO, "Falha", ou avisar que campos estão indisponíveis, você **NÃO DEVE DESISTIR** imediatamente.
+- Você DEVE TENTAR EXECUTAR A FERRAMENTA NOVAMENTE AO MENOS MAIS DUAS VEZES (totalizando 3 tentativas), corrigindo, omitindo ou variando os parâmetros enviados com base no seu entendimento da conversa.
+- Somente se falhar definitivamente após as 3 tentativas consecutivas, explique ao usuário detalhadamente o porquê da falha baseado na mensagem de erro que a ferramenta devolveu.
 """
             full_prompt = system_prompt + tool_instructions
             
@@ -255,7 +257,7 @@ Se uma ferramenta retornar um erro de validação com campos NULL, tente UMA vez
         
         # Create config for structured output tracing
         run_config = RunnableConfig(
-            run_name=f"Agent Structured: {agent_config['name']}",
+            run_name=agent_config["name"],
             metadata={
                 "agent_id": agent_config["id"],
                 "agent_name": agent_config["name"],

@@ -53,29 +53,48 @@ def get_redis_settings() -> RedisSettings:
     )
 
 
-class WorkerSettings:
-    """
-    ARQ Worker configuration.
-    This class is passed directly to `arq worker app.worker.settings.WorkerSettings`
-    """
-    # Task functions that the worker can execute
-    functions = [
+async def startup(ctx):
+    """Called when ARQ worker starts."""
+    import logging
+    from app.worker.queue_consumer import start_rabbitmq_consumer
+    import asyncio
+    
+    logger = logging.getLogger(__name__)
+    logger.info("Starting RabbitMQ consumer...")
+    
+    # Fire and forget the consumer loop in the background, but attach an error handler
+    task = asyncio.create_task(start_rabbitmq_consumer())
+    
+    def handle_exception(t):
+        if not t.cancelled() and t.exception():
+            logger.error(f"RabbitMQ consumer loop failed: {t.exception()}")
+    
+    task.add_done_callback(handle_exception)
+    ctx["rabbitmq_task"] = task
+    
+async def shutdown(ctx):
+    """Called when ARQ worker stops."""
+    import logging
+    from app.services.rabbitmq_service import rabbitmq_client
+    logger = logging.getLogger(__name__)
+    logger.info("Closing RabbitMQ connection...")
+    await rabbitmq_client.disconnect()
+
+
+# ARQ Worker configuration map
+WorkerSettings = {
+    "functions": [
         process_message_task,
         process_message_structured_task,
-    ]
-    
-    # Redis connection
-    redis_settings = get_redis_settings()
-    
-    # Worker behavior
-    max_jobs = 10              # Max concurrent jobs per worker
-    job_timeout = 300          # 5 min timeout per job (LLM calls can be slow)
-    keep_result = 3600         # Keep results for 1 hour
-    retry_jobs = True          # Retry failed jobs
-    max_tries = 3              # Max retry attempts
-    
-    # Health check
-    health_check_interval = 30  # seconds
-    
-    # Queue name
-    queue_name = "basile:queue"
+    ],
+    "redis_settings": get_redis_settings(),
+    "max_jobs": 10,
+    "job_timeout": 300,
+    "keep_result": 3600,
+    "retry_jobs": True,
+    "max_tries": 3,
+    "health_check_interval": 30,
+    "queue_name": "basile:queue",
+    "on_startup": startup,
+    "on_shutdown": shutdown,
+}
