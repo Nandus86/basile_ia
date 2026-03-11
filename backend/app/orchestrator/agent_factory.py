@@ -38,7 +38,12 @@ class AgentFactory:
         
         result = await self.db.execute(
             select(Agent)
-            .options(selectinload(Agent.mcps))
+            .options(
+                selectinload(Agent.mcps),
+                selectinload(Agent.skills),
+                selectinload(Agent.information_bases),
+                selectinload(Agent.vfs_knowledge_bases),
+            )
             .where(Agent.is_active == True)
         )
         all_agents = result.scalars().all()
@@ -52,10 +57,16 @@ class AgentFactory:
         return accessible
     
     async def get_agent_by_id(self, agent_id: str) -> Optional[Agent]:
-        """Get a specific agent by ID"""
+        """Get a specific agent by ID with all relationships eagerly loaded"""
         result = await self.db.execute(
             select(Agent)
-            .options(selectinload(Agent.mcps))
+            .options(
+                selectinload(Agent.mcps),
+                selectinload(Agent.skills),
+                selectinload(Agent.information_bases),
+                selectinload(Agent.vfs_knowledge_bases),
+                selectinload(Agent.collaborator_settings),
+            )
             .where(Agent.id == agent_id, Agent.is_active == True)
         )
         return result.scalar_one_or_none()
