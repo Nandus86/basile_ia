@@ -95,6 +95,10 @@
         
         <template v-slot:item.actions="{ item }">
           <div class="d-flex gap-1 justify-center">
+            <v-btn icon variant="text" size="small" color="secondary" @click="duplicateSkill(item)" :loading="duplicatingSkill === item.id">
+              <v-icon size="20">mdi-content-copy</v-icon>
+              <v-tooltip activator="parent" location="top">Duplicar</v-tooltip>
+            </v-btn>
             <v-btn icon variant="text" size="small" color="primary" @click="openDialog(item)">
               <v-icon size="20">mdi-pencil</v-icon>
               <v-tooltip activator="parent" location="top">Editar</v-tooltip>
@@ -335,8 +339,11 @@ const snackbar = reactive({
 const headers = [
   { title: 'Skill', key: 'name', sortable: true },
   { title: 'Status', key: 'is_active', sortable: true, width: '100px' },
-  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '120px' }
+  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '160px' }
 ]
+
+// Duplicate skill state
+const duplicatingSkill = ref(null)
 
 // Computed
 const filteredSkills = computed(() => {
@@ -448,6 +455,26 @@ async function saveSkill() {
     showSnackbar('Erro ao salvar skill', 'error')
   } finally {
     saving.value = false
+  }
+}
+
+async function duplicateSkill(skill) {
+  duplicatingSkill.value = skill.id
+  try {
+    const payload = {
+      name: skill.name + ' (Cópia)',
+      intent: skill.intent || '',
+      content_md: skill.content_md || '',
+      is_active: false
+    }
+    await axios.post('/skills/', payload)
+    showSnackbar('Skill duplicada com sucesso!')
+    await fetchSkills()
+  } catch (error) {
+    console.error('Error duplicating skill:', error)
+    showSnackbar('Erro ao duplicar skill', 'error')
+  } finally {
+    duplicatingSkill.value = null
   }
 }
 

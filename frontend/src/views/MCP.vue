@@ -203,6 +203,10 @@
               <v-icon size="20">mdi-play-circle</v-icon>
               <v-tooltip activator="parent" location="top">Testar</v-tooltip>
             </v-btn>
+            <v-btn icon variant="text" size="small" color="secondary" @click="duplicateMcp(item)" :loading="duplicatingMcp === item.id">
+              <v-icon size="20">mdi-content-copy</v-icon>
+              <v-tooltip activator="parent" location="top">Duplicar</v-tooltip>
+            </v-btn>
             <v-btn icon variant="text" size="small" color="primary" @click="openDialog(item)">
               <v-icon size="20">mdi-pencil</v-icon>
               <v-tooltip activator="parent" location="top">Editar</v-tooltip>
@@ -724,8 +728,11 @@ const headers = [
   { title: 'Endpoint', key: 'endpoint', sortable: false },
   { title: 'Método', key: 'method', sortable: true, width: '80px' },
   { title: 'Status', key: 'is_active', sortable: true, width: '100px' },
-  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '140px' }
+  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '180px' }
 ]
+
+// Duplicate MCP state
+const duplicatingMcp = ref(null)
 
 // Computed
 const filterGroupOptions = computed(() => {
@@ -1021,6 +1028,35 @@ async function testMcp() {
     showSnackbar('Endpoint válido!', 'success')
   } finally {
     testing.value = false
+  }
+}
+
+async function duplicateMcp(mcp) {
+  duplicatingMcp.value = mcp.id
+  try {
+    const payload = {
+      name: mcp.name + ' (Cópia)',
+      description: mcp.description || '',
+      endpoint: mcp.endpoint || '',
+      method: mcp.method || 'POST',
+      protocol: mcp.protocol || 'http',
+      timeout_seconds: mcp.timeout_seconds || 30,
+      headers: mcp.headers || {},
+      body_template: mcp.body_template || {},
+      query_template: mcp.query_template || {},
+      response_mapping: mcp.response_mapping || {},
+      trigger_keywords: mcp.trigger_keywords || [],
+      is_active: false,
+      group_id: mcp.group_id || null
+    }
+    await axios.post('/mcp', payload)
+    showSnackbar('MCP duplicado com sucesso!')
+    await fetchMcps()
+  } catch (error) {
+    console.error('Error duplicating MCP:', error)
+    showSnackbar('Erro ao duplicar MCP', 'error')
+  } finally {
+    duplicatingMcp.value = null
   }
 }
 
