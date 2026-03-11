@@ -210,6 +210,7 @@
           <v-tab value="resilience" :disabled="!editing"><v-icon start>mdi-shield-check</v-icon>Resiliência</v-tab>
           <v-tab value="knowledge" :disabled="!editing"><v-icon start>mdi-book-open-page-variant</v-icon>Conhecimento</v-tab>
           <v-tab value="information_bases" :disabled="!editing"><v-icon start>mdi-database-search</v-icon>Bases de Infor.</v-tab>
+          <v-tab value="vfs_knowledge" :disabled="!editing"><v-icon start>mdi-file-document-multiple-outline</v-icon>VFS RAG 3.0</v-tab>
         </v-tabs>
 
         <v-card-text class="pa-6" style="min-height: 400px">
@@ -1378,6 +1379,72 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: VFS Knowledge Bases (RAG 3.0) -->
+            <v-window-item value="vfs_knowledge">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para associar Bases VFS (RAG 3.0).
+              </v-alert>
+
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">Bases VFS (RAG 3.0)</h3>
+                  <v-btn size="small" variant="text" color="primary" to="/vfs-knowledge" target="_blank">
+                    Gerenciar Bases VFS <v-icon end>mdi-open-in-new</v-icon>
+                  </v-btn>
+                </div>
+
+                <div class="d-flex align-center gap-2 mb-2">
+                  <v-select
+                    v-model="selectedVFSToAdd"
+                    :items="availableVFSBases"
+                    item-title="name"
+                    item-value="id"
+                    label="Vincular Base VFS"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    placeholder="Selecione uma Base VFS..."
+                    :disabled="availableVFSBases.length === 0"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon color="info">mdi-file-document-multiple-outline</v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                  <v-btn color="primary" @click="addVFSBase" :disabled="!selectedVFSToAdd" :loading="addingVFS">
+                    <v-icon start>mdi-plus</v-icon>
+                    Adicionar
+                  </v-btn>
+                </div>
+
+                <v-list border rounded>
+                   <v-list-subheader>Bases VFS Associadas ({{ agentVFSBases.length }})</v-list-subheader>
+                   <v-list-item v-if="agentVFSBases.length === 0">
+                     <v-list-item-title class="text-center py-4 text-medium-emphasis">
+                       Nenhuma Base VFS associada
+                     </v-list-item-title>
+                   </v-list-item>
+                   <v-list-item v-for="vfsBase in agentVFSBases" :key="vfsBase.id">
+                     <template v-slot:prepend>
+                       <v-icon color="info">mdi-file-document-multiple-outline</v-icon>
+                     </template>
+                     <v-list-item-title>{{ vfsBase.name }}</v-list-item-title>
+                     <v-list-item-subtitle>
+                       {{ vfsBase.file_count || 0 }} arquivo(s) · {{ vfsBase.description || '' }}
+                     </v-list-item-subtitle>
+                     <template v-slot:append>
+                       <v-btn icon variant="text" color="error" size="small" @click="removeVFSBase(vfsBase)" :loading="removingVFS === vfsBase.id">
+                         <v-icon>mdi-link-variant-off</v-icon>
+                       </v-btn>
+                     </template>
+                   </v-list-item>
+                </v-list>
+              </div>
+            </v-window-item>
+
           </v-window>
         </v-card-text>
         
@@ -1700,6 +1767,13 @@ const selectedSkillToAdd = ref(null)
 const addingSkill = ref(false)
 const removingSkill = ref(null)
 
+// VFS Knowledge Bases Data (RAG 3.0)
+const allVFSBases = ref([])
+const agentVFSBases = ref([])
+const selectedVFSToAdd = ref(null)
+const addingVFS = ref(false)
+const removingVFS = ref(null)
+
 // Collaborators dialog
 const collabDialog = ref(false)
 const selectedAgent = ref(null)
@@ -1840,6 +1914,11 @@ const availableSkills = computed(() => {
 const availableBases = computed(() => {
   const assocIds = new Set(agentBases.value.map(b => b.id))
   return allBases.value.filter(b => !assocIds.has(b.id) && b.is_active)
+})
+
+const availableVFSBases = computed(() => {
+  const assocIds = new Set(agentVFSBases.value.map(b => b.id))
+  return allVFSBases.value.filter(b => !assocIds.has(b.id) && b.is_active)
 })
 
 // Helpers
@@ -2217,6 +2296,8 @@ async function openDialog(agent = null) {
         fetchAllSkills(),
         fetchAllBases(),
         fetchAgentBases(fullAgent.id),
+        fetchAllVFSBases(),
+        fetchAgentVFSBases(fullAgent.id),
         fetchEmotionalProfiles()
       ])
     } catch (error) {
@@ -2445,6 +2526,54 @@ async function removeBase(base) {
     showSnackbar('Erro ao remover base', 'error')
   } finally {
     removingBase.value = null
+  }
+}
+
+async function fetchAllVFSBases() {
+  try {
+    const response = await axios.get('/vfs-knowledge-bases')
+    allVFSBases.value = response.data || []
+  } catch (error) {
+    console.error('Error fetching VFS knowledge bases:', error)
+  }
+}
+
+async function fetchAgentVFSBases(agentId) {
+  try {
+    const response = await axios.get(`/agents/${agentId}/vfs-knowledge-bases`)
+    agentVFSBases.value = response.data.vfs_knowledge_bases || []
+  } catch (error) {
+    console.error('Error fetching agent VFS bases:', error)
+  }
+}
+
+async function addVFSBase() {
+  if (!selectedVFSToAdd.value) return
+  addingVFS.value = true
+  try {
+    await axios.post(`/agents/${formData.id}/vfs-knowledge-bases/${selectedVFSToAdd.value}`)
+    await fetchAgentVFSBases(formData.id)
+    selectedVFSToAdd.value = null
+    showSnackbar('Base VFS adicionada!')
+  } catch (error) {
+    console.error('Error adding VFS base:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao adicionar base VFS', 'error')
+  } finally {
+    addingVFS.value = false
+  }
+}
+
+async function removeVFSBase(vfsBase) {
+  removingVFS.value = vfsBase.id
+  try {
+    await axios.delete(`/agents/${formData.id}/vfs-knowledge-bases/${vfsBase.id}`)
+    await fetchAgentVFSBases(formData.id)
+    showSnackbar('Base VFS removida!')
+  } catch (error) {
+    console.error('Error removing VFS base:', error)
+    showSnackbar('Erro ao remover base VFS', 'error')
+  } finally {
+    removingVFS.value = null
   }
 }
 

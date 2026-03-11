@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 import asyncio
 
 from app.database import engine, Base
-from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases
+from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs
 from app.api.endpoints import ai_providers, webhooks_config, tracking
 from app.weaviate_client import weaviate_client
 from app.redis_client import redis_client
@@ -78,6 +78,7 @@ app.include_router(models.router, tags=["Models"])
 app.include_router(ai_providers.router, prefix="/ai-providers", tags=["AI Providers"])
 app.include_router(webhooks_config.router, prefix="/webhooks-config", tags=["Webhook Configs"])
 app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"])
+app.include_router(vfs.router, prefix="/vfs-knowledge-bases", tags=["VFS Knowledge Bases"])
 
 
 @app.get("/")

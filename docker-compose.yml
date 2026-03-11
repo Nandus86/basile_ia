@@ -76,6 +76,7 @@ services:
     volumes:
       - ./backend:/app
       - basile_uploads:/app/uploads
+      - basile_vfs_data:/app/vfs
     networks:
       - basile-network
 
@@ -117,6 +118,7 @@ services:
       - basile-rabbitmq
     volumes:
       - ./backend:/app
+      - basile_vfs_data:/app/vfs
     command: [ "python", "run_worker.py" ]
     networks:
       - basile-network
@@ -141,6 +143,7 @@ volumes:
   basile_postgres_data:
   basile_weaviate_data:
   basile_uploads:
+  basile_vfs_data:
   basile_rabbitmq_data:
 
 

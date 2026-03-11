@@ -918,6 +918,122 @@ async def remove_information_base_from_agent(
     await db.commit()
 
 
+# ==================== Agent VFS Knowledge Bases Endpoints (RAG 3.0) ====================
+
+from app.models.vfs_knowledge_base import VFSKnowledgeBase
+
+class AgentVFSItem(BaseModel):
+    """VFS Knowledge Base summary for agent"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    file_count: int = 0
+    is_active: bool = True
+
+class AgentVFSList(BaseModel):
+    """List of VFS Knowledge Bases for an agent"""
+    agent_id: UUID
+    agent_name: str
+    vfs_knowledge_bases: List[AgentVFSItem]
+    total: int
+
+
+@router.get("/{agent_id}/vfs-knowledge-bases", response_model=AgentVFSList)
+async def list_agent_vfs_bases(
+    agent_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all VFS Knowledge Bases associated with an agent"""
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.vfs_knowledge_bases))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    items = [
+        AgentVFSItem(
+            id=vfs.id,
+            name=vfs.name,
+            description=vfs.description,
+            file_count=vfs.file_count or 0,
+            is_active=vfs.is_active
+        )
+        for vfs in agent.vfs_knowledge_bases
+    ]
+    
+    return AgentVFSList(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        vfs_knowledge_bases=items,
+        total=len(items)
+    )
+
+
+@router.post("/{agent_id}/vfs-knowledge-bases/{kb_id}", response_model=AgentVFSItem)
+async def add_vfs_base_to_agent(
+    agent_id: UUID,
+    kb_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add a VFS Knowledge Base to an agent"""
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.vfs_knowledge_bases)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    kb_result = await db.execute(select(VFSKnowledgeBase).where(VFSKnowledgeBase.id == kb_id))
+    kb = kb_result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=404, detail="VFS Knowledge Base not found")
+
+    if kb in agent.vfs_knowledge_bases:
+        raise HTTPException(status_code=400, detail="VFS Knowledge Base already associated with this agent")
+
+    agent.vfs_knowledge_bases.append(kb)
+    await db.commit()
+
+    return AgentVFSItem(
+        id=kb.id,
+        name=kb.name,
+        description=kb.description,
+        file_count=kb.file_count or 0,
+        is_active=kb.is_active
+    )
+
+
+@router.delete("/{agent_id}/vfs-knowledge-bases/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_vfs_base_from_agent(
+    agent_id: UUID,
+    kb_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Remove a VFS Knowledge Base from an agent"""
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.vfs_knowledge_bases)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    kb_to_remove = None
+    for kb in agent.vfs_knowledge_bases:
+        if kb.id == kb_id:
+            kb_to_remove = kb
+            break
+
+    if not kb_to_remove:
+        raise HTTPException(status_code=404, detail="VFS Knowledge Base not associated with this agent")
+
+    agent.vfs_knowledge_bases.remove(kb_to_remove)
+    await db.commit()
+
+
 @router.get("/{agent_id}/tools")
 async def list_agent_tools(
     agent_id: UUID,

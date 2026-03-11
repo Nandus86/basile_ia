@@ -42,12 +42,16 @@ class AgentOrchestrator:
         )
     
     async def get_agent_with_collaborators(self, agent_id: UUID) -> Optional[Agent]:
-        """Fetch an agent with all its collaboration settings"""
+        """Fetch an agent with all its collaboration settings (including collaborator skills)"""
+        from app.models.skill import Skill
         result = await self.db.execute(
             select(Agent)
             .options(
                 selectinload(Agent.mcps),
-                selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator)
+                selectinload(Agent.skills),
+                selectinload(Agent.collaborator_settings)
+                    .selectinload(AgentCollaborator.collaborator)
+                    .selectinload(Agent.skills)
             )
             .where(Agent.id == agent_id)
         )
@@ -68,8 +72,16 @@ class AgentOrchestrator:
         if not enabled_collaborators and not neutral_collaborators:
             return {"should_collaborate": False, "agents_to_consult": [], "reasoning": "no collaborators"}
 
-        enabled_desc = "\n".join([f"- {a.name}: {a.description or 'Especialista'}" for a in enabled_collaborators]) or "Nenhum"
-        neutral_desc = "\n".join([f"- {a.name}: {a.description or 'Especialista'}" for a in neutral_collaborators]) or "Nenhum"
+        def _format_agent_desc(a):
+            desc = f"- {a.name}: {a.description or 'Especialista'}"
+            if hasattr(a, 'skills') and a.skills:
+                active = [s for s in a.skills if s.is_active]
+                if active:
+                    skill_names = ", ".join([s.name for s in active])
+                    desc += f" [Skills: {skill_names}]"
+            return desc
+        enabled_desc = "\n".join([_format_agent_desc(a) for a in enabled_collaborators]) or "Nenhum"
+        neutral_desc = "\n".join([_format_agent_desc(a) for a in neutral_collaborators]) or "Nenhum"
         
         prompt = f"""Você é um orquestrador que decide se um agente de IA precisa consultar outros especialistas.
 Abaixo estará todo o histórico da conversa e a última mensagem do usuário para você basear sua decisão.
@@ -184,12 +196,26 @@ Responda APENAS em JSON válido com este formato exato:
             elif msg.get("role") == "assistant":
                 messages.append(AIMessage(content=msg["content"]))
                 
-        # To strictly place message -> orientation -> context data in the final human turn:
+        # To strictly place: skills -> orientation -> context data in the final human turn:
         from app.schemas.structured_output import format_context_data_for_prompt
         context_str = format_context_data_for_prompt(context_data, agent_config.get("input_schema"))
         
+        # Include collaborator's own skills in the delegation message
+        skills_section = ""
+        if hasattr(agent, 'skills') and agent.skills:
+            active_skills = [s for s in agent.skills if s.is_active]
+            if active_skills:
+                skills_parts = []
+                for skill in active_skills:
+                    skills_parts.append(f"### {skill.name}\n{skill.content_md}")
+                skills_section = (
+                    "\n\n[SUAS SKILLS ATIVAS - Siga estas instruções especializadas]:\n"
+                    + "\n---\n".join(skills_parts)
+                )
+        
         final_user_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
 {message}
+{skills_section}
 
 [O QUE VOCÊ DEVE FAZER (Orientação do Orquestrador)]:
 {orientation}
