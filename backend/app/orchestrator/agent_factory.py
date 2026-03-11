@@ -156,7 +156,12 @@ class AgentFactory:
             kwargs["temperature"] = agent_config.get("temperature", 0.7)
             kwargs["max_tokens"] = agent_config.get("max_tokens", 2048)
         
-        if "/" in model_id:
+        # Determina se o modelo deve ser roteado pelo OpenRouter
+        # Modelos OpenRouter normalmente têm '/' em seu ID, mas adicionamos exceções para os requests manuais do usuário
+        openrouter_specials = ["sambanova", "groq"]
+        is_openrouter = "/" in model_id or model_id in openrouter_specials
+        
+        if is_openrouter:
             # OpenRouter model
             kwargs["api_key"] = settings.OPENROUTER_API_KEY
             kwargs["base_url"] = "https://openrouter.ai/api/v1"
