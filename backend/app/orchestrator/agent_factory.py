@@ -77,11 +77,29 @@ class AgentFactory:
         except Exception as e:
             print(f"[AgentFactory] Failed to load tools for {agent.name}: {e}")
         
+        # Build system prompt with skills injection
+        system_prompt = agent.system_prompt
+        skills_summary = []
+        if hasattr(agent, 'skills') and agent.skills:
+            active_skills = [s for s in agent.skills if s.is_active]
+            if active_skills:
+                skills_parts = []
+                for skill in active_skills:
+                    skills_parts.append(f"### {skill.name}\n{skill.content_md}")
+                    skills_summary.append({"name": skill.name, "intent": skill.intent or ""})
+                skills_section = (
+                    "\n\n## Skills e Instruções Especializadas\n\n"
+                    "Siga estritamente as instruções abaixo como parte do seu comportamento:\n\n"
+                    + "\n\n---\n\n".join(skills_parts)
+                )
+                system_prompt += skills_section
+                print(f"[AgentFactory] 📌 Injected {len(active_skills)} skills into {agent.name}")
+        
         config = {
             "id": agent_id,
             "name": agent.name,
             "description": agent.description or "",
-            "system_prompt": agent.system_prompt,
+            "system_prompt": system_prompt,
             "model": agent.model,
             "temperature": float(agent.temperature),
             "max_tokens": int(agent.max_tokens),
@@ -95,7 +113,8 @@ class AgentFactory:
             "transition_output_schema": agent.transition_output_schema, # System transition output
             "config": agent.config or {},           # Extra config (reasoning, etc.)
             "resilience": agent.resilience_config.to_dict() if agent.resilience_config else {},
-            "agent_model": agent  # Keep reference for collaboration
+            "agent_model": agent,  # Keep reference for collaboration
+            "skills_summary": skills_summary,  # For orchestrator to see collaborator skills
         }
         
         self._agent_cache[agent_id] = config

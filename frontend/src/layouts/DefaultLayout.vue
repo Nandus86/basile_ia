@@ -59,7 +59,7 @@
       <template v-slot:append>
         <div class="sidebar-footer" v-show="!rail">
           <div class="d-flex align-center justify-center mb-3">
-            <span class="version-badge">v0.0.7</span>
+            <span class="version-badge">v0.0.8</span>
           </div>
           <div class="d-flex align-center pa-3">
             <v-avatar size="32" class="mr-3 border-avatar">
@@ -182,6 +182,7 @@ const menuItems = [
   { title: 'Integrações MCP', icon: 'mdi-connection', to: '/mcp' },
   { title: 'Criador de Skills', icon: 'mdi-star-shooting-outline', to: '/skills' },
   { title: 'Bases de Informações', icon: 'mdi-database-search', to: '/information-bases' },
+  { title: 'Base VFS (RAG 3.0)', icon: 'mdi-file-document-multiple-outline', to: '/vfs-knowledge' },
   { title: 'Banco de Dados', icon: 'mdi-database-outline', to: '/database' },
   { title: 'Configurações de IA', icon: 'mdi-cog-box', to: '/ia-settings' }
 ]
@@ -195,6 +196,7 @@ const pageTitleMap = {
   '/mcp': 'Integrações MCP',
   '/skills': 'Criador de Skills',
   '/information-bases': 'Bases de Informações',
+  '/vfs-knowledge': 'Base VFS (RAG 3.0)',
   '/database': 'Banco de Dados',
   '/ia-settings': 'Configurações de IA'
 }

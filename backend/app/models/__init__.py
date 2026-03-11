@@ -11,6 +11,7 @@ from app.models.webhook_config import WebhookConfig
 from app.models.job_log import JobLog
 from app.models.skill import Skill
 from app.models.information_base import InformationBase
+from app.models.vfs_knowledge_base import VFSKnowledgeBase, VFSFile
 
 __all__ = [
     "APIKey", 
@@ -20,6 +21,7 @@ __all__ = [
     "Document", "DocumentStatus", "DocumentType",
     "EmotionalProfile", "DEFAULT_EMOTIONAL_PROFILES",
     "AIProvider", "WebhookConfig", "JobLog",
-    "Skill", "InformationBase"
+    "Skill", "InformationBase",
+    "VFSKnowledgeBase", "VFSFile"
 ]
 

@@ -172,6 +172,14 @@ class Agent(Base):
         back_populates="agents",
         lazy="selectin"
     )
+
+    # VFS Knowledge Bases for RAG 3.0
+    vfs_knowledge_bases = relationship(
+        "VFSKnowledgeBase",
+        secondary="agent_vfs_knowledge_base_access",
+        back_populates="agents",
+        lazy="selectin"
+    )
     
     # Collaboration settings (agents this agent can collaborate with)
     collaborator_settings = relationship(

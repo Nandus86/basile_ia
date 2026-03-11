@@ -49,6 +49,20 @@ async def _enrich_agent_prompt(
     except Exception as e:
         print(f"[Task] RAG error: {e}")
 
+    # 1.5. VFS RAG 3.0 (Subagent Knowledge Retrieval)
+    try:
+        from app.services.vfs_rag_service import get_vfs_context
+        vfs_context = await get_vfs_context(db, agent_id, message)
+        if vfs_context:
+            print(f"[Task] 📂 VFS RAG 3.0 context loaded for {agent_config['name']}")
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                f"\n\n## Base de Conhecimento VFS (RAG 3.0)\n\n"
+                f"As seguintes informações foram recuperadas da base de conhecimento VFS por um subagente especializado:\n\n"
+                f"{vfs_context}\n"
+            )
+    except Exception as e:
+        print(f"[Task] VFS RAG 3.0 error: {e}")
+
     # 2. Information Bases
     try:
         from app.models.agent import Agent as AgentModel
