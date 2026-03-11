@@ -183,6 +183,7 @@ const menuItems = [
   { title: 'Criador de Skills', icon: 'mdi-star-shooting-outline', to: '/skills' },
   { title: 'Bases de Informações', icon: 'mdi-database-search', to: '/information-bases' },
   { title: 'Base VFS (RAG 3.0)', icon: 'mdi-file-document-multiple-outline', to: '/vfs-knowledge' },
+  { title: 'Gerenciar Memórias', icon: 'mdi-memory', to: '/memory' },
   { title: 'Banco de Dados', icon: 'mdi-database-outline', to: '/database' },
   { title: 'Configurações de IA', icon: 'mdi-cog-box', to: '/ia-settings' }
 ]
@@ -197,6 +198,7 @@ const pageTitleMap = {
   '/skills': 'Criador de Skills',
   '/information-bases': 'Bases de Informações',
   '/vfs-knowledge': 'Base VFS (RAG 3.0)',
+  '/memory': 'Gerenciar Memórias',
   '/database': 'Banco de Dados',
   '/ia-settings': 'Configurações de IA'
 }

@@ -59,6 +59,11 @@ const routes = [
         path: 'vfs-knowledge',
         name: 'VFSKnowledge',
         component: () => import('@/views/VFSKnowledge.vue')
+      },
+      {
+        path: 'memory',
+        name: 'MemoryManager',
+        component: () => import('@/views/MemoryManager.vue')
       }
     ]
   },

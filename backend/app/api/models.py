@@ -48,21 +48,27 @@ OPENAI_MODELS = [
 
 
 async def fetch_openrouter_models() -> List[Dict[str, Any]]:
-    """Fetch available models from OpenRouter API"""
+    """Fetch available models from OpenRouter API — returns ALL models, no filtering"""
     if not settings.OPENROUTER_API_KEY:
         return []
     
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 "https://openrouter.ai/api/v1/models",
-                headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"}
+                headers={
+                    "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+                    "HTTP-Referer": "https://basile.ia",
+                }
             )
             response.raise_for_status()
             data = response.json()
             
+            raw_models = data.get("data", [])
+            logger.info(f"OpenRouter API returned {len(raw_models)} raw models")
+            
             models = []
-            for m in data.get("data", []):
+            for m in raw_models:
                 model_id = m.get("id", "")
                 model_name = m.get("name", model_id)
                 context_length = m.get("context_length", 0)
@@ -84,9 +90,12 @@ async def fetch_openrouter_models() -> List[Dict[str, Any]]:
                     "pricing": pricing
                 })
             
-            logger.info(f"Fetched {len(models)} models from OpenRouter")
+            logger.info(f"Fetched {len(models)} models from OpenRouter (all included)")
             return models
             
+    except httpx.TimeoutException:
+        logger.error("OpenRouter API timeout — try again later")
+        return []
     except Exception as e:
         logger.error(f"Failed to fetch OpenRouter models: {e}")
         return []
