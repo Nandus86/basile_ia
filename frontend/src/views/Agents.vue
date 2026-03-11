@@ -159,6 +159,10 @@
               <v-icon size="20">mdi-account-group</v-icon>
               <v-tooltip activator="parent" location="top">Colaboradores</v-tooltip>
             </v-btn>
+            <v-btn icon variant="text" size="small" color="secondary" @click="duplicateAgent(item)" :loading="duplicatingAgent === item.id">
+              <v-icon size="20">mdi-content-copy</v-icon>
+              <v-tooltip activator="parent" location="top">Duplicar</v-tooltip>
+            </v-btn>
             <v-btn icon variant="text" size="small" color="primary" @click="openDialog(item)">
               <v-icon size="20">mdi-pencil</v-icon>
               <v-tooltip activator="parent" location="top">Editar</v-tooltip>
@@ -1781,8 +1785,11 @@ const headers = [
   { title: 'Modelo', key: 'model', sortable: true },
   { title: 'Status', key: 'is_active', sortable: true },
   { title: 'Recursos', key: 'collaboration_enabled', sortable: false, align: 'center' },
-  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '140px' }
+  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '180px' }
 ]
+
+// Duplicate agent state
+const duplicatingAgent = ref(null)
 
 // Computed
 const filteredAgents = computed(() => {
@@ -2448,6 +2455,102 @@ function selectEmotionalProfile(profile) {
 function clearEmotionalProfile() {
   formData.emotional_profile_id = null
   formData.emotional_intensity = 'medium'
+}
+
+async function duplicateAgent(agent) {
+  duplicatingAgent.value = agent.id
+  try {
+    // Fetch full agent data
+    const response = await axios.get(`/agents/${agent.id}`)
+    const fullAgent = response.data
+
+    // Build payload without id, appending (Cópia) to name
+    const payload = {
+      name: fullAgent.name + ' (Cópia)',
+      description: fullAgent.description || '',
+      system_prompt: fullAgent.system_prompt || '',
+      model: fullAgent.model || 'gpt-4o-mini',
+      temperature: fullAgent.temperature || '0.7',
+      max_tokens: fullAgent.max_tokens || '2000',
+      is_active: false,
+      access_level: fullAgent.access_level || 'normal',
+      collaboration_enabled: fullAgent.collaboration_enabled ?? true,
+      vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
+      is_orchestrator: fullAgent.is_orchestrator ?? false,
+      emotional_profile_id: fullAgent.emotional_profile?.id || null,
+      emotional_intensity: fullAgent.emotional_intensity || 'medium',
+      output_schema: fullAgent.output_schema || null,
+      input_schema: fullAgent.input_schema || null,
+      transition_input_schema: fullAgent.transition_input_schema || null,
+      transition_output_schema: fullAgent.transition_output_schema || null,
+      config: fullAgent.config || {}
+    }
+
+    // Create the duplicated agent
+    const createResp = await axios.post('/agents', payload)
+    const newAgentId = createResp.data.id
+
+    // Duplicate associated skills
+    try {
+      const skillsResp = await axios.get(`/agents/${agent.id}/skills`)
+      const skills = skillsResp.data.skills || []
+      for (const skill of skills) {
+        await axios.post(`/agents/${newAgentId}/skills/${skill.id}`)
+      }
+    } catch (e) { console.warn('Could not duplicate skills:', e) }
+
+    // Duplicate associated MCPs
+    try {
+      const mcpsResp = await axios.get(`/agents/${agent.id}/mcps`)
+      const mcpsList = mcpsResp.data.mcps || []
+      for (const mcp of mcpsList) {
+        await axios.post(`/agents/${newAgentId}/mcps/${mcp.id}`)
+      }
+    } catch (e) { console.warn('Could not duplicate MCPs:', e) }
+
+    // Duplicate associated MCP Groups
+    try {
+      const groupsResp = await axios.get(`/agents/${agent.id}/mcp-groups`)
+      const groups = groupsResp.data.mcp_groups || []
+      for (const group of groups) {
+        await axios.post(`/agents/${newAgentId}/mcp-groups/${group.id}`)
+      }
+    } catch (e) { console.warn('Could not duplicate MCP Groups:', e) }
+
+    // Duplicate associated documents
+    try {
+      const docsResp = await axios.get(`/agents/${agent.id}/documents`)
+      const docs = (docsResp.data.documents || []).filter(d => !d.is_global)
+      for (const doc of docs) {
+        await axios.post(`/agents/${newAgentId}/documents/${doc.id}`)
+      }
+    } catch (e) { console.warn('Could not duplicate documents:', e) }
+
+    // Duplicate associated Information Bases
+    try {
+      const basesResp = await axios.get(`/agents/${agent.id}/information-bases`)
+      const bases = basesResp.data.information_bases || []
+      for (const base of bases) {
+        await axios.post(`/agents/${newAgentId}/information-bases/${base.id}`)
+      }
+    } catch (e) { console.warn('Could not duplicate information bases:', e) }
+
+    // Duplicate resilience config
+    try {
+      const configResp = await axios.get(`/agents/${agent.id}/config`)
+      if (configResp.data && Object.keys(configResp.data).length > 0) {
+        await axios.put(`/agents/${newAgentId}/config`, configResp.data)
+      }
+    } catch (e) { console.warn('Could not duplicate config:', e) }
+
+    showSnackbar('Agente duplicado com sucesso!')
+    await fetchAgents()
+  } catch (error) {
+    console.error('Error duplicating agent:', error)
+    showSnackbar('Erro ao duplicar agente: ' + (error.response?.data?.detail || error.message), 'error')
+  } finally {
+    duplicatingAgent.value = null
+  }
 }
 
 function confirmDelete(agent) {
