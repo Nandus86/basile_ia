@@ -279,11 +279,11 @@ Responda APENAS em JSON válido com este formato exato:
             agent_id = agent_info.get("id")
             orientation = agent_info.get("orientation", "")
             for agent in (enabled + neutral):
-                if agent.id == agent_id:
+                if str(agent.id) == str(agent_id):
                     selected_collaborators.append((agent, orientation))
                     break
         
-        print(f"[Orchestrator] 🔄 Consulting {len(selected_collaborators)} selected collaborators")
+        print(f"[Orchestrator] 🔄 Consulting {len(selected_collaborators)} selected collaborators (from {len(decision['agents_to_consult'])} requested)")
         
         conversation_history = history or []
         tasks = [
@@ -342,10 +342,12 @@ Responda APENAS em JSON válido com este formato exato:
             return primary_response
             
         selected_collaborators = []
-        for agent_id in decision["agents_to_consult"]:
+        for agent_info in decision["agents_to_consult"]:
+            agent_id = agent_info.get("id")
+            orientation = agent_info.get("orientation", "")
             for agent in (enabled + neutral):
-                if agent.id == agent_id:
-                    selected_collaborators.append(agent)
+                if str(agent.id) == str(agent_id):
+                    selected_collaborators.append((agent, orientation))
                     break
         
         tasks = [
@@ -354,8 +356,9 @@ Responda APENAS em JSON válido com este formato exato:
                 message=message,
                 history=[],
                 context=context,
+                orientation=orientation,
             )
-            for collaborator in selected_collaborators
+            for collaborator, orientation in selected_collaborators
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
