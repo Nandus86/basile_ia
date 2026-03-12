@@ -197,29 +197,12 @@ Responda APENAS em JSON válido com este formato exato:
                 messages.append(AIMessage(content=msg["content"]))
                 
         # To strictly place: skills -> orientation -> context data in the final human turn:
-        from app.schemas.structured_output import format_context_data_for_prompt
-        context_str = format_context_data_for_prompt(context_data, agent_config.get("input_schema"))
-        
-        # Include collaborator's own skills in the delegation message
-        skills_section = ""
-        if hasattr(agent, 'skills') and agent.skills:
-            active_skills = [s for s in agent.skills if s.is_active]
-            if active_skills:
-                skills_parts = []
-                for skill in active_skills:
-                    skills_parts.append(f"### {skill.name}\n{skill.content_md}")
-                skills_section = (
-                    "\n\n[SUAS SKILLS ATIVAS - Siga estas instruções especializadas]:\n"
-                    + "\n---\n".join(skills_parts)
-                )
-        
         final_user_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
 {message}
 {skills_section}
 
 [O QUE VOCÊ DEVE FAZER (Orientação do Orquestrador)]:
-{orientation}
-{context_str}"""
+{orientation}"""
 
         messages.append(HumanMessage(content=final_user_content))
         

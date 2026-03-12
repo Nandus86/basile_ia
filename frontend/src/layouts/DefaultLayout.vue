@@ -175,6 +175,7 @@ const rail = ref(false)
 
 const menuItems = [
   { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: '/' },
+  { title: 'Workflows', icon: 'mdi-sitemap-outline', to: '/workflows' },
   { title: 'Acompanhamento', icon: 'mdi-chart-timeline-variant', to: '/acompanhamento' },
   { title: 'Chat IA', icon: 'mdi-chat-processing-outline', to: '/chat' },
   { title: 'Meus Agentes', icon: 'mdi-robot-outline', to: '/agents' },
@@ -190,6 +191,7 @@ const menuItems = [
 
 const pageTitleMap = {
   '/': 'Olá, Fernando 👋',
+  '/workflows': 'Workflows Visuais',
   '/acompanhamento': 'Acompanhamento',
   '/chat': 'Chat IA',
   '/agents': 'Meus Agentes',
