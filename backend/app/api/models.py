@@ -91,6 +91,24 @@ async def fetch_openrouter_models() -> List[Dict[str, Any]]:
                 })
             
             logger.info(f"Fetched {len(models)} models from OpenRouter (all included)")
+            
+            # Adicionar variações manuais solicitadas pelo usuário, que não vêm listadas
+            # diretamente na API base mas são aceitas ou representam tiers/providers
+            extra_variations = [
+                {"id": "openai/gpt-oss-120b:exacto", "name": "GPT OSS 120B (Exacto)", "provider": "openrouter", "context_length": 128000, "pricing": None},
+                {"id": "openai/gpt-oss-120b:nitro", "name": "GPT OSS 120B (Nitro)", "provider": "openrouter", "context_length": 128000, "pricing": None},
+                {"id": "deepinfra/bf16", "name": "DeepInfra (bf16)", "provider": "openrouter", "context_length": 0, "pricing": None},
+                {"id": "sambanova", "name": "SambaNova", "provider": "openrouter", "context_length": 0, "pricing": None},
+                {"id": "groq", "name": "Groq", "provider": "openrouter", "context_length": 0, "pricing": None},
+                {"id": "cerebras/fp16", "name": "Cerebras (fp16)", "provider": "openrouter", "context_length": 0, "pricing": None},
+            ]
+            
+            # Evitar duplicatas caso a API comece a retornar
+            existing_ids = {m["id"] for m in models}
+            for extra in extra_variations:
+                if extra["id"] not in existing_ids:
+                    models.append(extra)
+            
             return models
             
     except httpx.TimeoutException:

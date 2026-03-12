@@ -141,12 +141,26 @@ def format_context_data_for_prompt(
     
     # FILTER context_data to ONLY include keys present in the agent's input_schema
     # This ensures each agent only sees its own domain data, preventing cross-contamination
-    filtered_data = context_data
+    
+    if isinstance(input_schema, str):
+        try:
+            input_schema = json.loads(input_schema)
+        except Exception:
+            input_schema = None
+            
+    filtered_data = {}
     if input_schema and isinstance(input_schema, dict):
         filtered_data = {
             k: v for k, v in context_data.items()
             if k in input_schema
         }
+    else:
+        # Se não há input_schema definido para o agente, então NÃO injetamos variáveis
+        # de contexto do webhook/orquestrador para evitar poluição e uso incorreto.
+        filtered_data = {}
+        
+    if not filtered_data:
+        return ""
         
     data_json = json.dumps(filtered_data, indent=2, ensure_ascii=False)
     
