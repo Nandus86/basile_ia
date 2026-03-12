@@ -112,6 +112,16 @@ async def process_message(
                 ttl_seconds=stm_ttl_seconds
             )
         
+        # Extract extra root fields and add to context_data
+        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+        payload = request.model_dump()
+        c_data = request.context_data or {}
+        for k, v in payload.items():
+            if k not in standard_keys:
+                c_data[k] = v
+        if c_data:
+            request.context_data = c_data
+            
         # Log to DB
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
