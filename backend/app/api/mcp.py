@@ -140,31 +140,65 @@ async def delete_mcp(
     await db.commit()
 
 
-async def execute_http(mcp: MCP, body: dict, timeout: float) -> dict:
+from app.services.mcp_tools import _inject_from_ai_params
+import urllib.parse
+
+async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
     """Execute standard HTTP request"""
+    # Build safely injected params
+    body_str = json.dumps(mcp.body_template or {})
+    headers_str = json.dumps(mcp.headers or {})
+    endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
+    query_str = json.dumps(getattr(mcp, "query_template", {}) or {})
+    
+    body_str, _ = _inject_from_ai_params(body_str, request_params)
+    headers_str, _ = _inject_from_ai_params(headers_str, request_params)
+    endpoint_str, _ = _inject_from_ai_params(endpoint_str, request_params)
+    query_str, _ = _inject_from_ai_params(query_str, request_params)
+    
+    body = json.loads(body_str)
+    headers = json.loads(headers_str)
+    query = json.loads(query_str)
+    
+    # Merge remaining test parameters into body or query
+    for k, v in request_params.items():
+        if mcp.method.upper() == "GET":
+            if k not in query:
+                query[k] = v
+        else:
+            if k not in body:
+                body[k] = v
+                
+    safe_headers = {}
+    for hk, hv in headers.items():
+        safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
+
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         if mcp.method.upper() == "GET":
             response = await client.get(
-                mcp.endpoint,
-                headers=mcp.headers,
-                params=body
+                endpoint_str,
+                headers=safe_headers,
+                params=query
             )
         elif mcp.method.upper() == "POST":
             response = await client.post(
-                mcp.endpoint,
-                headers=mcp.headers,
+                endpoint_str,
+                headers=safe_headers,
+                params=query,
                 json=body
             )
         elif mcp.method.upper() == "PUT":
             response = await client.put(
-                mcp.endpoint,
-                headers=mcp.headers,
+                endpoint_str,
+                headers=safe_headers,
+                params=query,
                 json=body
             )
         elif mcp.method.upper() == "DELETE":
             response = await client.delete(
-                mcp.endpoint,
-                headers=mcp.headers
+                endpoint_str,
+                headers=safe_headers,
+                params=query
             )
         else:
             raise ValueError(f"Unsupported method: {mcp.method}")
@@ -173,22 +207,46 @@ async def execute_http(mcp: MCP, body: dict, timeout: float) -> dict:
         return response.json()
 
 
-async def execute_sse(mcp: MCP, body: dict, timeout: float) -> dict:
+async def execute_sse(mcp: MCP, request_params: dict, timeout: float) -> dict:
     """Execute SSE (Server-Sent Events) request and collect all events"""
     events = []
     final_result = None
     
+    # Build safely injected params
+    body_str = json.dumps(mcp.body_template or {})
+    headers_str = json.dumps(mcp.headers or {})
+    endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
+    query_str = json.dumps(getattr(mcp, "query_template", {}) or {})
+    
+    body_str, _ = _inject_from_ai_params(body_str, request_params)
+    headers_str, _ = _inject_from_ai_params(headers_str, request_params)
+    endpoint_str, _ = _inject_from_ai_params(endpoint_str, request_params)
+    query_str, _ = _inject_from_ai_params(query_str, request_params)
+    
+    body = json.loads(body_str)
+    headers = json.loads(headers_str)
+    query = json.loads(query_str)
+    
+    # Merge remaining test parameters into body or query
+    for k, v in request_params.items():
+        if mcp.method.upper() == "GET":
+            if k not in query:
+                query[k] = v
+        else:
+            if k not in body:
+                body[k] = v
+                
+    safe_headers = {**headers, "Accept": "text/event-stream", "Cache-Control": "no-cache"}
+    for hk, hv in list(safe_headers.items()):
+        safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
+    
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        headers = {**mcp.headers}
-        headers["Accept"] = "text/event-stream"
-        headers["Cache-Control"] = "no-cache"
-        
         async with client.stream(
             mcp.method.upper(),
-            mcp.endpoint,
-            headers=headers,
+            endpoint_str,
+            headers=safe_headers,
             json=body if mcp.method.upper() != "GET" else None,
-            params=body if mcp.method.upper() == "GET" else None
+            params=query if mcp.method.upper() == "GET" else None
         ) as response:
             response.raise_for_status()
             
@@ -293,10 +351,10 @@ async def execute_mcp(
         protocol = (mcp.protocol or "http").lower()
         
         if protocol == "http":
-            result_data = await execute_http(mcp, body, timeout)
+            result_data = await execute_http(mcp, request.params, timeout)
             events = None
         elif protocol == "sse":
-            sse_result = await execute_sse(mcp, body, timeout)
+            sse_result = await execute_sse(mcp, request.params, timeout)
             result_data = sse_result.get("result")
             events = sse_result.get("events")
         elif protocol == "mcp":
