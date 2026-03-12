@@ -266,39 +266,37 @@
                 </p>
                 
                 <v-row>
-                  <v-col cols="12" md="4">
-                    <v-autocomplete
+                  <v-col cols="12" md="3">
+                    <v-select
+                      v-model="activeProvider"
+                      label="Provedor (Grupo)"
+                      :items="providerOptions"
+                      prepend-inner-icon="mdi-domain"
+                    ></v-select>
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-combobox
                       v-model="formData.model"
                       label="Modelo LLM"
                       :items="modelOptions"
                       item-title="title"
                       item-value="value"
+                      :return-object="false"
                       prepend-inner-icon="mdi-brain"
                       :loading="loadingModels"
-                      placeholder="Buscar modelo..."
-                      no-data-text="Nenhum modelo encontrado"
+                      placeholder="Modelo manual ou buscar..."
+                      hide-no-data
                     >
                       <template v-slot:item="{ props, item }">
                         <v-list-item v-bind="props">
-                          <template v-slot:prepend>
-                            <v-icon :color="item.raw.provider === 'openai' ? '#10a37f' : '#6366f1'" size="18">
-                              {{ item.raw.provider === 'openai' ? 'mdi-creation' : 'mdi-router-wireless' }}
-                            </v-icon>
-                          </template>
                           <template v-slot:subtitle v-if="item.raw.context_length">
                             <span class="text-caption">{{ formatContextLength(item.raw.context_length) }} tokens</span>
                           </template>
                         </v-list-item>
                       </template>
-                      <template v-slot:selection="{ item }">
-                        <v-icon :color="item.raw.provider === 'openai' ? '#10a37f' : '#6366f1'" size="16" class="mr-1">
-                          {{ item.raw.provider === 'openai' ? 'mdi-creation' : 'mdi-router-wireless' }}
-                        </v-icon>
-                        {{ item.raw.title }}
-                      </template>
-                    </v-autocomplete>
+                    </v-combobox>
                   </v-col>
-                  <v-col cols="12" md="4" v-if="!formData.config.is_reasoning_model">
+                  <v-col cols="12" md="3" v-if="!formData.config.is_reasoning_model">
                     <v-text-field
                       v-model="formData.temperature"
                       label="Temperature"
@@ -309,7 +307,7 @@
                       prepend-inner-icon="mdi-thermometer"
                     ></v-text-field>
                   </v-col>
-                  <v-col cols="12" md="4" v-if="!formData.config.is_reasoning_model">
+                  <v-col cols="12" md="3" v-if="!formData.config.is_reasoning_model">
                     <v-text-field
                       v-model="formData.max_tokens"
                       label="Max Tokens"
@@ -319,7 +317,7 @@
                       prepend-inner-icon="mdi-counter"
                     ></v-text-field>
                   </v-col>
-                  <v-col cols="12" md="4" v-if="formData.config.is_reasoning_model">
+                  <v-col cols="12" md="3" v-if="formData.config.is_reasoning_model">
                     <v-select
                       v-model="formData.config.reasoning_effort"
                       label="Reasoning Effort"
@@ -327,11 +325,11 @@
                       item-title="label"
                       item-value="value"
                       prepend-inner-icon="mdi-head-cog"
-                      hint="Controla profundidade do raciocínio"
+                      hint="Controle de raciocínio"
                       persistent-hint
                     ></v-select>
                   </v-col>
-                  <v-col cols="12" md="4" v-if="formData.config.is_reasoning_model">
+                  <v-col cols="12" md="3" v-if="formData.config.is_reasoning_model">
                     <v-text-field
                       v-model="formData.config.max_completion_tokens"
                       label="Max Completion Tokens"
@@ -339,7 +337,7 @@
                       min="1000"
                       max="128000"
                       prepend-inner-icon="mdi-counter"
-                      hint="Inclui tokens de raciocínio + resposta"
+                      hint="Total tokens saída"
                       persistent-hint
                     ></v-text-field>
                   </v-col>
@@ -1815,35 +1813,21 @@ const accessLevels = [
 const loadingModels = ref(false)
 const allModels = ref([])
 
-const modelOptions = computed(() => {
-  // Group by provider: OpenAI first, then OpenRouter
-  const openai = allModels.value
-    .filter(m => m.provider === 'openai')
-    .map(m => ({
-      title: m.name,
-      value: m.id,
-      provider: m.provider,
-      context_length: m.context_length
-    }))
-  const openrouter = allModels.value
-    .filter(m => m.provider === 'openrouter')
-    .map(m => ({
-      title: m.name,
-      value: m.id,
-      provider: m.provider,
-      context_length: m.context_length
-    }))
+const activeProvider = ref('openai')
+const providerOptions = [
+  { title: '🟢 OpenAI', value: 'openai' },
+  { title: '🔵 OpenRouter', value: 'openrouter' }
+]
 
-  const items = []
-  if (openai.length > 0) {
-    items.push({ type: 'subheader', title: '🟢 OpenAI' })
-    items.push(...openai)
-  }
-  if (openrouter.length > 0) {
-    items.push({ type: 'subheader', title: '🔵 OpenRouter' })
-    items.push(...openrouter)
-  }
-  return items
+const modelOptions = computed(() => {
+  return allModels.value
+    .filter(m => m.provider === activeProvider.value)
+    .map(m => ({
+      title: m.name,
+      value: m.id,
+      provider: m.provider,
+      context_length: m.context_length
+    }))
 })
 
 function formatContextLength(length) {
@@ -2250,6 +2234,17 @@ async function openDialog(agent = null) {
           ...(fullAgent.config || {})
         }
       })
+      
+      const foundModel = allModels.value.find(m => m.id === fullAgent.model)
+      if (foundModel) {
+        activeProvider.value = foundModel.provider
+      } else if (fullAgent.model?.includes('/')) {
+        activeProvider.value = 'openrouter'
+      } else if (['sambanova', 'groq'].includes(fullAgent.model)) {
+        activeProvider.value = 'openrouter'
+      } else {
+        activeProvider.value = 'openai'
+      }
       
       // Load output schema into editor (Context)
       if (fullAgent.output_schema) {
