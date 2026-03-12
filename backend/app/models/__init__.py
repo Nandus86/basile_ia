@@ -12,6 +12,7 @@ from app.models.job_log import JobLog
 from app.models.skill import Skill
 from app.models.information_base import InformationBase
 from app.models.vfs_knowledge_base import VFSKnowledgeBase, VFSFile
+from app.models.workflow import Workflow
 
 __all__ = [
     "APIKey", 

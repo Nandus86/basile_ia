@@ -64,6 +64,16 @@ const routes = [
         path: 'memory',
         name: 'MemoryManager',
         component: () => import('@/views/MemoryManager.vue')
+      },
+      {
+        path: 'workflows',
+        name: 'Workflows',
+        component: () => import('@/views/WorkflowManager.vue')
+      },
+      {
+        path: 'workflows/:id',
+        name: 'WorkflowEditor',
+        component: () => import('@/views/WorkflowEditor.vue')
       }
     ]
   },
