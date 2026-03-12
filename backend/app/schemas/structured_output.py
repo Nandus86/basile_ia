@@ -150,10 +150,32 @@ def format_context_data_for_prompt(
             
     filtered_data = {}
     if input_schema and isinstance(input_schema, dict):
-        filtered_data = {
-            k: v for k, v in context_data.items()
-            if k in input_schema
-        }
+        def filter_by_schema(data: Any, schema: Dict[str, Any]) -> Any:
+            if not isinstance(data, dict):
+                return data
+            filtered = {}
+            for key, field_def in schema.items():
+                if key not in data:
+                    continue
+                
+                data_val = data[key]
+                
+                if isinstance(field_def, dict):
+                    field_type = field_def.get("type", "string")
+                    if field_type == "object" and "properties" in field_def and isinstance(data_val, dict):
+                        filtered[key] = filter_by_schema(data_val, field_def["properties"])
+                    elif field_type == "array" and "items" in field_def and isinstance(field_def["items"], dict) and field_def["items"].get("type") == "object" and "properties" in field_def["items"] and isinstance(data_val, list):
+                        filtered[key] = [
+                            filter_by_schema(item, field_def["items"]["properties"]) if isinstance(item, dict) else item
+                            for item in data_val
+                        ]
+                    else:
+                        filtered[key] = data_val
+                else:
+                    filtered[key] = data_val
+            return filtered
+
+        filtered_data = filter_by_schema(context_data, input_schema)
     else:
         # Se não há input_schema definido para o agente, então NÃO injetamos variáveis
         # de contexto do webhook/orquestrador para evitar poluição e uso incorreto.
