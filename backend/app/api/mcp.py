@@ -194,6 +194,13 @@ async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
                 params=query,
                 json=body
             )
+        elif mcp.method.upper() == "PATCH":
+            response = await client.patch(
+                endpoint_str,
+                headers=safe_headers,
+                params=query,
+                json=body
+            )
         elif mcp.method.upper() == "DELETE":
             response = await client.delete(
                 endpoint_str,

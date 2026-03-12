@@ -716,6 +716,7 @@ const httpMethods = [
   { value: 'GET', label: 'GET' },
   { value: 'POST', label: 'POST' },
   { value: 'PUT', label: 'PUT' },
+  { value: 'PATCH', label: 'PATCH' },
   { value: 'DELETE', label: 'DEL' }
 ]
 
@@ -767,7 +768,7 @@ const filteredMcps = computed(() => {
 
 const activeCount = computed(() => mcps.value.filter(m => m.is_active).length)
 const getCount = computed(() => mcps.value.filter(m => m.method === 'GET').length)
-const postCount = computed(() => mcps.value.filter(m => ['POST', 'PUT', 'DELETE'].includes(m.method)).length)
+const postCount = computed(() => mcps.value.filter(m => ['POST', 'PUT', 'PATCH', 'DELETE'].includes(m.method)).length)
 
 const formatResult = computed(() => {
   if (!executeResult.value) return ''
@@ -783,12 +784,12 @@ function getGroupName(groupId) {
 }
 
 function getMethodColor(method) {
-  const colors = { GET: 'info', POST: 'success', PUT: 'warning', DELETE: 'error' }
+  const colors = { GET: 'info', POST: 'success', PUT: 'warning', PATCH: 'deep-orange', DELETE: 'error' }
   return colors[method] || 'grey'
 }
 
 function getMethodIcon(method) {
-  const icons = { GET: 'mdi-download', POST: 'mdi-upload', PUT: 'mdi-pencil', DELETE: 'mdi-trash-can' }
+  const icons = { GET: 'mdi-download', POST: 'mdi-upload', PUT: 'mdi-pencil', PATCH: 'mdi-update', DELETE: 'mdi-trash-can' }
   return icons[method] || 'mdi-web'
 }
 
