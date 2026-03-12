@@ -83,10 +83,13 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         
                         for k, v in payload.items():
                             if k in standard_keys: continue
-                            if k in ctx_keys:
-                                c_data[k] = v
-                            else:
+                            # Se estiver estritamente no schema de transição do entry-agent, vai para transition_data
+                            if k in trans_keys:
                                 t_data[k] = v
+                            else:
+                                # Todo o resto vai para context_data para que tanto o orquestrador 
+                                # quanto os subordinados possam buscar o que for necessário em seus próprios schemas
+                                c_data[k] = v
                                 
                         if c_data: context_data = c_data
                         if t_data: transition_data = t_data
