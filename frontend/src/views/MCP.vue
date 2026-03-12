@@ -304,7 +304,7 @@
             </p>
             
             <v-row>
-              <v-col cols="12" md="3">
+              <v-col cols="12" md="4">
                 <v-select
                   v-model="formData.protocol"
                   label="Protocolo"
@@ -324,7 +324,7 @@
                   </template>
                 </v-select>
               </v-col>
-              <v-col cols="12" md="2">
+              <v-col cols="12" md="4">
                 <v-select
                   v-model="formData.method"
                   label="Método"
@@ -334,16 +334,7 @@
                   prepend-inner-icon="mdi-web"
                 ></v-select>
               </v-col>
-              <v-col cols="12" md="5">
-                <v-text-field
-                  v-model="formData.endpoint"
-                  label="URL do Endpoint"
-                  placeholder="https://api.exemplo.com/v1/resource"
-                  :rules="[v => !!v || 'Endpoint é obrigatório']"
-                  prepend-inner-icon="mdi-link"
-                ></v-text-field>
-              </v-col>
-              <v-col cols="12" md="2">
+              <v-col cols="12" md="4">
                 <v-text-field
                   v-model="formData.timeout_seconds"
                   label="Timeout (s)"
@@ -352,6 +343,20 @@
                   max="300"
                   prepend-inner-icon="mdi-timer"
                 ></v-text-field>
+              </v-col>
+            </v-row>
+            <v-row>
+              <v-col cols="12">
+                <v-textarea
+                  v-model="formData.endpoint"
+                  label="URL do Endpoint"
+                  placeholder="https://api.exemplo.com/v1/resource"
+                  :rules="[v => !!v || 'Endpoint é obrigatório']"
+                  prepend-inner-icon="mdi-link"
+                  variant="outlined"
+                  auto-grow
+                  rows="2"
+                ></v-textarea>
               </v-col>
             </v-row>
             
