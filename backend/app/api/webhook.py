@@ -483,6 +483,16 @@ async def process_dynamic_webhook(
         # SYNCHRONOUS MODE
         from app.worker.tasks import process_message_task
         
+        # Auto-map extra root fields to context
+        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+        payload_data = request.model_dump()
+        c_data = request.context_data or {}
+        for k, v in payload_data.items():
+            if k not in standard_keys:
+                c_data[k] = v
+        if c_data:
+            request.context_data = c_data
+            
         start_time = time.time()
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
