@@ -195,7 +195,20 @@ Responda APENAS em JSON válido com este formato exato:
                 messages.append(HumanMessage(content=msg["content"]))
             elif msg.get("role") == "assistant":
                 messages.append(AIMessage(content=msg["content"]))
-                
+
+        # Include collaborator's own skills in the delegation message
+        skills_section = ""
+        if hasattr(agent, 'skills') and agent.skills:
+            active_skills = [s for s in agent.skills if s.is_active]
+            if active_skills:
+                skills_parts = []
+                for skill in active_skills:
+                    skills_parts.append(f"### {skill.name}\n{skill.content_md}")
+                skills_section = (
+                    "\n\n[SUAS SKILLS ATIVAS - Siga estas instruções especializadas]:\n"
+                    + "\n---\n".join(skills_parts)
+                )
+
         # To strictly place: skills -> orientation -> context data in the final human turn:
         final_user_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
 {message}
