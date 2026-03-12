@@ -148,6 +148,10 @@ def format_context_data_for_prompt(
         except Exception:
             input_schema = None
             
+    # If the schema is a standard JSON Schema object, extract its properties
+    if input_schema and isinstance(input_schema, dict) and "properties" in input_schema and input_schema.get("type") == "object":
+        input_schema = input_schema["properties"]
+            
     filtered_data = {}
     if input_schema and isinstance(input_schema, dict):
         def filter_by_schema(data: Any, schema: Dict[str, Any]) -> Any:
