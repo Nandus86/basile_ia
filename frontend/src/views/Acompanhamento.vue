@@ -184,11 +184,37 @@
             <pre style="white-space: pre-wrap; font-family: monospace;" class="text-caption">{{ selectedJob.error_message }}</pre>
           </v-alert>
           <div v-else class="text-medium-emphasis font-italic text-body-2">Sem resposta gerada.</div>
+
+          <!-- Test Result (Internal Mode) -->
+          <div v-if="testResult" class="mt-6">
+            <v-divider class="mb-4"></v-divider>
+            <div class="d-flex align-center justify-space-between mb-2">
+              <h3 class="text-subtitle-2 font-weight-bold text-info">
+                <v-icon size="small" class="mr-1">mdi-flask</v-icon>
+                Resultado do Teste (Interno)
+              </h3>
+              <v-btn size="x-small" variant="text" icon="mdi-content-copy" @click="copyToClipboard(testResult)"></v-btn>
+            </div>
+            <v-sheet class="pa-4 rounded-lg overflow-auto code-sheet" max-height="300" style="border: 1px solid rgba(0, 209, 255, 0.3);">
+              <pre class="text-caption" style="color: #00D1FF;">{{ formatJSON(testResult) }}</pre>
+            </v-sheet>
+          </div>
         </v-card-text>
         
-        <v-card-actions class="pa-4 border-t">
-          <v-spacer></v-spacer>
-          <v-btn color="primary" variant="text" @click="dialog = false">Fechar</v-btn>
+        <v-card-actions class="pa-4 border-t d-flex flex-wrap gap-2">
+          <v-btn
+            color="info"
+            variant="tonal"
+            prepend-icon="mdi-flask"
+            :loading="testingJob"
+            @click="testCurrentJob"
+          >
+            Testar Job
+          </v-btn>
+          <div class="text-caption text-medium-emphasis ms-2 me-auto align-self-center">
+            (Roda internamente, não aciona webhook de saída)
+          </div>
+          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob">Fechar</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -256,6 +282,10 @@ const dialog = ref(false)
 const selectedJob = ref(null)
 const snackbar = ref({ show: false, text: '', color: 'success' })
 
+// Test mode references
+const testingJob = ref(false)
+const testResult = ref(null)
+
 const fetchStats = async () => {
   statsLoading.value = true
   try {
@@ -291,7 +321,30 @@ const fetchLogs = async () => {
 
 const fetchData = () => { fetchStats(); fetchLogs() }
 const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => { page.value = np; itemsPerPage.value = nip; fetchLogs() }
-const openJobDetails = (job) => { selectedJob.value = job; dialog.value = true }
+const openJobDetails = (job) => { 
+  selectedJob.value = job; 
+  testResult.value = null; // reset specific dialog tests 
+  dialog.value = true 
+}
+
+const testCurrentJob = async () => {
+  if (!selectedJob.value) return;
+  testingJob.value = true;
+  testResult.value = null;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/test`);
+    showSnackbar(`Job testado em ${data.processing_time_ms}ms`, 'success');
+    testResult.value = data.test_response;
+  } catch (error) {
+    console.error("Erro no teste:", error);
+    showSnackbar('Falha ao testar job internamente', 'error');
+    if (error.response?.data?.detail) {
+      testResult.value = { error: error.response.data.detail };
+    }
+  } finally {
+    testingJob.value = false;
+  }
+}
 
 const getStatusColor = (status) => ({ 'completed': 'success', 'failed': 'error', 'queued': 'warning', 'in_progress': 'info' }[status] || 'grey')
 const getStatusIcon = (status) => ({ 'completed': 'mdi-check', 'failed': 'mdi-close', 'queued': 'mdi-clock', 'in_progress': 'mdi-play' }[status] || 'mdi-help')

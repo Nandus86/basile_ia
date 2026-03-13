@@ -63,3 +63,64 @@ async def get_tracking_stats(db: AsyncSession = Depends(get_db)):
         "by_path": path_counts,
         "total_calls": sum(s["count"] for s in status_counts)
     }
+
+@router.post("/jobs/{job_id}/test")
+async def test_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Re-test an existing job synchronously using its original payload,
+    without triggering the final output webhook (callback_url).
+    """
+    query = select(JobLog).where(JobLog.job_id == job_id)
+    result = await db.execute(query)
+    job_log = result.scalar_one_or_none()
+    
+    if not job_log:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    payload = job_log.request_data
+    if not payload:
+        raise HTTPException(status_code=400, detail="Job has no request payload")
+        
+    from app.worker.tasks import process_message_task
+    import time
+    
+    start_time = time.time()
+    
+    try:
+        # Extrair os campos com defaults básicos
+        message = payload.get("message", "Teste vazio")
+        session_id = payload.get("session_id", "test_session_id")
+        agent_id = payload.get("agent_id")
+        user_access_level = payload.get("user_access_level", "normal")
+        context_data = payload.get("context_data", {})
+        
+        # Mapeamento do request body extra, caso seja payload puro sem 'context_data'
+        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+        for k, v in payload.items():
+            if k not in standard_keys:
+                context_data[k] = v
+                
+        # Força callback_url = None para não disparar webhook de saída
+        result_data = await process_message_task(
+            ctx={},
+            message=message,
+            session_id=session_id,
+            agent_id=agent_id,
+            user_access_level=user_access_level,
+            context_data=context_data,
+            transition_data=payload.get("transition_data"),
+            callback_url=None  # AQUI EVITAMOS O DISPARO DE SAÍDA
+        )
+        
+        processing_time = (time.time() - start_time) * 1000
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "processing_time_ms": int(processing_time),
+            "test_response": result_data
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to test job: {str(e)}")
