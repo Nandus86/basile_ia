@@ -342,8 +342,8 @@ Cite a fonte quando usar informações do contexto acima.
 
 ## Formato de Resposta
 
-Você DEVE responder com os seguintes campos: {', '.join(schema_fields)}.
-Preencha cada campo de acordo com sua descrição.
+Você DEVE responder com um objeto JSON estritamente estruturado contendo os seguintes campos EXATOS: {', '.join(schema_fields)}.
+Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, NUNCA o omita.
 """
         
         all_messages = [SystemMessage(content=system_prompt)] + messages
@@ -353,7 +353,31 @@ Preencha cada campo de acordo com sua descrição.
             return result.model_dump()
         except Exception as e:
             print(f"[AgentFactory] Structured output error: {e}")
-            # Fallback to regular invoke
+            
+            # Tentar salvar campos parciais do erro de validação (comum em novos modelos do OpenRouter)
+            if "ValidationError" in str(type(e)):
+                try:
+                    for err in getattr(e, "errors", lambda: [])():
+                        if "input_value" in err and isinstance(err["input_value"], dict):
+                            partial_data = err["input_value"]
+                            print(f"[AgentFactory] Resgatando dados parciais do LLM: {partial_data}")
+                            
+                            # Garantir que todos os campos existam para não quebrar a tipagem
+                            for field_name in output_class.model_fields.keys():
+                                if field_name not in partial_data:
+                                    partial_data[field_name] = ""
+                                    
+                            # Se 'output' ficou vazio, solicitamos apenas a resposta textual num invoke regular
+                            if "output" in partial_data and not partial_data["output"]:
+                                print("[AgentFactory] Campo 'output' omitido, fazendo fallback textual...")
+                                fallback_text = await self.invoke_agent(agent_config, messages, rag_context, context_data)
+                                partial_data["output"] = fallback_text
+                                
+                            return partial_data
+                except Exception as inner_e:
+                    print(f"[AgentFactory] Falha ao recuperar JSON parcial: {inner_e}")
+            
+            # Fallback final se falhar e não recuperar JSON parcial
             regular_response = await self.invoke_agent(agent_config, messages, rag_context, context_data)
             return {"output": regular_response}
 
