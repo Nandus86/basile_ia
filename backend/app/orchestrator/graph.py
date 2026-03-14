@@ -224,10 +224,19 @@ Cite a fonte (nome do documento) quando usar informações do contexto acima.
                                 # Try extraction via correlation_schema
                                 if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
                                     target_key = ib.correlation_schema.get("target")
-                                    if target_key and target_key in info_base_context_data:
-                                        val = info_base_context_data[target_key]
-                                        if isinstance(val, str) and val.strip():
-                                            possible_ids.append(val.strip())
+                                    if target_key:
+                                        parts = target_key.split(".")
+                                        val = info_base_context_data
+                                        for part in parts:
+                                            if isinstance(val, dict) and part in val:
+                                                val = val[part]
+                                            else:
+                                                val = None
+                                                break
+                                        if val is not None and not isinstance(val, (dict, list)):
+                                            v_str = str(val).strip()
+                                            if v_str:
+                                                possible_ids.append(v_str)
                                             
                                 # Fallback to general context scanning if no specific id was found
                                 if not possible_ids:
