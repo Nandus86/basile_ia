@@ -7,6 +7,7 @@ class InformationBaseBase(BaseModel):
     code: str = Field(..., max_length=100, description="Código único usado pelo webhook (id_base)")
     content_schema: Optional[Dict[str, Any]] = Field(None, description="Schema de como os dados de conteúdo textual serão recebidos")
     metadata_schema: Optional[Dict[str, Any]] = Field(None, description="Schema do metadata que pode ser filtrado")
+    correlation_schema: Optional[Dict[str, Any]] = Field(None, description="Schema JSON para extrair o user_id (id da base) do context_data")
     is_active: bool = True
 
 class InformationBaseCreate(InformationBaseBase):
@@ -17,6 +18,7 @@ class InformationBaseUpdate(BaseModel):
     code: Optional[str] = Field(None, max_length=100)
     content_schema: Optional[Dict[str, Any]] = None
     metadata_schema: Optional[Dict[str, Any]] = None
+    correlation_schema: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
 
 class InformationBaseResponse(InformationBaseBase):
