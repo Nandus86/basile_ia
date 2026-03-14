@@ -199,6 +199,19 @@
               style="font-family: monospace; font-size: 13px;"
             ></v-textarea>
 
+            <p class="text-subtitle-2 text-medium-emphasis mb-2 mt-4">
+              <v-icon size="18" class="mr-1">mdi-key-chain</v-icon>
+              Schema de Correlação (Opcional, regras de extração do user_id ex: {"target": "memberphone"})
+            </p>
+            <v-textarea
+              v-model="formData.correlation_schema"
+              placeholder='{ "target": "memberphone" }'
+              rows="2"
+              variant="outlined"
+              density="compact"
+              style="font-family: monospace; font-size: 13px;"
+            ></v-textarea>
+
           </v-form>
         </v-card-text>
         
@@ -326,6 +339,7 @@ const formData = reactive({
   code: '',
   content_schema: '{}',
   metadata_schema: '{}',
+  correlation_schema: '{}',
   is_active: true
 })
 
@@ -418,6 +432,7 @@ function resetForm() {
     code: '',
     content_schema: '{}',
     metadata_schema: '{}',
+    correlation_schema: '{}',
     is_active: true
   })
   if (formRef.value) formRef.value.resetValidation()
@@ -450,6 +465,7 @@ async function openDialog(base = null) {
         code: fullBase.code,
         content_schema: fullBase.content_schema ? JSON.stringify(fullBase.content_schema, null, 2) : '{}',
         metadata_schema: fullBase.metadata_schema ? JSON.stringify(fullBase.metadata_schema, null, 2) : '{}',
+        correlation_schema: fullBase.correlation_schema ? JSON.stringify(fullBase.correlation_schema, null, 2) : '{}',
         is_active: fullBase.is_active ?? true
       })
     } catch (error) {
@@ -477,9 +493,11 @@ async function saveBase() {
   // Validate JSON blocks before saving
   let parsedContent = {}
   let parsedMeta = {}
+  let parsedCorrelation = {}
   try {
     parsedContent = JSON.parse(formData.content_schema)
     parsedMeta = JSON.parse(formData.metadata_schema)
+    parsedCorrelation = JSON.parse(formData.correlation_schema)
   } catch (e) {
     showSnackbar('Schema JSON inválido. Verifique a sintaxe.', 'error')
     return
@@ -492,6 +510,7 @@ async function saveBase() {
       code: formData.code,
       content_schema: parsedContent,
       metadata_schema: parsedMeta,
+      correlation_schema: parsedCorrelation,
       is_active: formData.is_active
     }
     
