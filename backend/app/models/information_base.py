@@ -29,6 +29,7 @@ class InformationBase(Base):
     code = Column(String(100), nullable=False, unique=True, index=True)
     content_schema = Column(JSONB, nullable=True)
     metadata_schema = Column(JSONB, nullable=True)
+    correlation_schema = Column(JSONB, nullable=True) # Novo Schema para correlacionar o contexto com o "id"
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
