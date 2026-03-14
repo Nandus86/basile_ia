@@ -212,30 +212,42 @@ Cite a fonte (nome do documento) quando usar informações do contexto acima.
                 )
                 agent_obj = result.scalar_one_or_none()
                 if agent_obj and agent_obj.information_bases:
-                    base_codes = [b.code for b in agent_obj.information_bases if b.is_active]
-                    if base_codes:
-                        # Collect all possible user IDs from context_data values
-                        possible_ids = []
-                        for v in info_base_context_data.values():
-                            if isinstance(v, str) and v.strip():
-                                possible_ids.append(v.strip())
-                        # Also try session_id as fallback
-                        if contact_id:
-                            possible_ids.append(str(contact_id))
-                        
+                    active_bases = [b for b in agent_obj.information_bases if b.is_active]
+                    if active_bases:
                         from app.weaviate_client import get_weaviate
                         weaviate_client = get_weaviate()
-                        if weaviate_client and possible_ids:
-                            all_info_nodes = []
-                            for uid in possible_ids:
-                                info_nodes = await weaviate_client.search_information_bases(
-                                    base_codes=base_codes,
-                                    user_id=uid,
-                                    query=current_message,
-                                    limit=5
-                                )
-                                if info_nodes:
-                                    all_info_nodes.extend(info_nodes)
+                        all_info_nodes = []
+                        
+                        if weaviate_client:
+                            for ib in active_bases:
+                                possible_ids = []
+                                # Try extraction via correlation_schema
+                                if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                    target_key = ib.correlation_schema.get("target")
+                                    if target_key and target_key in info_base_context_data:
+                                        val = info_base_context_data[target_key]
+                                        if isinstance(val, str) and val.strip():
+                                            possible_ids.append(val.strip())
+                                            
+                                # Fallback to general context scanning if no specific id was found
+                                if not possible_ids:
+                                    for k, v in info_base_context_data.items():
+                                        if isinstance(v, str) and v.strip():
+                                            possible_ids.append(v.strip())
+                                    if contact_id:
+                                        possible_ids.append(str(contact_id))
+                                        
+                                # Fetch nodes uniquely for this base's IDs
+                                for uid in possible_ids:
+                                    info_nodes = await weaviate_client.search_information_bases(
+                                        base_codes=[ib.code],
+                                        user_id=uid,
+                                        query=current_message,
+                                        limit=5
+                                    )
+                                    if info_nodes:
+                                        all_info_nodes.extend(info_nodes)
+                                        
                             if all_info_nodes:
                                 # Deduplicate by content
                                 seen = set()

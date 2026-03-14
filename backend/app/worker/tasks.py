@@ -77,25 +77,39 @@ async def _enrich_agent_prompt(
         )
         ib_agent = ib_result.scalar_one_or_none()
         if ib_agent and ib_agent.information_bases:
-            base_codes = [b.code for b in ib_agent.information_bases if b.is_active]
-            if base_codes:
-                possible_ids = []
+            active_bases = [b for b in ib_agent.information_bases if b.is_active]
+            if active_bases:
                 ctx = context_data or {}
-                for v in ctx.values():
-                    if isinstance(v, str) and v.strip():
-                        possible_ids.append(v.strip())
-                if session_id:
-                    possible_ids.append(str(session_id))
-
                 weaviate_cl = get_weaviate()
-                if weaviate_cl and possible_ids:
-                    all_info_nodes = []
-                    for uid in possible_ids:
-                        info_nodes = await weaviate_cl.search_information_bases(
-                            base_codes=base_codes, user_id=uid, query=message, limit=5
-                        )
-                        if info_nodes:
-                            all_info_nodes.extend(info_nodes)
+                all_info_nodes = []
+                
+                if weaviate_cl:
+                    for ib in active_bases:
+                        possible_ids = []
+                        # Try extraction via correlation_schema
+                        if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                            target_key = ib.correlation_schema.get("target")
+                            if target_key and target_key in ctx:
+                                val = ctx[target_key]
+                                if isinstance(val, str) and val.strip():
+                                    possible_ids.append(val.strip())
+                        
+                        # Fallback to general context scanning if no specific id was found
+                        if not possible_ids:
+                            for k, v in ctx.items():
+                                if isinstance(v, str) and v.strip():
+                                    possible_ids.append(v.strip())
+                            if session_id:
+                                possible_ids.append(str(session_id))
+                        
+                        # Fetch nodes uniquely for this base's IDs
+                        for uid in possible_ids:
+                            info_nodes = await weaviate_cl.search_information_bases(
+                                base_codes=[ib.code], user_id=uid, query=message, limit=5
+                            )
+                            if info_nodes:
+                                all_info_nodes.extend(info_nodes)
+                                
                     if all_info_nodes:
                         seen = set()
                         unique_nodes = [
