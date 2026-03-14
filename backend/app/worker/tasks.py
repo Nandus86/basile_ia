@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List
 
 from app.database import AsyncSessionLocal
 from app.redis_client import redis_client
+from app.config import settings
 
 
 # ─────────────────────────────────────────────────────────────
@@ -238,6 +239,223 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
 
 
 # ─────────────────────────────────────────────────────────────
+# Reasoning Loop (v0.0.9) — iterative multi-agent delegation
+# ─────────────────────────────────────────────────────────────
+
+async def _reasoning_loop(
+    db,
+    factory,
+    agent,
+    agent_config: Dict[str, Any],
+    primary_response: str,
+    message: str,
+    history: Optional[list] = None,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Post-execution reasoning loop for orchestrator agents.
+    
+    After the primary agent responds, this evaluates whether additional
+    collaborators need to be consulted. If so, it iteratively:
+      1. Asks LLM to evaluate if the task is complete or needs delegation
+      2. If delegate: invokes the chosen collaborator
+      3. Loops back to evaluate
+      4. When complete: synthesizes all responses into a final answer
+    
+    All settings come from agent.orchestrator_config (per-agent).
+    Returns the final synthesized response, or None if no loop was needed.
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+    from app.orchestrator.agent_orchestrator import AgentOrchestrator
+    from app.models.agent import CollaborationStatus
+    import json
+
+    orch_config = getattr(agent, "orchestrator_config", {}) or {}
+    max_iterations = orch_config.get("max_reasoning_iterations", 3)
+    reasoning_model = orch_config.get("reasoning_model", "gpt-4o-mini")
+
+    # 1. Gather available collaborators
+    orchestrator = AgentOrchestrator(db)
+    agent_with_settings = await orchestrator.get_agent_with_collaborators(agent.id)
+    if not agent_with_settings or not agent_with_settings.collaborator_settings:
+        return None
+
+    enabled = []
+    neutral = []
+    for setting in agent_with_settings.collaborator_settings:
+        if setting.status == CollaborationStatus.ENABLED:
+            enabled.append(setting.collaborator)
+        elif setting.status == CollaborationStatus.NEUTRAL:
+            neutral.append(setting.collaborator)
+    all_collaborators = enabled + neutral
+    if not all_collaborators:
+        return None
+
+    eval_llm = ChatOpenAI(
+        model=reasoning_model,
+        temperature=0,
+        api_key=settings.OPENAI_API_KEY
+    )
+
+    # Track accumulated responses
+    accumulated_responses = {agent_config["name"]: primary_response}
+    agents_used = [agent_config["name"]]
+
+    for iteration in range(max_iterations):
+        # Build available agents list (not yet consulted)
+        available = []
+        for a in all_collaborators:
+            if a.name not in agents_used:
+                priority = "PRIORITÁRIO" if a in enabled else "DISPONÍVEL"
+                skills_desc = ""
+                if hasattr(a, 'skills') and a.skills:
+                    active_skills = [s for s in a.skills if s.is_active]
+                    if active_skills:
+                        skills_desc = f" [Skills: {', '.join([s.name for s in active_skills])}]"
+                available.append({
+                    "label": f"- {a.name} ({priority}): {a.description or 'Especialista'}{skills_desc}",
+                    "agent": a
+                })
+
+        if not available:
+            print(f"[ReasoningLoop] All collaborators consulted, completing")
+            break
+
+        available_str = "\n".join([a["label"] for a in available])
+        responses_str = "\n\n".join([
+            f"[{name}]: {resp[:500]}" for name, resp in accumulated_responses.items()
+        ])
+
+        # Format conversation history
+        history_str = "(sem histórico)"
+        if history:
+            recent = history[-6:]
+            parts = []
+            for msg in recent:
+                role = "Usuário" if msg.get("role") == "user" else "Assistente"
+                content = msg.get("content", "")[:200]
+                parts.append(f"{role}: {content}")
+            history_str = "\n".join(parts)
+
+        evaluate_prompt = f"""Você é o sistema de raciocínio de um agente orquestrador.
+
+MENSAGEM ORIGINAL DO USUÁRIO:
+"{message}"
+
+RESPOSTAS ACUMULADAS ATÉ AGORA:
+{responses_str}
+
+AGENTES DISPONÍVEIS (ainda não consultados):
+{available_str}
+
+HISTÓRICO DA CONVERSA:
+{history_str}
+
+TAREFA:
+Analise se a solicitação do usuário já foi plenamente atendida pelas respostas acumuladas.
+
+REGRAS:
+1. Se as respostas já atendem completamente, responda com action "complete"
+2. Se falta informação que um dos agentes disponíveis pode fornecer, responda com action "delegate"
+3. Se delegarmos, forneça uma orientação CLARA e DIRETA para o agente selecionado
+4. Considere se o agente primário solicitou informações que outro agente pode buscar
+5. Máximo de 1 agente por delegação
+
+Responda APENAS em JSON válido:
+{{"action": "complete"}}
+OU
+{{"action": "delegate", "agent_name": "Nome Exato", "orientation": "Instrução clara do que buscar/fazer"}}"""
+
+        try:
+            response = await eval_llm.ainvoke([SystemMessage(content=evaluate_prompt)])
+            result_text = response.content.strip()
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            result_text = result_text.strip()
+            decision = json.loads(result_text)
+        except Exception as e:
+            print(f"[ReasoningLoop] ❌ Evaluate error at iteration {iteration+1}: {e}")
+            break
+
+        action = decision.get("action", "complete")
+        print(f"[ReasoningLoop] 🧠 Iteration {iteration+1}/{max_iterations}: action={action}")
+
+        if action != "delegate":
+            break
+
+        # Find the agent to delegate to
+        delegate_name = decision.get("agent_name", "")
+        orientation = decision.get("orientation", "")
+        target_agent = None
+        for a_info in available:
+            if a_info["agent"].name and a_info["agent"].name.lower() == delegate_name.lower():
+                target_agent = a_info["agent"]
+                break
+
+        if not target_agent:
+            print(f"[ReasoningLoop] ⚠️ Agent '{delegate_name}' not found, completing")
+            break
+
+        # Invoke the collaborator
+        print(f"[ReasoningLoop] 🔄 Delegating to '{target_agent.name}': {orientation[:100]}")
+        try:
+            collab_name, collab_response = await orchestrator._invoke_collaborator(
+                agent=target_agent,
+                message=message,
+                history=history or [],
+                context="",
+                context_data=context_data,
+                orientation=orientation,
+            )
+            if collab_response:
+                accumulated_responses[collab_name] = collab_response
+                agents_used.append(collab_name)
+                print(f"[ReasoningLoop] ✅ '{collab_name}' responded")
+            else:
+                agents_used.append(target_agent.name)
+                print(f"[ReasoningLoop] ⚠️ '{target_agent.name}' returned empty response")
+        except Exception as e:
+            print(f"[ReasoningLoop] ❌ Error invoking '{target_agent.name}': {e}")
+            agents_used.append(target_agent.name)
+
+    # If only the primary agent responded, no synthesis needed
+    if len(accumulated_responses) <= 1:
+        return None
+
+    # Synthesize all responses
+    primary_name = agent_config.get("name", "Orquestrador")
+    responses_for_synth = "\n\n".join([
+        f"[{name}]: {resp}" for name, resp in accumulated_responses.items()
+    ])
+
+    synth_prompt = f"""Você é o agente "{primary_name}" finalizando uma resposta ao usuário.
+
+PERGUNTA ORIGINAL: "{message}"
+
+CONTRIBUIÇÕES DOS ESPECIALISTAS:
+{responses_for_synth}
+
+TAREFA:
+Combine as informações em uma resposta única, coesa e natural para o usuário.
+- Não mencione que recebeu informações de outros agentes
+- Mantenha sua personalidade e tom
+- Integre as informações de forma fluida
+- Priorize a resposta mais completa e precisa
+- Se houver solicitação de informação adicional ao usuário, inclua-a naturalmente"""
+
+    try:
+        synth_response = await eval_llm.ainvoke([SystemMessage(content=synth_prompt)])
+        print(f"[ReasoningLoop] 🎭 Synthesized response from {len(accumulated_responses)} agents: {', '.join(agents_used)}")
+        return synth_response.content
+    except Exception as e:
+        print(f"[ReasoningLoop] ❌ Synthesis error: {e}")
+        return list(accumulated_responses.values())[-1]
+
+
+# ─────────────────────────────────────────────────────────────
 # Main task: process_message_task
 # ─────────────────────────────────────────────────────────────
 
@@ -317,51 +535,6 @@ async def process_message_task(
                     await _send_callback(callback_url, response_data)
                 return response_data
 
-            # ── Orchestrator agents: delegate to Supervisor v2 (reasoning loop) ──
-            if agent and getattr(agent, "is_orchestrator", False):
-                from app.orchestrator import run_orchestrator_v2
-
-                stm_enabled, stm_ttl_seconds = _resolve_stm_config(agent_config)
-                history = []
-                if stm_enabled:
-                    history = await redis_client.get_conversation(session_id)
-                    await redis_client.add_message(
-                        session_id=session_id, role="user",
-                        content=message, ttl_seconds=stm_ttl_seconds
-                    )
-
-                print(f"[Task] 🔄 Orchestrator '{agent.name}' → Supervisor v2 (reasoning loop)")
-                result = await run_orchestrator_v2(
-                    message=message,
-                    session_id=session_id,
-                    history=history,
-                    agent_id=agent_id,
-                    db=db,
-                    user_access_level=user_access_level,
-                    context_data=context_data,
-                )
-                final_result = result["response"]
-                agent_used = result.get("agent_used")
-
-                if stm_enabled:
-                    await redis_client.add_message(
-                        session_id=session_id, role="assistant",
-                        content=str(final_result), ttl_seconds=stm_ttl_seconds
-                    )
-
-                processing_time = (time.time() - start_time) * 1000
-                response_data = {
-                    "status": "completed",
-                    "response": final_result,
-                    "agent_used": agent_used,
-                    "processing_time_ms": processing_time,
-                }
-                if transition_data:
-                    response_data["transition_data"] = transition_data
-                if callback_url:
-                    await _send_callback(callback_url, response_data)
-                return response_data
-
             # ── agent_id provided: execute directly ──
             stm_enabled, stm_ttl_seconds = _resolve_stm_config(agent_config)
 
@@ -383,7 +556,7 @@ async def process_message_task(
                     messages.append(AIMessage(content=msg["content"]))
             messages.append(HumanMessage(content=message))
 
-            # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator)
+            # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation)
             rag_context = await _enrich_agent_prompt(
                 db, agent_config, agent_id, message, session_id, context_data, history
             )
@@ -427,6 +600,26 @@ async def process_message_task(
                 print(f"[Task] ✅ {agent_config['name']} responded directly")
                 final_result = response
                 agent_used = agent_config["name"]
+
+                # ── Reasoning Loop (v0.0.9) ──
+                # If this agent is an orchestrator with collaborators, evaluate
+                # whether additional agents need to be consulted iteratively
+                is_orchestrator = getattr(agent, "is_orchestrator", False)
+                has_collaboration = getattr(agent, "collaboration_enabled", False)
+
+                if is_orchestrator and has_collaboration:
+                    loop_result = await _reasoning_loop(
+                        db=db,
+                        factory=factory,
+                        agent=agent,
+                        agent_config=agent_config,
+                        primary_response=final_result,
+                        message=message,
+                        history=history,
+                        context_data=context_data,
+                    )
+                    if loop_result:
+                        final_result = loop_result
 
                 if stm_enabled:
                     await redis_client.add_message(
