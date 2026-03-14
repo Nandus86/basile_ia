@@ -42,6 +42,12 @@ class SupervisorState(TypedDict, total=False):
     agent_responses: Dict[str, str]
     final_response: Optional[str]
     error: Optional[str]
+    
+    # Reasoning loop control
+    pending_agents: List[Dict[str, Any]]       # Queue [{id, name, config, orientation}]
+    evaluation_reasoning: str                   # Last evaluate reasoning
+    loop_history: List[Dict[str, str]]          # [{agent, response_summary}]
+    orchestrator_loop_config: Dict[str, Any]    # Copy of agent.orchestrator_config
 
 
 # Legacy state for backward compatibility
