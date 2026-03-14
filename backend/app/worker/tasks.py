@@ -317,6 +317,51 @@ async def process_message_task(
                     await _send_callback(callback_url, response_data)
                 return response_data
 
+            # ── Orchestrator agents: delegate to Supervisor v2 (reasoning loop) ──
+            if agent and getattr(agent, "is_orchestrator", False):
+                from app.orchestrator import run_orchestrator_v2
+
+                stm_enabled, stm_ttl_seconds = _resolve_stm_config(agent_config)
+                history = []
+                if stm_enabled:
+                    history = await redis_client.get_conversation(session_id)
+                    await redis_client.add_message(
+                        session_id=session_id, role="user",
+                        content=message, ttl_seconds=stm_ttl_seconds
+                    )
+
+                print(f"[Task] 🔄 Orchestrator '{agent.name}' → Supervisor v2 (reasoning loop)")
+                result = await run_orchestrator_v2(
+                    message=message,
+                    session_id=session_id,
+                    history=history,
+                    agent_id=agent_id,
+                    db=db,
+                    user_access_level=user_access_level,
+                    context_data=context_data,
+                )
+                final_result = result["response"]
+                agent_used = result.get("agent_used")
+
+                if stm_enabled:
+                    await redis_client.add_message(
+                        session_id=session_id, role="assistant",
+                        content=str(final_result), ttl_seconds=stm_ttl_seconds
+                    )
+
+                processing_time = (time.time() - start_time) * 1000
+                response_data = {
+                    "status": "completed",
+                    "response": final_result,
+                    "agent_used": agent_used,
+                    "processing_time_ms": processing_time,
+                }
+                if transition_data:
+                    response_data["transition_data"] = transition_data
+                if callback_url:
+                    await _send_callback(callback_url, response_data)
+                return response_data
+
             # ── agent_id provided: execute directly ──
             stm_enabled, stm_ttl_seconds = _resolve_stm_config(agent_config)
 

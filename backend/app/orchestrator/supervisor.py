@@ -1,5 +1,6 @@
 """
 LangGraph Supervisor - Multi-Agent Orchestration Controller
+v0.0.9 - Reasoning Loop: evaluate node enables iterative multi-agent delegation
 """
 from typing import List, Optional, Dict, Any, Literal
 from langchain_openai import ChatOpenAI
@@ -17,11 +18,13 @@ class Supervisor:
     """
     LangGraph-based Supervisor that orchestrates multiple agents.
     
-    Flow:
+    v0.0.9 Flow (Reasoning Loop):
     1. Router selects the best agent for the message
     2. Worker executes the selected agent
-    3. Supervisor decides if collaboration is needed
+    3. Evaluate decides: complete → synthesize, or delegate → another agent (loop)
     4. Synthesizer combines responses if multiple agents contributed
+    
+    Loop settings are read from agent.orchestrator_config (per-agent).
     """
     
     def __init__(self, db: AsyncSession):
@@ -36,7 +39,7 @@ class Supervisor:
     async def route(self, state: SupervisorState) -> SupervisorState:
         """
         Router node: Selects the best agent for the message.
-        Traced as 'Agent Router' in LangSmith.
+        Also loads orchestrator_config for reasoning loop settings.
         """
         config = RunnableConfig(
             run_name="Agent Router",
@@ -58,6 +61,12 @@ class Supervisor:
                 state["current_agent_config"] = agent_config
                 state["next_action"] = "execute"
                 state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False)
+                
+                # Load orchestrator loop config
+                if getattr(agent, "is_orchestrator", False):
+                    state["orchestrator_loop_config"] = getattr(agent, "orchestrator_config", {}) or {}
+                    print(f"[Supervisor] 🔄 Orchestrator loop config: {state['orchestrator_loop_config']}")
+                
                 print(f"[Supervisor] Direct route to: {agent_config['name']}")
                 return state
         
@@ -76,6 +85,8 @@ class Supervisor:
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
             state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
+            if getattr(agents[0], "is_orchestrator", False):
+                state["orchestrator_loop_config"] = getattr(agents[0], "orchestrator_config", {}) or {}
             return state
         
         # Use LLM to select best agent
@@ -118,6 +129,8 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                     state["current_agent_config"] = agent_config
                     state["next_action"] = "execute"
                     state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False)
+                    if getattr(agent, "is_orchestrator", False):
+                        state["orchestrator_loop_config"] = getattr(agent, "orchestrator_config", {}) or {}
                     print(f"[Supervisor] LLM selected: {agent_config['name']}")
                     return state
             
@@ -142,9 +155,91 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
     
     async def execute(self, state: SupervisorState) -> SupervisorState:
         """
-        Worker node: Executes the selected agent.
-        Traced as 'Agent: {name}' in LangSmith.
+        Worker node: Executes the selected agent (or next pending agent from loop).
         """
+        # Check if there's a pending agent from the evaluate loop
+        pending = state.get("pending_agents", [])
+        if pending:
+            next_agent = pending.pop(0)
+            state["pending_agents"] = pending
+            
+            agent_config = next_agent.get("config")
+            orientation = next_agent.get("orientation", "")
+            agent_name = next_agent.get("name", "unknown")
+            
+            print(f"[Supervisor] 🔄 Loop: executing pending agent '{agent_name}' with orientation: {orientation[:100]}")
+            
+            # Build messages for the collaborator
+            messages = []
+            for msg in state.get("history", []):
+                if msg.get("role") == "user":
+                    messages.append(HumanMessage(content=msg["content"]))
+                elif msg.get("role") == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
+            
+            # Build contextual message with orientation and accumulated responses
+            accumulated = state.get("agent_responses", {})
+            accumulated_section = ""
+            if accumulated:
+                parts = [f"[{name}]: {resp[:500]}" for name, resp in accumulated.items()]
+                accumulated_section = "\n\n[RESPOSTAS ACUMULADAS DOS AGENTES ANTERIORES]:\n" + "\n\n".join(parts)
+            
+            collab_instruction = (
+                "\n\n---\n"
+                "[SISTEMA ORQUESTRADOR]\n"
+                "Você é um especialista ativado pelo Agente Orquestrador para contribuir com esta solicitação."
+            )
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + collab_instruction
+            
+            final_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
+{state['original_message']}
+{accumulated_section}
+
+[O QUE VOCÊ DEVE FAZER (Orientação do Orquestrador)]:
+{orientation}"""
+            
+            messages.append(HumanMessage(content=final_content))
+            
+            try:
+                import json
+                if agent_config.get("output_schema"):
+                    result = await self.factory.invoke_agent_structured(
+                        agent_config=agent_config,
+                        messages=messages,
+                        context_data=state.get("context_data"),
+                    )
+                    response = json.dumps(result, ensure_ascii=False)
+                else:
+                    response = await self.factory.invoke_agent(
+                        agent_config=agent_config,
+                        messages=messages,
+                        context_data=state.get("context_data"),
+                    )
+                
+                agents_used = state.get("agents_used", [])
+                agents_used.append(agent_name)
+                state["agents_used"] = agents_used
+                
+                agent_responses = state.get("agent_responses", {})
+                agent_responses[agent_name] = response
+                state["agent_responses"] = agent_responses
+                
+                loop_history = state.get("loop_history", [])
+                loop_history.append({"agent": agent_name, "response_summary": response[:300]})
+                state["loop_history"] = loop_history
+                
+                print(f"[Supervisor] ✅ Loop agent '{agent_name}' responded")
+                
+                # After loop execution, go back to evaluate
+                state["next_action"] = "evaluate"
+                
+            except Exception as e:
+                print(f"[Supervisor] ❌ Loop agent '{agent_name}' error: {e}")
+                state["next_action"] = "evaluate"
+            
+            return state
+        
+        # ── First execution (from route) ──
         agent_config = state.get("current_agent_config")
         if not agent_config:
             state["next_action"] = "end"
@@ -173,13 +268,8 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
         # Obtain agent model for later checks
         agent_model = agent_config.get("agent_model")
         
-        # Note: Orchestrator pre-consultation is handled by tasks.py (v0.0.7)
-        # The Supervisor no longer manages this concern.
-        
-        
-        # Information Bases Retrieval
+        # Information Bases Retrieval (with correlation_schema)
         info_base_context_data = state.get("context_data") or {}
-        print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent_id={agent_id}, context_data={info_base_context_data}")
         if agent_id:
             try:
                 from app.models.agent import Agent
@@ -189,41 +279,50 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                     select(Agent).options(selectinload(Agent.information_bases)).where(Agent.id == agent_id)
                 )
                 agent_obj = result.scalar_one_or_none()
-                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent_obj={agent_obj}, has_bases={bool(agent_obj and agent_obj.information_bases)}")
                 if agent_obj and agent_obj.information_bases:
-                    print(f"[Supervisor] 🔍 INFO_BASE DEBUG: bases={[(b.code, b.is_active) for b in agent_obj.information_bases]}")
-                    base_codes = [b.code for b in agent_obj.information_bases if b.is_active]
-                    print(f"[Supervisor] 🔍 INFO_BASE DEBUG: active base_codes={base_codes}")
-                    if base_codes:
-                        # Collect all possible user IDs from context_data values
-                        possible_ids = []
-                        for v in info_base_context_data.values():
-                            if isinstance(v, str) and v.strip():
-                                possible_ids.append(v.strip())
-                        # Also try session_id as fallback
-                        if contact_id:
-                            possible_ids.append(str(contact_id))
-                        print(f"[Supervisor] 🔍 INFO_BASE DEBUG: possible_ids={possible_ids}")
-                        
+                    active_bases = [b for b in agent_obj.information_bases if b.is_active]
+                    if active_bases:
                         from app.weaviate_client import get_weaviate
                         weaviate_client = get_weaviate()
-                        print(f"[Supervisor] 🔍 INFO_BASE DEBUG: weaviate_client={weaviate_client}")
-                        if weaviate_client and possible_ids:
-                            all_info_nodes = []
-                            for uid in possible_ids:
-                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: searching base_codes={base_codes}, user_id={uid}, query={current_message}")
-                                info_nodes = await weaviate_client.search_information_bases(
-                                    base_codes=base_codes,
-                                    user_id=uid,
-                                    query=current_message,
-                                    limit=5
-                                )
-                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: search returned {len(info_nodes)} nodes for uid={uid}")
-                                if info_nodes:
-                                    all_info_nodes.extend(info_nodes)
-                            print(f"[Supervisor] 🔍 INFO_BASE DEBUG: total all_info_nodes={len(all_info_nodes)}")
+                        all_info_nodes = []
+                        
+                        if weaviate_client:
+                            for ib in active_bases:
+                                possible_ids = []
+                                if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                    target_key = ib.correlation_schema.get("target")
+                                    if target_key:
+                                        parts = target_key.split(".")
+                                        val = info_base_context_data
+                                        for part in parts:
+                                            if isinstance(val, dict) and part in val:
+                                                val = val[part]
+                                            else:
+                                                val = None
+                                                break
+                                        if val is not None and not isinstance(val, (dict, list)):
+                                            v_str = str(val).strip()
+                                            if v_str:
+                                                possible_ids.append(v_str)
+                                
+                                if not possible_ids:
+                                    for k, v in info_base_context_data.items():
+                                        if isinstance(v, str) and v.strip():
+                                            possible_ids.append(v.strip())
+                                    if contact_id:
+                                        possible_ids.append(str(contact_id))
+                                
+                                for uid in possible_ids:
+                                    info_nodes = await weaviate_client.search_information_bases(
+                                        base_codes=[ib.code],
+                                        user_id=uid,
+                                        query=current_message,
+                                        limit=5
+                                    )
+                                    if info_nodes:
+                                        all_info_nodes.extend(info_nodes)
+                            
                             if all_info_nodes:
-                                # Deduplicate by content
                                 seen = set()
                                 unique_nodes = []
                                 for n in all_info_nodes:
@@ -232,13 +331,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                                         unique_nodes.append(n)
                                 print(f"[Supervisor] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
                                 info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
-                                system_addition = f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
-                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + system_addition
-                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: system_prompt updated, length={len(agent_config['system_prompt'])}")
-                            else:
-                                print(f"[Supervisor] 🔍 INFO_BASE DEBUG: no nodes found for any user ID")
-                else:
-                    print(f"[Supervisor] 🔍 INFO_BASE DEBUG: agent has no information_bases linked")
+                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
             except Exception as e:
                 import traceback
                 print(f"[Supervisor] Failed to retrieve Information Bases context: {e}")
@@ -270,7 +363,6 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
 
 {mem_str}
 """
-                        # We must inject this into the agent's system prompt before invoking
                         agent_config["system_prompt"] = agent_config.get("system_prompt", "") + system_addition
             except Exception as e:
                 import traceback
@@ -322,12 +414,18 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             agent_responses[agent_name] = response
             state["agent_responses"] = agent_responses
             
+            loop_history = state.get("loop_history", [])
+            loop_history.append({"agent": agent_name, "response_summary": response[:300]})
+            state["loop_history"] = loop_history
+            
             print(f"[Supervisor] ✅ {agent_name} responded")
             
-            # Check if collaboration is needed
+            # Decide next step: evaluate (for orchestrators with loop) or synthesize (simple agents)
             is_orchestrator = getattr(agent_model, "is_orchestrator", False) if agent_model else False
-            if agent_config.get("collaboration_enabled", False) and not is_orchestrator:
-                state["next_action"] = "check_collaboration"
+            has_collaboration = agent_config.get("collaboration_enabled", False)
+            
+            if is_orchestrator and has_collaboration:
+                state["next_action"] = "evaluate"
             else:
                 state["next_action"] = "synthesize"
                 state["final_response"] = response
@@ -340,52 +438,197 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
         
         return state
     
-    async def check_collaboration(self, state: SupervisorState) -> SupervisorState:
+    async def evaluate(self, state: SupervisorState) -> SupervisorState:
         """
-        Check if the current agent needs to collaborate with others.
+        Evaluate node (NEW in v0.0.9): Decides if the task is complete or needs more agents.
+        
+        Uses LLM to analyze accumulated responses and decide:
+        - "complete" → go to synthesize
+        - "delegate" → select next agent, push to pending_agents, go to execute
+        
+        Loop settings come from orchestrator_loop_config (per-agent).
         """
         config = RunnableConfig(
-            run_name="Collaboration Check",
-            metadata={"node": "collaboration"},
-            tags=["supervisor", "collaboration"]
+            run_name="Reasoning Evaluator",
+            metadata={"node": "evaluate"},
+            tags=["supervisor", "evaluate", "reasoning_loop"]
         )
         
-        agent_config = state.get("current_agent_config")
-        current_response = state.get("agent_responses", {}).get(agent_config["name"], "")
+        loop_config = state.get("orchestrator_loop_config", {})
+        max_iterations = loop_config.get("max_reasoning_iterations", 3)
         iteration = state.get("iteration", 0)
-        max_iterations = state.get("max_iterations", 3)
         
-        # Limit iterations
+        # Safety: enforce max iterations
         if iteration >= max_iterations:
+            print(f"[Supervisor] ⚠️ Max iterations ({max_iterations}) reached, forcing synthesize")
             state["next_action"] = "synthesize"
             return state
         
-        # Check with orchestrator
+        state["iteration"] = iteration + 1
+        
+        # Get available collaborators
+        primary_config = state.get("current_agent_config", {})
+        agent_model = primary_config.get("agent_model")
+        
+        if not agent_model:
+            state["next_action"] = "synthesize"
+            return state
+        
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
             orchestrator = AgentOrchestrator(self.db)
+            agent_with_settings = await orchestrator.get_agent_with_collaborators(agent_model.id)
             
-            agent_model = agent_config.get("agent_model")
-            if agent_model and agent_model.collaboration_enabled:
-                # Get collaboration decision
-                enhanced_response = await orchestrator.orchestrate(
-                    message=state["original_message"],
-                    primary_agent=agent_model,
-                    primary_response=current_response,
-                    context=""
-                )
+            if not agent_with_settings or not agent_with_settings.collaborator_settings:
+                print("[Supervisor] No collaborators configured, completing")
+                state["next_action"] = "synthesize"
+                return state
+            
+            from app.models.agent import CollaborationStatus
+            enabled = [s.collaborator for s in agent_with_settings.collaborator_settings if s.status == CollaborationStatus.ENABLED]
+            neutral = [s.collaborator for s in agent_with_settings.collaborator_settings if s.status == CollaborationStatus.NEUTRAL]
+            all_collaborators = enabled + neutral
+            
+            if not all_collaborators:
+                state["next_action"] = "synthesize"
+                return state
+            
+            # Build context for evaluate LLM
+            agent_responses = state.get("agent_responses", {})
+            responses_text = "\n\n".join([
+                f"[{name}]: {resp[:500]}" for name, resp in agent_responses.items()
+            ])
+            
+            # Already consulted agents
+            agents_used = state.get("agents_used", [])
+            
+            # Available agents not yet consulted
+            available = []
+            for a in all_collaborators:
+                if a.name not in agents_used:
+                    priority = "PRIORITÁRIO" if a in enabled else "DISPONÍVEL"
+                    skills_desc = ""
+                    if hasattr(a, 'skills') and a.skills:
+                        active_skills = [s for s in a.skills if s.is_active]
+                        if active_skills:
+                            skills_desc = f" [Skills: {', '.join([s.name for s in active_skills])}]"
+                    available.append(f"- {a.name} ({priority}): {a.description or 'Especialista'}{skills_desc}")
+            
+            if not available:
+                print("[Supervisor] All collaborators already consulted, completing")
+                state["next_action"] = "synthesize"
+                return state
+            
+            available_str = "\n".join(available)
+            
+            evaluate_prompt = f"""Você é o sistema de raciocínio de um orquestrador multi-agente.
+
+MENSAGEM ORIGINAL DO USUÁRIO:
+"{state.get('original_message', '')}"
+
+RESPOSTAS ACUMULADAS ATÉ AGORA:
+{responses_text}
+
+AGENTES DISPONÍVEIS (ainda não consultados):
+{available_str}
+
+HISTÓRICO DA CONVERSA (últimas mensagens):
+{self._format_history_for_eval(state.get("history", []))}
+
+TAREFA:
+Analise se a solicitação do usuário já foi plenamente atendida pelas respostas acumuladas acima.
+
+REGRAS:
+1. Se as respostas já atendem completamente a solicitação, responda com action "complete"
+2. Se falta informação que um dos agentes disponíveis pode fornecer, responda com action "delegate"
+3. Se delegarmos, forneça uma orientação CLARA e DIRETA para o agente selecionado
+4. Considere se o agente primário solicitou informações que outro agente pode buscar
+5. Máximo de 1 agente por delegação
+
+Responda APENAS em JSON válido:
+{{"action": "complete"}} 
+OU
+{{"action": "delegate", "agent_name": "Nome Exato", "orientation": "Instrução clara do que buscar/fazer"}}"""
+
+            reasoning_model = loop_config.get("reasoning_model", "gpt-4o-mini")
+            eval_llm = ChatOpenAI(
+                model=reasoning_model,
+                temperature=0,
+                api_key=settings.OPENAI_API_KEY
+            )
+            
+            response = await eval_llm.ainvoke(
+                [SystemMessage(content=evaluate_prompt)],
+                config=config
+            )
+            
+            import json
+            result_text = response.content.strip()
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            result_text = result_text.strip()
+            
+            decision = json.loads(result_text)
+            action = decision.get("action", "complete")
+            
+            state["evaluation_reasoning"] = decision.get("orientation", decision.get("reasoning", ""))
+            
+            print(f"[Supervisor] 🧠 Evaluate (iteration {iteration+1}/{max_iterations}): action={action}")
+            
+            if action == "delegate":
+                delegate_name = decision.get("agent_name", "")
+                orientation = decision.get("orientation", "")
                 
-                if enhanced_response != current_response:
-                    print(f"[Supervisor] 🎭 Collaboration enhanced response")
-                    state["agent_responses"][agent_config["name"]] = enhanced_response
-                    state["final_response"] = enhanced_response
+                # Find the agent to delegate to
+                target_agent = None
+                for a in all_collaborators:
+                    if a.name and a.name.lower() == delegate_name.lower():
+                        target_agent = a
+                        break
+                
+                if target_agent:
+                    # Load agent config
+                    delegate_config = await self.factory.get_agent_config(target_agent, context_data=state.get("context_data"))
                     
+                    pending = state.get("pending_agents", [])
+                    pending.append({
+                        "id": str(target_agent.id),
+                        "name": target_agent.name,
+                        "config": delegate_config,
+                        "orientation": orientation
+                    })
+                    state["pending_agents"] = pending
+                    state["next_action"] = "execute"
+                    
+                    print(f"[Supervisor] 🔄 Delegating to '{target_agent.name}': {orientation[:100]}")
+                else:
+                    print(f"[Supervisor] ⚠️ Agent '{delegate_name}' not found among collaborators, completing")
+                    state["next_action"] = "synthesize"
+            else:
+                print(f"[Supervisor] ✅ Evaluate: task complete")
+                state["next_action"] = "synthesize"
+                
         except Exception as e:
-            print(f"[Supervisor] Collaboration check error: {e}")
+            import traceback
+            print(f"[Supervisor] Evaluate error: {e}")
+            traceback.print_exc()
+            state["next_action"] = "synthesize"
         
-        state["iteration"] = iteration + 1
-        state["next_action"] = "synthesize"
         return state
+    
+    def _format_history_for_eval(self, history: list) -> str:
+        """Format conversation history for evaluate prompt (last 6 messages)"""
+        if not history:
+            return "(sem histórico)"
+        recent = history[-6:]
+        parts = []
+        for msg in recent:
+            role = "Usuário" if msg.get("role") == "user" else "Assistente"
+            content = msg.get("content", "")[:200]
+            parts.append(f"{role}: {content}")
+        return "\n".join(parts)
     
     async def synthesize(self, state: SupervisorState) -> SupervisorState:
         """
@@ -407,19 +650,29 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             tags=["supervisor", "synthesis"]
         )
         
+        # Get orchestrator's primary agent config for personality
+        primary_config = state.get("current_agent_config", {})
+        primary_name = primary_config.get("name", "Orquestrador")
+        
         responses_text = "\n\n".join([
             f"[{name}]: {response}"
             for name, response in agent_responses.items()
         ])
         
-        combine_prompt = f"""Combine as seguintes respostas em uma única resposta coesa:
+        combine_prompt = f"""Você é o agente "{primary_name}" finalizando uma resposta ao usuário.
 
+PERGUNTA ORIGINAL: "{state.get('original_message', '')}"
+
+CONTRIBUIÇÕES DOS ESPECIALISTAS:
 {responses_text}
 
-REGRAS:
-- Mantenha as informações mais importantes de cada resposta
-- Crie uma resposta única e natural
-- Não mencione que são respostas de diferentes agentes
+TAREFA:
+Combine as informações em uma resposta única, coesa e natural para o usuário.
+- Não mencione que recebeu informações de outros agentes
+- Mantenha sua personalidade e tom
+- Integre as informações de forma fluida
+- Priorize a resposta mais completa e precisa
+- Se houver solicitação de informação adicional ao usuário, inclua-a naturalmente
 """
         
         try:
@@ -428,21 +681,22 @@ REGRAS:
                 config=config
             )
             state["final_response"] = response.content
+            print(f"[Supervisor] 🎭 Synthesized response from {len(agent_responses)} agents")
         except Exception as e:
-            # Fallback to first response
-            state["final_response"] = list(agent_responses.values())[0]
+            # Fallback to last response
+            state["final_response"] = list(agent_responses.values())[-1]
         
         state["next_action"] = "end"
         return state
     
     def build_graph(self) -> StateGraph:
-        """Build the supervisor graph"""
+        """Build the supervisor graph with reasoning loop"""
         graph = StateGraph(SupervisorState)
         
         # Add nodes
         graph.add_node("route", self.route)
         graph.add_node("execute", self.execute)
-        graph.add_node("check_collaboration", self.check_collaboration)
+        graph.add_node("evaluate", self.evaluate)
         graph.add_node("synthesize", self.synthesize)
         
         # Define conditional edges
@@ -452,7 +706,7 @@ REGRAS:
         # Set entry point
         graph.set_entry_point("route")
         
-        # Add conditional edges
+        # route → execute | end
         graph.add_conditional_edges(
             "route",
             next_step,
@@ -462,22 +716,24 @@ REGRAS:
             }
         )
         
+        # execute → evaluate (orchestrators with loop) | synthesize (simple agents) | end
         graph.add_conditional_edges(
             "execute",
             next_step,
             {
-                "check_collaboration": "check_collaboration",
+                "evaluate": "evaluate",
                 "synthesize": "synthesize",
                 "end": END
             }
         )
         
+        # evaluate → execute (loop back) | synthesize (complete) | end
         graph.add_conditional_edges(
-            "check_collaboration",
+            "evaluate",
             next_step,
             {
+                "execute": "execute",
                 "synthesize": "synthesize",
-                "route": "route",  # Can redirect to another agent
                 "end": END
             }
         )
@@ -528,7 +784,7 @@ async def run_supervisor(
         "current_agent_config": None,
         "agents_used": [],
         "iteration": 0,
-        "max_iterations": 3,
+        "max_iterations": 5,
         "next_action": "route",
         "needs_collaboration": False,
         "collaboration_agents": [],
@@ -537,7 +793,12 @@ async def run_supervisor(
         "mcp_tools": [],
         "agent_responses": {},
         "final_response": None,
-        "error": None
+        "error": None,
+        # Reasoning loop fields
+        "pending_agents": [],
+        "evaluation_reasoning": "",
+        "loop_history": [],
+        "orchestrator_loop_config": {},
     }
     
     # Run graph with LangSmith tracing
