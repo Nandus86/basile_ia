@@ -58,12 +58,18 @@ async def _enrich_agent_prompt(
 
     # Inject CURRENT DATETIME as the very first contextual item
     from datetime import datetime
-    import pytz
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    except ImportError:
+        # Fallback to pytz just in case the environment is somehow older
+        import pytz
+        ZoneInfo = pytz.timezone
+        ZoneInfoNotFoundError = pytz.UnknownTimeZoneError
     
     try:
-        user_tz = pytz.timezone(tz_name)
-    except pytz.UnknownTimeZoneError:
-        user_tz = pytz.timezone('America/Sao_Paulo')
+        user_tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        user_tz = ZoneInfo('America/Sao_Paulo')
 
     now = datetime.now(user_tz)
     current_time_str = now.strftime(f'%d/%m/%Y %H:%M:%S (Fuso: {tz_name})')
