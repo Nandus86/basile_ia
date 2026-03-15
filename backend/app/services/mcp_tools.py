@@ -524,10 +524,18 @@ class MCPToolExecutor:
                     all_params=all_params
                 )
                 
+                # Sanitize tool name for provider compatibility
+                # (Google AI Studio requires: alphanumeric, underscores, dots, colons, dashes, max 128 chars)
+                import re
+                safe_name = re.sub(r'[^a-zA-Z0-9_.\-:]', '_', tool_name)
+                safe_name = re.sub(r'^[^a-zA-Z_]', '_', safe_name)  # Must start with letter or underscore
+                safe_name = re.sub(r'_+', '_', safe_name).strip('_')  # Collapse multiple underscores
+                safe_name = safe_name[:128] if safe_name else f"tool_{cache_key[:8]}"
+                
                 # Create LangChain tool
                 tool = StructuredTool.from_function(
                     coroutine=executor,
-                    name=tool_name,
+                    name=safe_name,
                     description=description[:200] if len(description) > 200 else description,
                     args_schema=args_schema,
                     return_direct=False
