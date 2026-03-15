@@ -41,6 +41,24 @@ async def _enrich_agent_prompt(
     """
     rag_context = None
 
+    # Inject CURRENT DATETIME as the very first contextual item
+    from datetime import datetime, timezone
+    import pytz
+    # Localizing to timezone suitable for Basile (usually America/Sao_Paulo) or just UTC/isoformat
+    sp_tz = pytz.timezone('America/Sao_Paulo')
+    now = datetime.now(sp_tz)
+    current_time_str = now.strftime('%d/%m/%Y %H:%M:%S (Fuso: America/Sao_Paulo)')
+    current_iso = now.isoformat()
+    
+    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+        f"\n\n## Data e Hora Local do Sistema\n"
+        f"Abaixo estão os dados temporais deste exato momento. "
+        f"Use isso para calcular prazos, responder se é dia/noite ou comparar com "
+        f"as datas gravadas nas memórias (que também possuem timestamp).\n"
+        f"- Data/Hora legível: {current_time_str}\n"
+        f"- Timestamp ISO: {current_iso}\n"
+    )
+
     # 1. RAG Context
     try:
         from app.services.rag_service import get_rag_context
