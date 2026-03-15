@@ -365,13 +365,31 @@ class MCPToolExecutor:
                         if key in body:
                             query_params[key] = str(body.pop(key))
                     
+                    # For pure 'mcp' protocol, we shouldn't send injected vars like 
+                    # 'bodyapikey' as tool arguments, since the remote MCP server won't expect them.
+                    cleaned_args = final_args.copy()
+                    
+                    # Discover all keys that were used as injected placeholders
+                    used_all = set()
+                    _, u_body = _inject_from_ai_params(json.dumps(mcp.body_template or {}), final_args)
+                    _, u_headers = _inject_from_ai_params(json.dumps(mcp.headers or {}), final_args)
+                    _, u_query = _inject_from_ai_params(json.dumps(getattr(mcp, "query_template", {}) or {}), final_args)
+                    import urllib.parse
+                    _, u_endpoint = _inject_from_ai_params(urllib.parse.unquote(mcp.endpoint or ""), final_args)
+                    
+                    used_all.update(u_body, u_headers, u_query, u_endpoint)
+                    
+                    # Remove the mapping keys from arguments being forwarded to the remote tool
+                    for key in used_all:
+                        cleaned_args.pop(key, None)
+                    
                     result = await execute_mcp_protocol(
                         endpoint=mcp.endpoint,
                         headers=mcp.headers or {},
                         query_params=query_params,
                         action="call_tool",
                         tool_name=tool_name,
-                        tool_args=final_args,
+                        tool_args=cleaned_args,
                         timeout=float(mcp.timeout_seconds or 60)
                     )
                     
