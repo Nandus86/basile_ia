@@ -367,7 +367,14 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             # Use ReAct agent with tools
             try:
                 # Add system message to the messages list
-                tool_instructions = "\n\nVocê tem acesso a ferramentas externas. USE-AS ATIVAMENTE quando o usuário pedir ações como agendamentos, consultas, etc. Sempre responda no mesmo idioma do usuário."
+                tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in tools])
+                tool_instructions = f"""
+
+## Árvore de Ferramentas / MCPs Disponíveis
+Você tem acesso às seguintes ferramentas (MCPs). Relacione os passos solicitados nas suas skills com os nomes listados abaixo, que são os métodos reais que você pode invocar:
+{tool_list}
+
+Você tem acesso a ferramentas externas. USE-AS ATIVAMENTE quando o usuário pedir ações como agendamentos, consultas, etc. Sempre responda no mesmo idioma do usuário."""
                 full_prompt = system_prompt + tool_instructions
                 
                 # Insert SystemMessage at the beginning
