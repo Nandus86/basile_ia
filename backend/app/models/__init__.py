@@ -13,6 +13,7 @@ from app.models.skill import Skill
 from app.models.information_base import InformationBase
 from app.models.vfs_knowledge_base import VFSKnowledgeBase, VFSFile
 from app.models.workflow import Workflow
+from app.models.conversation_message import ConversationMessage
 
 __all__ = [
     "APIKey", 

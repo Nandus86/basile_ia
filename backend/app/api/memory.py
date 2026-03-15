@@ -265,3 +265,133 @@ async def delete_all_memories_for_contact(contact_id: str, agent_id: Optional[st
     
     deleted = await asyncio.to_thread(_sync_purge)
     return {"status": "purged", "contact_id": contact_id, "deleted_count": deleted}
+
+
+# ─────────────────────────────────────────────────
+# MTM (PostgreSQL) - Medium-Term Memory
+# ─────────────────────────────────────────────────
+
+@router.get("/mtm/sessions")
+async def list_mtm_sessions(
+    agent_id: Optional[str] = None,
+    limit: int = Query(100, le=500),
+):
+    """List all MTM sessions with message counts and last interaction"""
+    from app.database import AsyncSessionLocal
+    from app.models.conversation_message import ConversationMessage
+    from sqlalchemy import select, func, desc
+    import uuid
+
+    async with AsyncSessionLocal() as db:
+        q = (
+            select(
+                ConversationMessage.agent_id,
+                ConversationMessage.session_id,
+                func.count().label("total_messages"),
+                func.max(ConversationMessage.created_at).label("last_interaction"),
+                func.min(ConversationMessage.created_at).label("first_interaction"),
+            )
+            .group_by(ConversationMessage.agent_id, ConversationMessage.session_id)
+            .order_by(desc(func.max(ConversationMessage.created_at)))
+            .limit(limit)
+        )
+
+        if agent_id:
+            q = q.where(ConversationMessage.agent_id == uuid.UUID(agent_id))
+
+        result = await db.execute(q)
+        rows = result.all()
+
+        sessions = []
+        for row in rows:
+            sessions.append({
+                "agent_id": str(row.agent_id),
+                "session_id": row.session_id,
+                "total_messages": row.total_messages,
+                "last_interaction": row.last_interaction.isoformat() if row.last_interaction else None,
+                "first_interaction": row.first_interaction.isoformat() if row.first_interaction else None,
+            })
+
+        return {"sessions": sessions, "count": len(sessions)}
+
+
+@router.get("/mtm/sessions/{session_id}")
+async def get_mtm_session_messages(
+    session_id: str,
+    agent_id: Optional[str] = None,
+    limit: int = Query(200, le=1000),
+):
+    """Get all messages for a specific MTM session"""
+    from app.database import AsyncSessionLocal
+    from app.models.conversation_message import ConversationMessage
+    from sqlalchemy import select
+    import uuid
+
+    async with AsyncSessionLocal() as db:
+        q = (
+            select(ConversationMessage)
+            .where(ConversationMessage.session_id == session_id)
+            .order_by(ConversationMessage.created_at.asc())
+            .limit(limit)
+        )
+
+        if agent_id:
+            q = q.where(ConversationMessage.agent_id == uuid.UUID(agent_id))
+
+        result = await db.execute(q)
+        rows = result.scalars().all()
+
+        messages = []
+        for r in rows:
+            messages.append({
+                "id": str(r.id),
+                "agent_id": str(r.agent_id),
+                "session_id": r.session_id,
+                "role": r.role,
+                "content": r.content,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+
+        return {
+            "session_id": session_id,
+            "messages": messages,
+            "count": len(messages),
+        }
+
+
+@router.delete("/mtm/sessions/{session_id}")
+async def delete_mtm_session(session_id: str, agent_id: Optional[str] = None):
+    """Delete all messages for a specific MTM session"""
+    from app.database import AsyncSessionLocal
+    from app.models.conversation_message import ConversationMessage
+    from sqlalchemy import delete as sa_delete
+    import uuid
+
+    async with AsyncSessionLocal() as db:
+        q = sa_delete(ConversationMessage).where(
+            ConversationMessage.session_id == session_id
+        )
+        if agent_id:
+            q = q.where(ConversationMessage.agent_id == uuid.UUID(agent_id))
+
+        result = await db.execute(q)
+        await db.commit()
+        return {"status": "deleted", "session_id": session_id, "deleted_count": result.rowcount}
+
+
+@router.delete("/mtm/messages")
+async def delete_mtm_messages_bulk(ids: List[str]):
+    """Delete multiple MTM messages by IDs"""
+    from app.database import AsyncSessionLocal
+    from app.models.conversation_message import ConversationMessage
+    from sqlalchemy import delete as sa_delete
+    import uuid
+
+    async with AsyncSessionLocal() as db:
+        uuids = [uuid.UUID(i) for i in ids]
+        q = sa_delete(ConversationMessage).where(
+            ConversationMessage.id.in_(uuids)
+        )
+        result = await db.execute(q)
+        await db.commit()
+        return {"status": "deleted", "deleted_count": result.rowcount}

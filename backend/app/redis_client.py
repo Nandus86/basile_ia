@@ -60,9 +60,14 @@ class RedisClient:
     
     async def add_message(self, session_id: str, role: str, content: str, ttl_seconds: int = 86400):
         """Add message to conversation history with configurable TTL"""
+        from datetime import datetime, timezone
         client = await self.connect()
         key = f"conversation:{session_id}"
-        message = json.dumps({"role": role, "content": content})
+        message = json.dumps({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
         await client.rpush(key, message)
         await client.expire(key, ttl_seconds)
     
