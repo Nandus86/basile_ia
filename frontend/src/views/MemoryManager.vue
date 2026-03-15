@@ -35,6 +35,20 @@
         <v-card class="stat-card glass-card pa-5 d-flex flex-column justify-center relative border-amber">
           <div class="bg-glow" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(0,0,0,0) 60%)"></div>
           <div class="d-flex justify-space-between align-start mb-3 z-1">
+            <span class="text-caption font-weight-medium stat-label">Sessões MTM</span>
+            <div class="stat-icon-box" style="background: linear-gradient(135deg, #F59E0B, #FBBF24)">
+              <v-icon icon="mdi-database-clock-outline" size="22" color="white"></v-icon>
+            </div>
+          </div>
+          <div class="z-1">
+            <h3 class="text-h4 font-weight-bold text-white mb-0" style="line-height: 1; font-variant-numeric: tabular-nums;">{{ mtmSessions.length }}</h3>
+          </div>
+        </v-card>
+      </v-col>
+      <v-col cols="12" sm="6" md="3">
+        <v-card class="stat-card glass-card pa-5 d-flex flex-column justify-center relative border-amber">
+          <div class="bg-glow" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(0,0,0,0) 60%)"></div>
+          <div class="d-flex justify-space-between align-start mb-3 z-1">
             <span class="text-caption font-weight-medium stat-label">Jobs Redis</span>
             <div class="stat-icon-box" style="background: linear-gradient(135deg, #F59E0B, #FBBF24)">
               <v-icon icon="mdi-briefcase-clock-outline" size="22" color="white"></v-icon>
@@ -67,6 +81,10 @@
         <v-tab value="stm" class="text-white">
           <v-icon start size="18">mdi-message-text-clock-outline</v-icon>
           Conversas (STM)
+        </v-tab>
+        <v-tab value="mtm" class="text-white">
+          <v-icon start size="18">mdi-database-clock-outline</v-icon>
+          Histórico (MTM)
         </v-tab>
         <v-tab value="jobs" class="text-white">
           <v-icon start size="18">mdi-briefcase-clock-outline</v-icon>
@@ -148,6 +166,84 @@
                     <v-tooltip activator="parent" location="top">Visualizar</v-tooltip>
                   </v-btn>
                   <v-btn icon variant="text" size="x-small" color="error" @click="deleteStmKey(item)">
+                    <v-icon size="18">mdi-delete-outline</v-icon>
+                    <v-tooltip activator="parent" location="top">Apagar</v-tooltip>
+                  </v-btn>
+                </div>
+              </template>
+            </v-data-table>
+          </v-window-item>
+
+          <!-- ── MTM Tab ── -->
+          <v-window-item value="mtm">
+            <div class="d-flex align-center justify-space-between mb-4">
+              <div class="d-flex align-center ga-3">
+                <v-text-field
+                  v-model="mtmSearch"
+                  prepend-inner-icon="mdi-magnify"
+                  placeholder="Filtrar por session ID..."
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  rounded="lg"
+                  class="search-field"
+                  style="max-width: 340px"
+                ></v-text-field>
+              </div>
+              <div class="d-flex ga-2">
+                <v-btn color="primary" variant="tonal" size="small" @click="fetchMtmSessions" :loading="loadingMtm">
+                  <v-icon start size="16">mdi-refresh</v-icon> Atualizar
+                </v-btn>
+                <v-btn
+                  color="error"
+                  variant="tonal"
+                  size="small"
+                  :disabled="selectedMtmSessions.length === 0"
+                  @click="deleteSelectedMtm"
+                >
+                  <v-icon start size="16">mdi-delete-outline</v-icon>
+                  Apagar ({{ selectedMtmSessions.length }})
+                </v-btn>
+              </div>
+            </div>
+
+            <v-data-table
+              v-model="selectedMtmSessions"
+              :headers="mtmHeaders"
+              :items="filteredMtmSessions"
+              :loading="loadingMtm"
+              item-value="session_id"
+              show-select
+              items-per-page="15"
+              class="memory-table bg-transparent"
+              hover
+            >
+              <template #item.session_id="{ item }">
+                <div class="d-flex align-center">
+                  <v-icon size="16" class="mr-2" color="#FBBF24">mdi-account-circle-outline</v-icon>
+                  <span class="text-body-2 font-weight-medium text-white key-text">{{ item.session_id }}</span>
+                </div>
+              </template>
+              <template #item.agent_id="{ item }">
+                <v-chip size="small" variant="tonal" color="purple" class="font-weight-medium">
+                  {{ item.agent_id ? item.agent_id.substring(0, 8) + '...' : '—' }}
+                </v-chip>
+              </template>
+              <template #item.total_messages="{ item }">
+                <v-chip size="small" variant="tonal" color="info">{{ item.total_messages }} msgs</v-chip>
+              </template>
+              <template #item.last_interaction="{ item }">
+                <span class="text-body-2" style="color: rgba(255,255,255,0.6)">
+                  {{ formatDate(item.last_interaction) }}
+                </span>
+              </template>
+              <template #item.actions="{ item }">
+                <div class="d-flex ga-1">
+                  <v-btn icon variant="text" size="x-small" color="info" @click="viewMtmSession(item)">
+                    <v-icon size="18">mdi-eye-outline</v-icon>
+                    <v-tooltip activator="parent" location="top">Visualizar</v-tooltip>
+                  </v-btn>
+                  <v-btn icon variant="text" size="x-small" color="error" @click="deleteMtmSession(item)">
                     <v-icon size="18">mdi-delete-outline</v-icon>
                     <v-tooltip activator="parent" location="top">Apagar</v-tooltip>
                   </v-btn>
@@ -328,6 +424,9 @@
                   {{ msg.role === 'user' ? 'mdi-account' : 'mdi-robot' }}
                 </v-icon>
                 <span class="text-caption font-weight-bold text-uppercase" style="opacity: 0.7">{{ msg.role }}</span>
+                <span v-if="msg.created_at || msg.timestamp" class="text-caption ml-2" style="opacity: 0.4">
+                  {{ formatDate(msg.created_at || msg.timestamp) }}
+                </span>
               </div>
               <div class="text-body-2 text-white" style="white-space: pre-wrap; word-break: break-word;">{{ msg.content }}</div>
             </div>
@@ -374,20 +473,24 @@ import axios from '@/plugins/axios'
 // ── State ──
 const activeTab = ref('stm')
 const loadingStm = ref(false)
+const loadingMtm = ref(false)
 const loadingJobs = ref(false)
 const loadingVector = ref(false)
 const deleting = ref(false)
 
 const stmKeys = ref([])
+const mtmSessions = ref([])
 const jobKeys = ref([])
 const vectorMemories = ref([])
 const vectorCollections = ref([])
 
 const selectedStmKeys = ref([])
+const selectedMtmSessions = ref([])
 const selectedJobKeys = ref([])
 const selectedVectorMemories = ref([])
 
 const stmSearch = ref('')
+const mtmSearch = ref('')
 const jobSearch = ref('')
 const vectorSearch = ref('')
 const vectorContactFilter = ref('')
@@ -427,6 +530,14 @@ const vectorHeaders = [
   { title: 'Ações', key: 'actions', sortable: false, width: '80px', align: 'center' },
 ]
 
+const mtmHeaders = [
+  { title: 'Session ID', key: 'session_id', sortable: true },
+  { title: 'Agente', key: 'agent_id', sortable: true, width: '140px' },
+  { title: 'Mensagens', key: 'total_messages', sortable: true, width: '130px' },
+  { title: 'Última Interação', key: 'last_interaction', sortable: true, width: '180px' },
+  { title: 'Ações', key: 'actions', sortable: false, width: '100px', align: 'center' },
+]
+
 // ── Computed ──
 const filteredStmKeys = computed(() => {
   if (!stmSearch.value) return stmKeys.value
@@ -451,6 +562,12 @@ const filteredVectorMemories = computed(() => {
     items = items.filter(m => m.contact_id.toLowerCase().includes(c))
   }
   return items
+})
+
+const filteredMtmSessions = computed(() => {
+  if (!mtmSearch.value) return mtmSessions.value
+  const s = mtmSearch.value.toLowerCase()
+  return mtmSessions.value.filter(k => k.session_id.toLowerCase().includes(s))
 })
 
 // ── Helpers ──
@@ -520,6 +637,54 @@ async function fetchVectorCollections() {
     const res = await axios.get('/memory/vector/collections')
     vectorCollections.value = res.data.collections || []
   } catch { /* silent */ }
+}
+
+async function fetchMtmSessions() {
+  loadingMtm.value = true
+  try {
+    const res = await axios.get('/memory/mtm/sessions', { params: { limit: 500 } })
+    mtmSessions.value = res.data.sessions || []
+  } catch (e) {
+    showSnack('Erro ao buscar sessões MTM', 'error')
+  } finally {
+    loadingMtm.value = false
+  }
+}
+
+async function viewMtmSession(item) {
+  detailKey.value = item.session_id
+  detailData.value = null
+  detailDialog.value = true
+  try {
+    const res = await axios.get(`/memory/mtm/sessions/${item.session_id}`)
+    detailData.value = res.data
+  } catch (e) {
+    detailData.value = { data: 'Erro ao carregar dados' }
+  }
+}
+
+function deleteMtmSession(item) {
+  confirmMessage.value = `Tem certeza que deseja apagar toda a conversa da sessão "${item.session_id}"? (${item.total_messages} mensagens)`
+  pendingConfirmAction = async () => {
+    await axios.delete(`/memory/mtm/sessions/${item.session_id}`)
+    showSnack(`Sessão "${item.session_id}" apagada`)
+    fetchMtmSessions()
+  }
+  confirmDialog.value = true
+}
+
+function deleteSelectedMtm() {
+  const count = selectedMtmSessions.value.length
+  confirmMessage.value = `Tem certeza que deseja apagar ${count} sessão(ões) selecionada(s)? Esta ação é irreversível.`
+  pendingConfirmAction = async () => {
+    for (const sid of selectedMtmSessions.value) {
+      await axios.delete(`/memory/mtm/sessions/${sid}`)
+    }
+    showSnack(`${count} sessão(ões) apagada(s)`)
+    selectedMtmSessions.value = []
+    fetchMtmSessions()
+  }
+  confirmDialog.value = true
 }
 
 // ── View ──
@@ -610,6 +775,7 @@ async function confirmAction() {
 // ── Init ──
 onMounted(() => {
   fetchStmKeys()
+  fetchMtmSessions()
   fetchJobKeys()
   fetchVectorMemories()
   fetchVectorCollections()

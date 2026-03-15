@@ -152,11 +152,28 @@ async def _enrich_agent_prompt(
                 )
                 if memories:
                     print(f"[Task] 🧠 Retrieved {len(memories)} qualitative facts for contact {session_id}")
-                    mem_str = "\n".join([f"- {m['content']}" for m in memories])
+                    # Include timestamps so the agent knows when each fact was learned
+                    mem_lines = []
+                    for m in memories:
+                        ts = m.get('created_at')
+                        if ts:
+                            try:
+                                from datetime import datetime
+                                if isinstance(ts, str):
+                                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                                else:
+                                    dt = ts
+                                date_str = dt.strftime('%d/%m/%Y')
+                            except Exception:
+                                date_str = str(ts)[:10]
+                        else:
+                            date_str = '—'
+                        mem_lines.append(f"- [{date_str}] {m['content']}")
+                    mem_str = "\n".join(mem_lines)
                     agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                         f"\n\n## Inteligência e Memória Histórica do Contato\n\n"
                         f"Abaixo estão informações e peculiaridades qualitativas deste usuário, "
-                        f"adquiridas em interações anteriores. "
+                        f"adquiridas em interações anteriores. A data entre colchetes indica quando o fato foi registrado. "
                         f"Utilize isso para personalizar ativamente o engajamento de maneira natural:\n\n"
                         f"{mem_str}\n"
                     )
@@ -261,6 +278,171 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
         stm_ttl_hours = cfg.get("short_term_memory_ttl_hours", 24)
         stm_ttl_seconds = int(stm_ttl_hours * 3600)
     return stm_enabled, stm_ttl_seconds
+
+
+# ─────────────────────────────────────────────────────────────
+# MTM (Medium-Term Memory) helpers — PostgreSQL
+# ─────────────────────────────────────────────────────────────
+
+async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, content: str):
+    """Save a message to MTM (PostgreSQL) and trigger auto-summarize if needed."""
+    try:
+        from app.models.conversation_message import ConversationMessage
+        from sqlalchemy import func, select
+        import uuid
+
+        msg = ConversationMessage(
+            id=uuid.uuid4(),
+            agent_id=uuid.UUID(str(agent_id)),
+            session_id=str(session_id),
+            role=role,
+            content=content,
+        )
+        db.add(msg)
+        await db.flush()
+
+        # Check if we crossed the 100-message threshold for auto-summarize
+        count_q = select(func.count()).where(
+            ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
+            ConversationMessage.session_id == str(session_id),
+        )
+        result = await db.execute(count_q)
+        total = result.scalar() or 0
+
+        if total > 0 and total % 100 == 0:
+            print(f"[MTM] 📊 {total} messages for session {session_id}, triggering auto-summarize → LTM")
+            import asyncio
+            asyncio.create_task(_auto_summarize_mtm_to_ltm(db, agent_id, session_id))
+
+    except Exception as e:
+        print(f"[MTM] ❌ Error saving message: {e}")
+
+
+async def _load_mtm_fallback(db, agent_id: str, session_id: str, limit: int = 5) -> list:
+    """Load last N messages from MTM when STM is empty."""
+    try:
+        from app.models.conversation_message import ConversationMessage
+        from sqlalchemy import select
+        import uuid
+
+        q = (
+            select(ConversationMessage)
+            .where(
+                ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
+                ConversationMessage.session_id == str(session_id),
+            )
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(limit)
+        )
+        result = await db.execute(q)
+        rows = result.scalars().all()
+        # Reverse to get chronological order
+        rows = list(reversed(rows))
+        return [
+            {
+                "role": r.role,
+                "content": r.content,
+                "timestamp": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"[MTM] ❌ Error loading fallback: {e}")
+        return []
+
+
+async def _check_mtm_has_history(db, agent_id: str, session_id: str) -> bool:
+    """Check if this contact has any prior conversation in MTM."""
+    try:
+        from app.models.conversation_message import ConversationMessage
+        from sqlalchemy import select, func
+        import uuid
+
+        q = select(func.count()).where(
+            ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
+            ConversationMessage.session_id == str(session_id),
+        )
+        result = await db.execute(q)
+        return (result.scalar() or 0) > 0
+    except Exception:
+        return False
+
+
+async def _auto_summarize_mtm_to_ltm(db, agent_id: str, session_id: str):
+    """Auto-summarize MTM conversation into qualitative LTM facts."""
+    try:
+        from app.models.conversation_message import ConversationMessage
+        from sqlalchemy import select
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from app.weaviate_client import get_weaviate
+        import uuid
+
+        # Load all messages
+        q = (
+            select(ConversationMessage)
+            .where(
+                ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
+                ConversationMessage.session_id == str(session_id),
+            )
+            .order_by(ConversationMessage.created_at.asc())
+        )
+        result = await db.execute(q)
+        rows = result.scalars().all()
+
+        if not rows:
+            return
+
+        # Build conversation text (limit to last 200 msgs to avoid token overflow)
+        recent = rows[-200:]
+        convo_text = "\n".join([
+            f"{r.role.upper()}: {r.content[:300]}" for r in recent
+        ])
+
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            api_key=settings.OPENAI_API_KEY,
+        )
+
+        summary_prompt = """Você é um sistema de extração de memória qualitativa.
+Analise a conversa completa abaixo entre um assistente e um usuário.
+Extraia fatos qualitativos, comportamentais, temporais e demográficos RELEVANTES sobre o usuário.
+
+Exemplos:
+- "Mora com 4 pessoas na casa"
+- "Trabalha no período da noite"
+- "Tem interesse no cristianismo e vontade de se batizar"
+- "Fez um pedido de oração pela família em março/2026"
+- "Costuma responder de madrugada"
+
+Liste os fatos como frases curtas e objetivas, um por linha, sem marcadores.
+Se não houver fatos relevantes, responda EXATAMENTE: NENHUM"""
+
+        response = await llm.ainvoke([
+            SystemMessage(content=summary_prompt),
+            HumanMessage(content=f"Conversa:\n{convo_text}")
+        ])
+
+        extracted = response.content.strip()
+        if extracted.upper() == "NENHUM" or not extracted:
+            print(f"[MTM→LTM] No facts extracted for {session_id}")
+            return
+
+        facts = [f.strip("- ") for f in extracted.split("\n") if f.strip() and f.strip().upper() != "NENHUM"]
+
+        if facts:
+            weaviate_cli = get_weaviate()
+            for fact in facts:
+                await weaviate_cli.save_contact_memory(
+                    agent_id=str(agent_id),
+                    contact_id=str(session_id),
+                    content=fact,
+                )
+            print(f"[MTM→LTM] ✅ Saved {len(facts)} auto-summarized facts for session {session_id}")
+
+    except Exception as e:
+        print(f"[MTM→LTM] ❌ Error auto-summarizing: {e}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -448,12 +630,38 @@ async def process_message_task(
 
             # STM: load history
             history = []
+            mtm_context_note = ""
             if stm_enabled:
                 history = await redis_client.get_conversation(session_id)
                 await redis_client.add_message(
                     session_id=session_id, role="user",
                     content=message, ttl_seconds=stm_ttl_seconds
                 )
+
+            # MTM fallback: if no STM history, check PostgreSQL
+            if not history and agent_id and session_id:
+                mtm_history = await _load_mtm_fallback(db, agent_id, session_id, limit=5)
+                if mtm_history:
+                    history = mtm_history
+                    mtm_context_note = (
+                        "\n\n## Contexto de Conversa Anterior\n\n"
+                        "O usuário já interagiu com você anteriormente. "
+                        "As mensagens abaixo são de uma conversa passada (recuperadas da memória de médio prazo). "
+                        "Use este contexto para manter a continuidade do atendimento.\n"
+                    )
+                    print(f"[MTM] 📋 Loaded {len(mtm_history)} messages from MTM for session {session_id}")
+                else:
+                    has_any = await _check_mtm_has_history(db, agent_id, session_id)
+                    if not has_any:
+                        mtm_context_note = (
+                            "\n\n## Primeiro Contato\n\n"
+                            "Este é o primeiro contato deste usuário. Não há histórico de conversas anteriores.\n"
+                        )
+                        print(f"[MTM] 🆕 First contact for session {session_id}")
+
+            # MTM: save user message to PostgreSQL
+            if agent_id and session_id:
+                await _save_mtm_message(db, agent_id, session_id, "user", message)
 
             # Build LangChain messages
             messages = []
@@ -463,6 +671,10 @@ async def process_message_task(
                 elif msg.get("role") == "assistant":
                     messages.append(AIMessage(content=msg["content"]))
             messages.append(HumanMessage(content=message))
+
+            # Inject MTM context note into system prompt
+            if mtm_context_note:
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + mtm_context_note
 
             # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation)
             rag_context = await _enrich_agent_prompt(
@@ -489,6 +701,9 @@ async def process_message_task(
                         session_id=session_id, role="assistant",
                         content=output_text, ttl_seconds=stm_ttl_seconds
                     )
+                # MTM: save assistant response
+                if agent_id and session_id:
+                    await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
@@ -515,6 +730,9 @@ async def process_message_task(
                         session_id=session_id, role="assistant",
                         content=str(final_result), ttl_seconds=stm_ttl_seconds
                     )
+                # MTM: save assistant response
+                if agent_id and session_id:
+                    await _save_mtm_message(db, agent_id, session_id, "assistant", str(final_result))
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
