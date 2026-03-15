@@ -45,16 +45,20 @@ async def _enrich_agent_prompt(
     # Resolve dynamically provided timezone from transition_data if available
     tz_name = 'America/Sao_Paulo'
     if transition_data:
-        # nested safely: church -> address -> timezone -> zoneName
-        church_dict = transition_data.get('church', {})
-        if isinstance(church_dict, dict):
-            address_dict = church_dict.get('address', {})
-            if isinstance(address_dict, dict):
-                timezone_dict = address_dict.get('timezone', {})
-                if isinstance(timezone_dict, dict):
-                    zone_val = timezone_dict.get('zoneName')
-                    if zone_val and isinstance(zone_val, str):
-                        tz_name = zone_val
+        # Check direct top-level string first for simplicity
+        if isinstance(transition_data.get('zoneName'), str):
+            tz_name = transition_data.get('zoneName')
+        else:
+            # Fallback to nested safely: church -> address -> timezone -> zoneName
+            church_dict = transition_data.get('church', {})
+            if isinstance(church_dict, dict):
+                address_dict = church_dict.get('address', {})
+                if isinstance(address_dict, dict):
+                    timezone_dict = address_dict.get('timezone', {})
+                    if isinstance(timezone_dict, dict):
+                        zone_val = timezone_dict.get('zoneName')
+                        if zone_val and isinstance(zone_val, str):
+                            tz_name = zone_val
 
     # Inject CURRENT DATETIME as the very first contextual item
     from datetime import datetime
