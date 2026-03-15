@@ -29,6 +29,7 @@ async def _enrich_agent_prompt(
     session_id: str,
     context_data: Optional[Dict[str, Any]] = None,
     history: Optional[list] = None,
+    transition_data: Optional[Dict[str, Any]] = None,
 ):
     """
     Enrich an agent's system_prompt with all contextual data:
@@ -41,13 +42,31 @@ async def _enrich_agent_prompt(
     """
     rag_context = None
 
+    # Resolve dynamically provided timezone from transition_data if available
+    tz_name = 'America/Sao_Paulo'
+    if transition_data:
+        # nested safely: church -> address -> timezone -> zoneName
+        church_dict = transition_data.get('church', {})
+        if isinstance(church_dict, dict):
+            address_dict = church_dict.get('address', {})
+            if isinstance(address_dict, dict):
+                timezone_dict = address_dict.get('timezone', {})
+                if isinstance(timezone_dict, dict):
+                    zone_val = timezone_dict.get('zoneName')
+                    if zone_val and isinstance(zone_val, str):
+                        tz_name = zone_val
+
     # Inject CURRENT DATETIME as the very first contextual item
-    from datetime import datetime, timezone
+    from datetime import datetime
     import pytz
-    # Localizing to timezone suitable for Basile (usually America/Sao_Paulo) or just UTC/isoformat
-    sp_tz = pytz.timezone('America/Sao_Paulo')
-    now = datetime.now(sp_tz)
-    current_time_str = now.strftime('%d/%m/%Y %H:%M:%S (Fuso: America/Sao_Paulo)')
+    
+    try:
+        user_tz = pytz.timezone(tz_name)
+    except pytz.UnknownTimeZoneError:
+        user_tz = pytz.timezone('America/Sao_Paulo')
+
+    now = datetime.now(user_tz)
+    current_time_str = now.strftime(f'%d/%m/%Y %H:%M:%S (Fuso: {tz_name})')
     current_iso = now.isoformat()
     
     agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
@@ -706,7 +725,7 @@ async def process_message_task(
 
             # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation)
             rag_context = await _enrich_agent_prompt(
-                db, agent_config, agent_id, message, session_id, context_data, history
+                db, agent_config, agent_id, message, session_id, context_data, history, transition_data
             )
 
             # ── Execute agent ──
