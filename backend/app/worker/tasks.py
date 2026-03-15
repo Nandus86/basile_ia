@@ -180,15 +180,42 @@ async def _enrich_agent_prompt(
         except Exception as e:
             print(f"[Task] Failed to launch extraction task: {e}")
 
-    # 4. Orchestrator Pre-Consultation
-    # NOTE: For is_orchestrator agents, this is SKIPPED — the post-execution
-    # _reasoning_loop handles collaboration iteratively (v0.0.9).
-    # Pre-consultation only fires for non-orchestrator agents with collaboration.
+    # 4. Collaboration handling
     agent_model = agent_config.get("agent_model")
     is_orchestrator = getattr(agent_model, "is_orchestrator", False) if agent_model else False
     has_collaboration = getattr(agent_model, "collaboration_enabled", False) if agent_model else False
     
-    if agent_model and has_collaboration and not is_orchestrator:
+    if agent_model and is_orchestrator and has_collaboration:
+        # v0.0.9: Orchestrator agents get collaborators as TOOLS
+        # The ReAct agent naturally decides when to call each one
+        print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — loading collaborator tools")
+        try:
+            collab_tools = await _build_collaborator_tools(db, agent_model, message, context_data)
+            if collab_tools:
+                existing_tools = agent_config.get("tools", []) or []
+                agent_config["tools"] = existing_tools + collab_tools
+                agent_config["has_tools"] = True
+                print(f"[Task] 🎭 Added {len(collab_tools)} collaborator tools to '{agent_config['name']}'")
+                
+                # Add orchestration instructions to system prompt
+                collab_names = [t.name for t in collab_tools]
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                    f"\n\n## Agentes Especialistas Disponíveis\n\n"
+                    f"Você tem acesso a agentes especialistas que podem ser acionados como ferramentas. "
+                    f"Use-os quando a solicitação do usuário exigir uma especialidade que eles possuem.\n"
+                    f"Agentes disponíveis: {', '.join(collab_names)}\n\n"
+                    f"IMPORTANTE:\n"
+                    f"- Chame o agente especialista passando a instrução clara do que ele deve fazer\n"
+                    f"- Use a resposta do especialista para compor sua resposta final\n"
+                    f"- Você pode chamar múltiplos especialistas se necessário\n"
+                    f"- A resposta final ao usuário deve ser SUA, integrando as contribuições dos especialistas\n"
+                )
+        except Exception as e:
+            import traceback
+            print(f"[Task] Error loading collaborator tools: {e}")
+            traceback.print_exc()
+    elif agent_model and has_collaboration and not is_orchestrator:
+        # Non-orchestrator agents: keep old pre-consultation
         print(f"[Task] 🔍 Pre-consultation for non-orchestrator agent '{agent_config['name']}'")
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
@@ -214,10 +241,8 @@ async def _enrich_agent_prompt(
             import traceback
             print(f"[Task] Orchestrator pre-consultation error: {e}")
             traceback.print_exc()
-    elif is_orchestrator:
-        print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — collaboration handled by reasoning loop (post-execution)")
     else:
-        print(f"[Task] 🔍 SKIPPING pre-consultation (no collaboration)")
+        print(f"[Task] 🔍 SKIPPING collaboration (not applicable)")
 
     return rag_context
 
@@ -239,47 +264,33 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
 
 
 # ─────────────────────────────────────────────────────────────
-# Reasoning Loop (v0.0.9) — iterative multi-agent delegation
+# Collaborator Tools (v0.0.9) — collaborators become tools
 # ─────────────────────────────────────────────────────────────
 
-async def _reasoning_loop(
+async def _build_collaborator_tools(
     db,
-    factory,
-    agent,
-    agent_config: Dict[str, Any],
-    primary_response: str,
+    agent_model,
     message: str,
-    history: Optional[list] = None,
     context_data: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
+) -> list:
     """
-    Post-execution reasoning loop for orchestrator agents.
+    Build LangChain tools from an orchestrator's collaborators.
     
-    After the primary agent responds, this evaluates whether additional
-    collaborators need to be consulted. If so, it iteratively:
-      1. Asks LLM to evaluate if the task is complete or needs delegation
-      2. If delegate: invokes the chosen collaborator
-      3. Loops back to evaluate
-      4. When complete: synthesizes all responses into a final answer
+    Each collaborator agent becomes a callable tool that the orchestrator
+    can invoke via its ReAct loop. This keeps everything inside one
+    LangGraph execution — no external evaluate/delegate/synthesize.
     
-    All settings come from agent.orchestrator_config (per-agent).
-    Returns the final synthesized response, or None if no loop was needed.
+    Returns a list of StructuredTool objects.
     """
-    from langchain_openai import ChatOpenAI
-    from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+    from langchain_core.tools import StructuredTool
     from app.orchestrator.agent_orchestrator import AgentOrchestrator
     from app.models.agent import CollaborationStatus
-    import json
+    import re
 
-    orch_config = getattr(agent, "orchestrator_config", {}) or {}
-    max_iterations = orch_config.get("max_reasoning_iterations", 3)
-    reasoning_model = orch_config.get("reasoning_model", "gpt-4o-mini")
-
-    # 1. Gather available collaborators
     orchestrator = AgentOrchestrator(db)
-    agent_with_settings = await orchestrator.get_agent_with_collaborators(agent.id)
+    agent_with_settings = await orchestrator.get_agent_with_collaborators(agent_model.id)
     if not agent_with_settings or not agent_with_settings.collaborator_settings:
-        return None
+        return []
 
     enabled = []
     neutral = []
@@ -290,169 +301,66 @@ async def _reasoning_loop(
             neutral.append(setting.collaborator)
     all_collaborators = enabled + neutral
     if not all_collaborators:
-        return None
+        return []
 
-    eval_llm = ChatOpenAI(
-        model=reasoning_model,
-        temperature=0,
-        api_key=settings.OPENAI_API_KEY
-    )
+    tools = []
+    for collab in all_collaborators:
+        # Sanitize name for tool compatibility
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', collab.name or "agent")
+        safe_name = re.sub(r'^[^a-zA-Z_]', '_', safe_name)
+        safe_name = re.sub(r'_+', '_', safe_name).strip('_')[:64]
+        tool_name = f"consultar_{safe_name}"
 
-    # Track accumulated responses
-    accumulated_responses = {agent_config["name"]: primary_response}
-    agents_used = [agent_config["name"]]
+        # Build description
+        desc = collab.description or f"Agente especialista: {collab.name}"
+        skills_info = ""
+        if hasattr(collab, 'skills') and collab.skills:
+            active_skills = [s for s in collab.skills if s.is_active]
+            if active_skills:
+                skills_info = f" Skills: {', '.join([s.name for s in active_skills])}."
+        
+        priority = "PRIORITÁRIO" if collab in enabled else "disponível"
+        tool_desc = f"Consulta o agente '{collab.name}' ({priority}). {desc}{skills_info} Envie uma instrução clara do que este agente deve fazer/buscar."
+        if len(tool_desc) > 200:
+            tool_desc = tool_desc[:197] + "..."
 
-    for iteration in range(max_iterations):
-        # Build available agents list (not yet consulted)
-        available = []
-        for a in all_collaborators:
-            if a.name not in agents_used:
-                priority = "PRIORITÁRIO" if a in enabled else "DISPONÍVEL"
-                skills_desc = ""
-                if hasattr(a, 'skills') and a.skills:
-                    active_skills = [s for s in a.skills if s.is_active]
-                    if active_skills:
-                        skills_desc = f" [Skills: {', '.join([s.name for s in active_skills])}]"
-                available.append({
-                    "label": f"- {a.name} ({priority}): {a.description or 'Especialista'}{skills_desc}",
-                    "agent": a
-                })
+        # Create the tool executor (closure captures collab)
+        _collab = collab
+        _db = db
+        _context_data = context_data
 
-        if not available:
-            print(f"[ReasoningLoop] All collaborators consulted, completing")
-            break
+        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data) -> str:
+            """
+            Invoke a collaborator agent with the given instruction.
+            Args:
+                instrucao: Clear instruction of what this specialist agent should do
+            """
+            try:
+                orch = AgentOrchestrator(_database)
+                name, response = await orch._invoke_collaborator(
+                    agent=_agent,
+                    message=instrucao,
+                    history=[],
+                    context="",
+                    context_data=_ctx,
+                    orientation=instrucao,
+                )
+                print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
+                return response or f"Agente {name} não retornou resposta."
+            except Exception as e:
+                print(f"[CollabTool] ❌ Error invoking '{_agent.name}': {e}")
+                return f"Erro ao consultar agente {_agent.name}: {str(e)}"
 
-        available_str = "\n".join([a["label"] for a in available])
-        responses_str = "\n\n".join([
-            f"[{name}]: {resp[:500]}" for name, resp in accumulated_responses.items()
-        ])
+        tool = StructuredTool.from_function(
+            coroutine=_invoke_collab,
+            name=tool_name,
+            description=tool_desc,
+            return_direct=False
+        )
+        tools.append(tool)
+        print(f"[Task] 🔧 Collaborator tool created: {tool_name} → '{collab.name}'")
 
-        # Format conversation history
-        history_str = "(sem histórico)"
-        if history:
-            recent = history[-6:]
-            parts = []
-            for msg in recent:
-                role = "Usuário" if msg.get("role") == "user" else "Assistente"
-                content = msg.get("content", "")[:200]
-                parts.append(f"{role}: {content}")
-            history_str = "\n".join(parts)
-
-        evaluate_prompt = f"""Você é o sistema de raciocínio de um agente orquestrador.
-
-MENSAGEM ORIGINAL DO USUÁRIO:
-"{message}"
-
-RESPOSTAS ACUMULADAS ATÉ AGORA:
-{responses_str}
-
-AGENTES DISPONÍVEIS (ainda não consultados):
-{available_str}
-
-HISTÓRICO DA CONVERSA:
-{history_str}
-
-TAREFA:
-Analise se a solicitação do usuário já foi plenamente atendida pelas respostas acumuladas.
-
-REGRAS:
-1. Se as respostas já atendem completamente, responda com action "complete"
-2. Se falta informação que um dos agentes disponíveis pode fornecer, responda com action "delegate"
-3. Se delegarmos, forneça uma orientação CLARA e DIRETA para o agente selecionado
-4. Considere se o agente primário solicitou informações que outro agente pode buscar
-5. Máximo de 1 agente por delegação
-
-Responda APENAS em JSON válido:
-{{"action": "complete"}}
-OU
-{{"action": "delegate", "agent_name": "Nome Exato", "orientation": "Instrução clara do que buscar/fazer"}}"""
-
-        try:
-            response = await eval_llm.ainvoke([SystemMessage(content=evaluate_prompt)])
-            result_text = response.content.strip()
-            if result_text.startswith("```"):
-                result_text = result_text.split("```")[1]
-                if result_text.startswith("json"):
-                    result_text = result_text[4:]
-            result_text = result_text.strip()
-            decision = json.loads(result_text)
-        except Exception as e:
-            print(f"[ReasoningLoop] ❌ Evaluate error at iteration {iteration+1}: {e}")
-            break
-
-        action = decision.get("action", "complete")
-        print(f"[ReasoningLoop] 🧠 Iteration {iteration+1}/{max_iterations}: action={action}")
-
-        if action != "delegate":
-            break
-
-        # Find the agent to delegate to
-        delegate_name = decision.get("agent_name", "")
-        orientation = decision.get("orientation", "")
-        target_agent = None
-        for a_info in available:
-            if a_info["agent"].name and a_info["agent"].name.lower() == delegate_name.lower():
-                target_agent = a_info["agent"]
-                break
-
-        if not target_agent:
-            print(f"[ReasoningLoop] ⚠️ Agent '{delegate_name}' not found, completing")
-            break
-
-        # Invoke the collaborator
-        print(f"[ReasoningLoop] 🔄 Delegating to '{target_agent.name}': {orientation[:100]}")
-        try:
-            collab_name, collab_response = await orchestrator._invoke_collaborator(
-                agent=target_agent,
-                message=message,
-                history=history or [],
-                context="",
-                context_data=context_data,
-                orientation=orientation,
-            )
-            if collab_response:
-                accumulated_responses[collab_name] = collab_response
-                agents_used.append(collab_name)
-                print(f"[ReasoningLoop] ✅ '{collab_name}' responded")
-            else:
-                agents_used.append(target_agent.name)
-                print(f"[ReasoningLoop] ⚠️ '{target_agent.name}' returned empty response")
-        except Exception as e:
-            print(f"[ReasoningLoop] ❌ Error invoking '{target_agent.name}': {e}")
-            agents_used.append(target_agent.name)
-
-    # If only the primary agent responded, no synthesis needed
-    if len(accumulated_responses) <= 1:
-        return None
-
-    # Synthesize all responses
-    primary_name = agent_config.get("name", "Orquestrador")
-    responses_for_synth = "\n\n".join([
-        f"[{name}]: {resp}" for name, resp in accumulated_responses.items()
-    ])
-
-    synth_prompt = f"""Você é o agente "{primary_name}" finalizando uma resposta ao usuário.
-
-PERGUNTA ORIGINAL: "{message}"
-
-CONTRIBUIÇÕES DOS ESPECIALISTAS:
-{responses_for_synth}
-
-TAREFA:
-Combine as informações em uma resposta única, coesa e natural para o usuário.
-- Não mencione que recebeu informações de outros agentes
-- Mantenha sua personalidade e tom
-- Integre as informações de forma fluida
-- Priorize a resposta mais completa e precisa
-- Se houver solicitação de informação adicional ao usuário, inclua-a naturalmente"""
-
-    try:
-        synth_response = await eval_llm.ainvoke([SystemMessage(content=synth_prompt)])
-        print(f"[ReasoningLoop] 🎭 Synthesized response from {len(accumulated_responses)} agents: {', '.join(agents_used)}")
-        return synth_response.content
-    except Exception as e:
-        print(f"[ReasoningLoop] ❌ Synthesis error: {e}")
-        return list(accumulated_responses.values())[-1]
+    return tools
 
 
 # ─────────────────────────────────────────────────────────────
@@ -601,25 +509,6 @@ async def process_message_task(
                 final_result = response
                 agent_used = agent_config["name"]
 
-                # ── Reasoning Loop (v0.0.9) ──
-                # If this agent is an orchestrator with collaborators, evaluate
-                # whether additional agents need to be consulted iteratively
-                is_orchestrator = getattr(agent, "is_orchestrator", False)
-                has_collaboration = getattr(agent, "collaboration_enabled", False)
-
-                if is_orchestrator and has_collaboration:
-                    loop_result = await _reasoning_loop(
-                        db=db,
-                        factory=factory,
-                        agent=agent,
-                        agent_config=agent_config,
-                        primary_response=final_result,
-                        message=message,
-                        history=history,
-                        context_data=context_data,
-                    )
-                    if loop_result:
-                        final_result = loop_result
 
                 if stm_enabled:
                     await redis_client.add_message(
