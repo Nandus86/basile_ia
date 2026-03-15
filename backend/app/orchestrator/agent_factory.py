@@ -227,7 +227,12 @@ Cite a fonte quando usar informações do contexto acima.
         
         if agent_config["has_tools"]:
             # Use ReAct agent with tools
-            tool_instructions = """
+            tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
+            tool_instructions = f"""
+
+## Árvore de Ferramentas / MCPs Disponíveis
+Você tem acesso às seguintes ferramentas (MCPs). Relacione os passos solicitados nas suas skills com os nomes listados abaixo, que são os métodos reais que você pode invocar:
+{tool_list}
 
 ## Instruções de Ferramentas e Resiliência (MUITO IMPORTANTE)
 
