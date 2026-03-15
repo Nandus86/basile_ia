@@ -180,19 +180,20 @@ async def _enrich_agent_prompt(
         except Exception as e:
             print(f"[Task] Failed to launch extraction task: {e}")
 
-    # 4. Orchestrator Pre-Consultation (fires for any agent with collaboration or orchestrator mode)
+    # 4. Orchestrator Pre-Consultation
+    # NOTE: For is_orchestrator agents, this is SKIPPED — the post-execution
+    # _reasoning_loop handles collaboration iteratively (v0.0.9).
+    # Pre-consultation only fires for non-orchestrator agents with collaboration.
     agent_model = agent_config.get("agent_model")
-    print(f"[Task] 🔍 ORCH DEBUG: agent_model={agent_model}, type={type(agent_model)}")
-    if agent_model:
-        print(f"[Task] 🔍 ORCH DEBUG: is_orchestrator={getattr(agent_model, 'is_orchestrator', 'MISSING')}, collaboration_enabled={getattr(agent_model, 'collaboration_enabled', 'MISSING')}")
+    is_orchestrator = getattr(agent_model, "is_orchestrator", False) if agent_model else False
+    has_collaboration = getattr(agent_model, "collaboration_enabled", False) if agent_model else False
     
-    if agent_model and (getattr(agent_model, "is_orchestrator", False) or getattr(agent_model, "collaboration_enabled", False)):
-        print(f"[Task] 🔍 ORCH DEBUG: ENTERING pre-consultation block for {agent_config['name']}")
+    if agent_model and has_collaboration and not is_orchestrator:
+        print(f"[Task] 🔍 Pre-consultation for non-orchestrator agent '{agent_config['name']}'")
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
 
             orchestrator = AgentOrchestrator(db)
-            print(f"[Task] 🔍 ORCH DEBUG: Calling gather_subordinate_responses with agent_id={getattr(agent_model, 'id', 'UNKNOWN')}")
             subordinate_context = await orchestrator.gather_subordinate_responses(
                 message=message,
                 primary_agent=agent_model,
@@ -201,23 +202,22 @@ async def _enrich_agent_prompt(
                 history=history,
                 session_id=session_id,
             )
-            print(f"[Task] 🔍 ORCH DEBUG: gather_subordinate_responses returned: '{subordinate_context[:200] if subordinate_context else 'EMPTY'}'")
             if subordinate_context:
-                print(f"[Task] 🎭 Orchestrator pre-consult loaded for {agent_config['name']}")
+                print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                     f"\n\n## Colaboradores (Subordinados)\n"
                     f"Os seguintes especialistas forneceram análises sobre a solicitação do usuário. "
                     f"Sintetize e utilize as informações relevantes para construir a resposta final:\n"
                     f"{subordinate_context}\n"
                 )
-            else:
-                print(f"[Task] 🔍 ORCH DEBUG: No subordinate context returned (empty string)")
         except Exception as e:
             import traceback
             print(f"[Task] Orchestrator pre-consultation error: {e}")
             traceback.print_exc()
+    elif is_orchestrator:
+        print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — collaboration handled by reasoning loop (post-execution)")
     else:
-        print(f"[Task] 🔍 ORCH DEBUG: SKIPPING pre-consultation (condition not met)")
+        print(f"[Task] 🔍 SKIPPING pre-consultation (no collaboration)")
 
     return rag_context
 
