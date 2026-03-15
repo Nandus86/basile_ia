@@ -723,10 +723,13 @@ async def process_message_task(
             # Build LangChain messages
             messages = []
             for msg in history:
+                timestamp = msg.get("created_at") or msg.get("timestamp")
+                prefix = f"[{timestamp}] " if timestamp else ""
+                
                 if msg.get("role") == "user":
-                    messages.append(HumanMessage(content=msg["content"]))
+                    messages.append(HumanMessage(content=f"{prefix}{msg['content']}"))
                 elif msg.get("role") == "assistant":
-                    messages.append(AIMessage(content=msg["content"]))
+                    messages.append(AIMessage(content=f"{prefix}{msg['content']}"))
             messages.append(HumanMessage(content=message))
 
             # Inject MTM context note into system prompt

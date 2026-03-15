@@ -118,10 +118,13 @@ Responda APENAS em JSON válido com este formato exato:
             history = history or []
             
             for msg in history[-10:]:
+                timestamp = msg.get("created_at") or msg.get("timestamp")
+                prefix = f"[{timestamp}] " if timestamp else ""
+                
                 if msg.get("role") == "user":
-                    messages.append(HumanMessage(content=msg.get("content", "")))
+                    messages.append(HumanMessage(content=f"{prefix}{msg.get('content', '')}"))
                 elif msg.get("role") == "assistant":
-                    messages.append(AIMessage(content=msg.get("content", "")))
+                    messages.append(AIMessage(content=f"{prefix}{msg.get('content', '')}"))
                     
             messages.append(HumanMessage(content=message))
             
@@ -191,10 +194,13 @@ Responda APENAS em JSON válido com este formato exato:
         # Build messages: History + Final Custom Human Message
         messages = []
         for msg in history:
+            timestamp = msg.get("created_at") or msg.get("timestamp")
+            prefix = f"[{timestamp}] " if timestamp else ""
+            
             if msg.get("role") == "user":
-                messages.append(HumanMessage(content=msg["content"]))
+                messages.append(HumanMessage(content=f"{prefix}{msg['content']}"))
             elif msg.get("role") == "assistant":
-                messages.append(AIMessage(content=msg["content"]))
+                messages.append(AIMessage(content=f"{prefix}{msg['content']}"))
 
         # Include collaborator's own skills in the delegation message
         skills_section = ""

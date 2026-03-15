@@ -339,11 +339,14 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
         # Build conversation messages (for history)
         messages = []
         for msg in state.get("history", []):
+            timestamp = msg.get("created_at") or msg.get("timestamp")
+            prefix = f"[{timestamp}] " if timestamp else ""
+            
             if msg.get("role") == "user":
-                messages.append(HumanMessage(content=msg["content"]))
+                messages.append(HumanMessage(content=f"{prefix}{msg['content']}"))
             elif msg.get("role") == "assistant":
                 from langchain_core.messages import AIMessage
-                messages.append(AIMessage(content=msg["content"]))
+                messages.append(AIMessage(content=f"{prefix}{msg['content']}"))
         
         # Add current message
         messages.append(HumanMessage(content=state["message"]))
