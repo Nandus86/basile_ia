@@ -346,7 +346,7 @@ async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, conte
             content=content,
         )
         db.add(msg)
-        await db.flush()
+        await db.commit()
 
         # Check if we crossed the 100-message threshold for auto-summarize
         count_q = select(func.count()).where(
