@@ -595,6 +595,13 @@ async def process_message_task(
                     session_id=session_id, role="user", content=message, ttl_seconds=86400
                 )
 
+                # MTM: fallback logic for fallback path (using nil uuid for agent_id if no agent was resolved)
+                import uuid
+                fallback_agent_id = str(uuid.UUID(int=0))
+
+                # MTM: save user message
+                await _save_mtm_message(db, fallback_agent_id, session_id, "user", message)
+
                 result = await run_orchestrator_v2(
                     message=message,
                     session_id=session_id,
@@ -611,6 +618,9 @@ async def process_message_task(
                     session_id=session_id, role="assistant",
                     content=str(final_result), ttl_seconds=86400
                 )
+                
+                # MTM: save assistant response
+                await _save_mtm_message(db, fallback_agent_id, session_id, "assistant", str(final_result))
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
