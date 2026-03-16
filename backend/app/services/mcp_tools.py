@@ -438,6 +438,9 @@ class MCPToolExecutor:
                         f"[MCPTool] 🌐 MCP CALL  tool={tool_name!r}  "
                         f"endpoint={mcp.endpoint!r}  args_keys={list(cleaned_args.keys())}"
                     )
+                    # Log do payload de entrada (parâmetros enviados ao MCP)
+                    logger.info(f"[MCPTool] 📤 PAYLOAD ENTRADA (MCP) tool={tool_name!r}: {json.dumps(cleaned_args, ensure_ascii=False)}")
+                    
                     result = await execute_mcp_protocol(
                         endpoint=mcp.endpoint,
                         headers=mcp.headers or {},
@@ -510,6 +513,9 @@ class MCPToolExecutor:
                     safe_headers = {}
                     for hk, hv in headers.items():
                         safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
+                    
+                    # Log do payload de entrada (corpo/query da requisição HTTP)
+                    logger.info(f"[MCPTool] 📤 PAYLOAD ENTRADA (HTTP) tool={tool_name!r}: body={json.dumps(body, ensure_ascii=False)} query={json.dumps(query, ensure_ascii=False)}")
                     
                     import time as _time
                     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
