@@ -3,7 +3,11 @@ import logging
 from arq import run_worker
 from app.worker.settings import WorkerSettings
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 logger = logging.getLogger("basile_worker")
 
 if __name__ == "__main__":
