@@ -125,23 +125,20 @@ def get_output_schema_for_agent(output_schema: Optional[Dict[str, Any]]) -> Type
         return DefaultAgentOutput
 
 
-def format_context_data_for_prompt(
+def filter_context_data(
     context_data: Optional[Dict[str, Any]],
-    input_schema: Optional[Dict[str, Any]] = None
-) -> str:
+    input_schema: Optional[Any] = None
+) -> Dict[str, Any]:
     """
-    Format context_data cleanly using strict JSON.
-    This preserves tags like {{ $fromAI(...) }} exactly as they came from the webhook
-    so the agent can use them to call MCP tools.
+    Filters context_data to only include keys present in the agent's input_schema.
+    Ensures that each agent only sees its own domain data.
     """
     if not context_data:
-        return ""
+        return {}
     
     import json
     
-    # FILTER context_data to ONLY include keys present in the agent's input_schema
-    # This ensures each agent only sees its own domain data, preventing cross-contamination
-    
+    # Pre-process input_schema if it's a JSON string
     if isinstance(input_schema, str):
         try:
             input_schema = json.loads(input_schema)
@@ -152,47 +149,68 @@ def format_context_data_for_prompt(
     if input_schema and isinstance(input_schema, dict) and "properties" in input_schema and input_schema.get("type") == "object":
         input_schema = input_schema["properties"]
             
-    filtered_data = {}
-    if input_schema and isinstance(input_schema, dict):
-        def filter_by_schema(data: Any, schema: Dict[str, Any]) -> Any:
-            if not isinstance(data, dict):
-                return data
-            filtered = {}
-            for key, field_def in schema.items():
-                if key not in data:
-                    continue
-                
-                data_val = data[key]
-                
-                if isinstance(field_def, dict):
-                    field_type = field_def.get("type", "string")
-                    if field_type == "object" and "properties" in field_def and isinstance(data_val, dict):
-                        filtered[key] = filter_by_schema(data_val, field_def["properties"])
-                    elif field_type == "array" and "items" in field_def and isinstance(field_def["items"], dict) and field_def["items"].get("type") == "object" and "properties" in field_def["items"] and isinstance(data_val, list):
-                        filtered[key] = [
-                            filter_by_schema(item, field_def["items"]["properties"]) if isinstance(item, dict) else item
-                            for item in data_val
-                        ]
-                    else:
-                        filtered[key] = data_val
+    if not input_schema or not isinstance(input_schema, dict):
+        # If no input_schema is defined, we return an empty dict to avoid leaking random context
+        return {}
+
+    def filter_by_schema(data: Any, schema: Dict[str, Any]) -> Any:
+        if not isinstance(data, dict):
+            return data
+        filtered = {}
+        for key, field_def in schema.items():
+            if key not in data:
+                continue
+            
+            data_val = data[key]
+            
+            if isinstance(field_def, dict):
+                field_type = field_def.get("type", "string")
+                if field_type == "object" and "properties" in field_def and isinstance(data_val, dict):
+                    filtered[key] = filter_by_schema(data_val, field_def["properties"])
+                elif field_type == "array" and "items" in field_def and isinstance(field_def["items"], dict) and field_def["items"].get("type") == "object" and "properties" in field_def["items"] and isinstance(data_val, list):
+                    filtered[key] = [
+                        filter_by_schema(item, field_def["items"]["properties"]) if isinstance(item, dict) else item
+                        for item in data_val
+                    ]
                 else:
                     filtered[key] = data_val
-            return filtered
+            else:
+                filtered[key] = data_val
+        return filtered
 
-        filtered_data = filter_by_schema(context_data, input_schema)
-    else:
-        # Se não há input_schema definido para o agente, então NÃO injetamos variáveis
-        # de contexto do webhook/orquestrador para evitar poluição e uso incorreto.
-        filtered_data = {}
-        
+    return filter_by_schema(context_data, input_schema)
+
+
+def format_context_data_for_prompt(
+    context_data: Optional[Dict[str, Any]],
+    input_schema: Optional[Dict[str, Any]] = None
+) -> str:
+    """
+    Format context_data cleanly using strict JSON.
+    This preserves tags like {{ $fromAI(...) }} exactly as they came from the webhook
+    so the agent can use them to call MCP tools.
+    """
+    import json
+    
+    filtered_data = filter_context_data(context_data, input_schema)
+    
     if not filtered_data:
         return ""
         
     data_json = json.dumps(filtered_data, indent=2, ensure_ascii=False)
     
+    # We display the schema parts in the prompt to help the agent understand what it has
+    schema_parts = input_schema
+    if isinstance(schema_parts, str):
+        try:
+            schema_parts = json.loads(schema_parts)
+        except: pass
+    if isinstance(schema_parts, dict) and "properties" in schema_parts:
+        schema_parts = schema_parts["properties"]
+        
     schema_section = ""
-    if input_schema:
-        schema_json = json.dumps(input_schema, indent=2, ensure_ascii=False)
+    if schema_parts:
+        schema_json = json.dumps(schema_parts, indent=2, ensure_ascii=False)
         schema_section = f"O esquema esperado (Input Schema) é:\n{schema_json}\n\n"
         
     return f"""

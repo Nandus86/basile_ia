@@ -84,11 +84,20 @@ class AgentFactory:
         if agent_id in self._agent_cache:
             return self._agent_cache[agent_id]
         
+        # Filter context data based on agent's input_schema to prevent leakage
+        from app.schemas.structured_output import filter_context_data
+        filtered_context = filter_context_data(context_data, agent.input_schema)
+        
+        if context_data and filtered_context:
+            logger.info(f"[AgentFactory] 🛡️ Context data filtrado para '{agent.name}': {list(filtered_context.keys())}")
+        elif context_data and not filtered_context:
+            logger.info(f"[AgentFactory] 🛡️ Context data TOTALMENTE filtrado (vazio) para '{agent.name}' (sem correspondência no schema)")
+        
         # Load MCP tools
         tools = []
         try:
             from app.services.mcp_tools import get_tools_for_agent
-            tools = await get_tools_for_agent(self.db, agent_id, context_data)
+            tools = await get_tools_for_agent(self.db, agent_id, filtered_context)
             if tools:
                 tool_names = [t.name for t in tools]
                 logger.info(f"[AgentFactory] 🧰 Agent '{agent.name}' carregou {len(tools)} tool(s): {tool_names}")
