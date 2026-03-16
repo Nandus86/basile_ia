@@ -56,11 +56,33 @@ def get_redis_settings() -> RedisSettings:
 async def startup(ctx):
     """Called when ARQ worker starts."""
     import logging
+    import sys
     from app.worker.queue_consumer import start_rabbitmq_consumer
     import asyncio
     
+    # Fail-safe bruto: print direto para garantir que o worker chama isso
+    print(">>>> INICIALIZANDO O CONSUMIDOR RABBITMQ DO WORKER <<<<", flush=True)
+
+    # Forçar logs em produção para não serem ocultos pelo ARQ CLI
+    formatter = logging.Formatter("%(asctime)s [WORKER-%(levelname)s] %(name)s: %(message)s")
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    
+    for mod in ("app.worker.queue_consumer", "app.worker.tasks", 
+                "app.services.mcp_tools", "app.orchestrator.agent_factory", "app.orchestrator.agent_orchestrator"):
+        l = logging.getLogger(mod)
+        l.setLevel(logging.INFO)
+        # Limpa handlers antigos pra não duplicar, e define o nosso
+        l.handlers = [] 
+        l.addHandler(stream_handler)
+        l.propagate = False  # Impede do ARQ abafar
+    
     logger = logging.getLogger(__name__)
-    logger.info("Starting RabbitMQ consumer...")
+    logger.addHandler(stream_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    
+    logger.info("Starting RabbitMQ consumer in background...")
     
     # Fire and forget the consumer loop in the background, but attach an error handler
     task = asyncio.create_task(start_rabbitmq_consumer())
