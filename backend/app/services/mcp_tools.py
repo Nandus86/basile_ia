@@ -442,10 +442,19 @@ class MCPToolExecutor:
                         safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
                     
                     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-                        if mcp.method.upper() == "GET":
+                        method = mcp.method.upper()
+                        if method == "GET":
                             response = await client.get(endpoint_str, headers=safe_headers, params=query)
-                        else:
+                        elif method == "POST":
                             response = await client.post(endpoint_str, headers=safe_headers, params=query, json=body)
+                        elif method == "PUT":
+                            response = await client.put(endpoint_str, headers=safe_headers, params=query, json=body)
+                        elif method == "PATCH":
+                            response = await client.patch(endpoint_str, headers=safe_headers, params=query, json=body)
+                        elif method == "DELETE":
+                            response = await client.delete(endpoint_str, headers=safe_headers, params=query)
+                        else:
+                            raise ValueError(f"Unsupported HTTP method: {mcp.method}")
                         
                         response.raise_for_status()
                         return json.dumps(response.json(), indent=2, ensure_ascii=False)
