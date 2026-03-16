@@ -84,6 +84,11 @@ class RedisClient:
         key = f"conversation:{session_id}"
         await client.delete(key)
 
+    async def publish(self, channel: str, message: str):
+        """Publish a message to a channel (Pub/Sub)"""
+        client = await self.connect()
+        await client.publish(channel, message)
+
 
 # Global instance
 redis_client = RedisClient()
