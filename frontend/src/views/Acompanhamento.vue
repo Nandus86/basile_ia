@@ -214,7 +214,17 @@
           <div class="text-caption text-medium-emphasis ms-2 me-auto align-self-center">
             (Roda internamente, não aciona webhook de saída)
           </div>
-          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob">Fechar</v-btn>
+          <v-btn
+            v-if="selectedJob.status === 'in_progress' || selectedJob.status === 'queued'"
+            color="error"
+            variant="flat"
+            prepend-icon="mdi-stop-circle-outline"
+            :loading="abortingJob"
+            @click="abortCurrentJob"
+          >
+            Abortar Job
+          </v-btn>
+          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob || abortingJob">Fechar</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -286,6 +296,9 @@ const snackbar = ref({ show: false, text: '', color: 'success' })
 const testingJob = ref(false)
 const testResult = ref(null)
 
+// Abort state
+const abortingJob = ref(false)
+
 const fetchStats = async () => {
   statsLoading.value = true
   try {
@@ -343,6 +356,23 @@ const testCurrentJob = async () => {
     }
   } finally {
     testingJob.value = false;
+  }
+}
+
+const abortCurrentJob = async () => {
+  if (!selectedJob.value) return;
+  abortingJob.value = true;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/abort`);
+    showSnackbar(data.message || 'Sinal de cancelamento enviado!', 'warning');
+    // We optionally update local state to reflect it's aborted somewhat immediately
+    selectedJob.value.status = 'failed';
+    selectedJob.value.error_message = 'Aguardando cancelamento / Aborted by user';
+  } catch (error) {
+    console.error("Erro ao cancelar:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao abortar job', 'error');
+  } finally {
+    abortingJob.value = false;
   }
 }
 

@@ -13,6 +13,8 @@ from app.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 
+# Controla as tasks rodando por job para podermos interceder via sinal de abort
+active_jobs = {}
 
 async def process_webhook_message(message: aio_pika.IncomingMessage):
     """Callback to process a message from RabbitMQ"""
@@ -23,6 +25,9 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             config_id = body.get("webhook_config_id")
             session_id = body.get("session_id")
             job_id = body.get("job_id")
+            
+            if job_id:
+                active_jobs[job_id] = asyncio.current_task()
 
             logger.info(f"Processing webhook job {job_id} for session {session_id}")
 
@@ -245,6 +250,63 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 except Exception:
                     pass
 
+        except asyncio.CancelledError:
+            logger.warning(f"Job {job_id} task was CANCELLED/ABORTED")
+            job_id = body.get("job_id") if 'body' in locals() else None
+            if job_id:
+                try:
+                    await redis_client.set(
+                        f"job:{job_id}",
+                        json.dumps({
+                            "job_id": job_id,
+                            "status": "failed",
+                            "error": "Aborted by user"
+                        }),
+                        expire=3600
+                    )
+                    from sqlalchemy.future import select
+                    from app.models.job_log import JobLog
+                    from datetime import datetime, timezone
+                    async with async_session_maker() as db_session:
+                        query = select(JobLog).where(JobLog.job_id == job_id)
+                        res = await db_session.execute(query)
+                        job_log = res.scalar_one_or_none()
+                        if job_log:
+                            job_log.status = "failed"
+                            job_log.error_message = "Aborted by user"
+                            job_log.completed_at = datetime.now(timezone.utc)
+                            if job_log.created_at:
+                                job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                            await db_session.commit()
+                except Exception:
+                    pass
+            # Devemos retornar normalmente para que aio_pika considere a msg processada e nao entre em loop
+            return
+            
+        finally:
+            if 'job_id' in locals() and job_id in active_jobs:
+                active_jobs.pop(job_id, None)
+
+async def _listen_for_aborts():
+    """Background task to listen for abort signals via Redis PubSub."""
+    try:
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe("job_control")
+        logger.info("Listening for job aborts on Redis PubSub channel 'job_control'")
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                data = message["data"].decode()
+                if data.startswith("abort:"):
+                    job_to_abort = data.split(":", 1)[1]
+                    logger.warning(f"Recebido pedido de ABORT para o job: {job_to_abort}")
+                    task = active_jobs.get(job_to_abort)
+                    if task:
+                        logger.warning(f"Cancelando task do job {job_to_abort} imediatamente!")
+                        task.cancel()
+                    else:
+                        logger.info(f"Job {job_to_abort} nao esta ativo neste worker.")
+    except Exception as e:
+        logger.error(f"Error in pubsub abort listener: {e}")
 
 async def start_rabbitmq_consumer():
     """
@@ -263,6 +325,9 @@ async def start_rabbitmq_consumer():
             rabbitmq_client.channel = None
             rabbitmq_client.connection = None
             await rabbitmq_client.connect()
+
+            # Start abort listener (only once per connection loop is fine, or keep it running outside)
+            abort_task = asyncio.create_task(_listen_for_aborts())
 
             if not rabbitmq_client.channel:
                 logger.error(f"Failed to connect to RabbitMQ. Retrying in {delay}s...")
@@ -288,6 +353,7 @@ async def start_rabbitmq_consumer():
                 rabbitmq_client.connection.close_callbacks.add(on_close)
                 await close_event.wait()
                 logger.warning("RabbitMQ connection closed. Reconnecting...")
+                abort_task.cancel()
 
         except asyncio.CancelledError:
             logger.info("Consumer task cancelled, shutting down.")
