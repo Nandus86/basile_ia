@@ -13,6 +13,10 @@ from sqlalchemy.orm import selectinload
 from app.models.agent import Agent, AccessLevel
 from app.config import settings
 
+import logging
+import json
+logger = logging.getLogger(__name__)
+
 
 class AgentFactory:
     """
@@ -85,8 +89,13 @@ class AgentFactory:
         try:
             from app.services.mcp_tools import get_tools_for_agent
             tools = await get_tools_for_agent(self.db, agent_id, context_data)
+            if tools:
+                tool_names = [t.name for t in tools]
+                logger.info(f"[AgentFactory] 🧰 Agent '{agent.name}' carregou {len(tools)} tool(s): {tool_names}")
+            else:
+                logger.info(f"[AgentFactory] 🧯 Agent '{agent.name}' sem tools (no tools loaded)")
         except Exception as e:
-            print(f"[AgentFactory] Failed to load tools for {agent.name}: {e}")
+            logger.error(f"[AgentFactory] ❌ Falha ao carregar tools para '{agent.name}': {e}", exc_info=True)
         
         # Build system prompt with skills injection
         system_prompt = agent.system_prompt
@@ -104,7 +113,7 @@ class AgentFactory:
                     + "\n\n---\n\n".join(skills_parts)
                 )
                 system_prompt += skills_section
-                print(f"[AgentFactory] 📌 Injected {len(active_skills)} skills into {agent.name}")
+                logger.info(f"[AgentFactory] 📌 Injetou {len(active_skills)} skill(s) em '{agent.name}'")
         
         config = {
             "id": agent_id,
@@ -249,14 +258,33 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 model=llm,
                 tools=agent_config["tools"]
             )
-            
+
+            logger.info(
+                f"[AgentFactory] 🤖 Invocando ReAct agent='{agent_config['name']}'  "
+                f"model='{agent_config['model']}'  tools={[t.name for t in agent_config['tools']]}"
+            )
             result = await react_agent.ainvoke(
                 {"messages": agent_messages},
                 config=run_config
             )
-            
-            # Extract final response
+
+            # Log tool calls executed during this run
+            from langchain_core.messages import ToolMessage
             final_messages = result.get("messages", [])
+            for msg in final_messages:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        logger.info(
+                            f"[AgentFactory] 🛠️  TOOL_CALL  agent='{agent_config['name']}'  "
+                            f"tool={tc.get('name')!r}  args={json.dumps(tc.get('args', {}), default=str, ensure_ascii=False)[:400]}"
+                        )
+                if isinstance(msg, ToolMessage):
+                    logger.info(
+                        f"[AgentFactory] 📨 TOOL_RESULT  tool_call_id={msg.tool_call_id!r}  "
+                        f"preview={str(msg.content)[:400]!r}"
+                    )
+
+            # Extract final response
             for msg in reversed(final_messages):
                 if isinstance(msg, AIMessage) and msg.content:
                     if not (hasattr(msg, "tool_calls") and msg.tool_calls):
@@ -357,7 +385,7 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
             result = await structured_llm.ainvoke(all_messages, config=run_config)
             return result.model_dump()
         except Exception as e:
-            print(f"[AgentFactory] Structured output error: {e}")
+            logger.error(f"[AgentFactory] ❌ Structured output error em '{agent_config['name']}': {e}", exc_info=True)
             
             # Tentar salvar campos parciais do erro de validação (comum em novos modelos do OpenRouter)
             if "ValidationError" in str(type(e)):
@@ -365,7 +393,7 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
                     for err in getattr(e, "errors", lambda: [])():
                         if "input_value" in err and isinstance(err["input_value"], dict):
                             partial_data = err["input_value"]
-                            print(f"[AgentFactory] Resgatando dados parciais do LLM: {partial_data}")
+                            logger.warning(f"[AgentFactory] ⚠️ Resgatando dados parciais do LLM: {partial_data}")
                             
                             # Garantir que todos os campos existam para não quebrar a tipagem
                             for field_name in output_class.model_fields.keys():
@@ -374,13 +402,13 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
                                     
                             # Se 'output' ficou vazio, solicitamos apenas a resposta textual num invoke regular
                             if "output" in partial_data and not partial_data["output"]:
-                                print("[AgentFactory] Campo 'output' omitido, fazendo fallback textual...")
+                                logger.warning("[AgentFactory] ⚠️ Campo 'output' omitido, fazendo fallback textual...")
                                 fallback_text = await self.invoke_agent(agent_config, messages, rag_context, context_data)
                                 partial_data["output"] = fallback_text
                                 
                             return partial_data
                 except Exception as inner_e:
-                    print(f"[AgentFactory] Falha ao recuperar JSON parcial: {inner_e}")
+                    logger.error(f"[AgentFactory] ❌ Falha ao recuperar JSON parcial: {inner_e}")
             
             # Fallback final se falhar e não recuperar JSON parcial
             regular_response = await self.invoke_agent(agent_config, messages, rag_context, context_data)
