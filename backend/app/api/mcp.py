@@ -140,7 +140,7 @@ async def delete_mcp(
     await db.commit()
 
 
-from app.services.mcp_tools import _inject_from_ai_params
+from app.services.mcp_tools import _inject_from_ai_params, _apply_response_mapping
 import urllib.parse
 
 async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
@@ -211,7 +211,13 @@ async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
             raise ValueError(f"Unsupported method: {mcp.method}")
         
         response.raise_for_status()
-        return response.json()
+        resp_json = response.json()
+        
+        # Aplica o response mapping para o teste da UI bater com o Agente
+        if getattr(mcp, "response_mapping", None):
+            resp_json = _apply_response_mapping(resp_json, mcp.response_mapping)
+            
+        return resp_json
 
 
 async def execute_sse(mcp: MCP, request_params: dict, timeout: float) -> dict:
