@@ -216,6 +216,11 @@ async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
         # Aplica o response mapping para o teste da UI bater com o Agente
         if getattr(mcp, "response_mapping", None):
             resp_json = _apply_response_mapping(resp_json, mcp.response_mapping)
+        
+        # Log do payload de saída (Dashboard/API)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[MCP API] 📦 PAYLOAD SAÍDA (HTTP): {json.dumps(resp_json, ensure_ascii=False)[:1000]}")
             
         return resp_json
 
@@ -398,6 +403,11 @@ async def execute_mcp(
             
             if not mcp_result.get("success"):
                 raise Exception(mcp_result.get("error", "MCP execution failed"))
+
+            # Log do payload de saída (Dashboard/API MCP Protocol)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[MCP API] 📦 PAYLOAD SAÍDA (MCP): {json.dumps(result_data, ensure_ascii=False)[:1000]}")
                 
         elif protocol == "websocket":
             # WebSocket not fully implemented yet
