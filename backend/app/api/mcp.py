@@ -173,6 +173,11 @@ async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
     for hk, hv in headers.items():
         safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
 
+    # [Log de Entrada]
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[MCP API] 📤 ENTRADA (HTTP) endpoint={endpoint_str} method={mcp.method.upper()}: body={json.dumps(body, ensure_ascii=False)} query={json.dumps(query, ensure_ascii=False)}")
+
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         if mcp.method.upper() == "GET":
             response = await client.get(
@@ -321,6 +326,11 @@ async def stream_sse(mcp: MCP, body: dict, timeout: float) -> AsyncGenerator[str
         headers["Accept"] = "text/event-stream"
         headers["Cache-Control"] = "no-cache"
         
+        # [Log de Entrada]
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[MCP API] 📤 ENTRADA (STREAM) endpoint={mcp.endpoint}: body={json.dumps(body, ensure_ascii=False)}")
+        
         async with client.stream(
             mcp.method.upper(),
             mcp.endpoint,
@@ -417,7 +427,7 @@ async def execute_mcp(
             # Log do payload de saída (Dashboard/API MCP Protocol)
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"[MCP API] 📦 PAYLOAD SAÍDA (MCP): {json.dumps(result_data, ensure_ascii=False)[:1000]}")
+            logger.info(f"[MCP API] 📦 SAÍDA (MCP): {json.dumps(result_data, ensure_ascii=False)[:1000]}")
                 
         elif protocol == "websocket":
             # WebSocket not fully implemented yet
@@ -625,6 +635,11 @@ async def call_mcp_tool(
         
         timeout = float(mcp.timeout_seconds or 60)
         
+        # [Log de Entrada]
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[MCP API] 📤 ENTRADA (TOOL CALL) tool={request.tool_name}: {json.dumps(request.arguments, ensure_ascii=False)}")
+        
         mcp_result = await execute_mcp_protocol(
             endpoint=mcp.endpoint,
             headers=mcp.headers or {},
@@ -636,6 +651,9 @@ async def call_mcp_tool(
         )
         
         execution_time = (time.time() - start_time) * 1000
+        
+        # [Log de Saída]
+        logger.info(f"[MCP API] 📦 SAÍDA (TOOL CALL) tool={request.tool_name}: {json.dumps(mcp_result.get('result'), ensure_ascii=False)[:1000]}")
         
         return MCPExecuteResponse(
             success=mcp_result.get("success", False),
