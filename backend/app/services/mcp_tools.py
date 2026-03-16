@@ -86,21 +86,28 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
         return data
 
     def _extract(obj, path):
-        parts = str(path).split('.')
+        if not path:
+            return obj
+            
+        # Normaliza o path: transforma body[*]._id em body.[*]._id
+        # e body[0]._id em body.0._id para facilitar o split
+        p = str(path).replace('[*]', '.[*].')
+        p = re.sub(r'\[(\d+)\]', r'.\1.', p)
+        # Limpa pontos duplos e partes vazias
+        parts = [part for part in p.replace('..', '.').strip('.').split('.') if part]
+        
         current = obj
         for i, part in enumerate(parts):
             if part == '[*]':
                 if isinstance(current, list):
                     remaining_path = '.'.join(parts[i+1:])
-                    if not remaining_path:
-                        return current
                     return [_extract(item, remaining_path) for item in current]
-                else:
-                    return None
+                return None
             elif isinstance(current, dict) and part in current:
                 current = current[part]
-            elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
-                current = current[int(part)]
+            elif isinstance(current, list) and part.isdigit():
+                idx = int(part)
+                current = current[idx] if idx < len(current) else None
             else:
                 return None
         return current
@@ -111,8 +118,13 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
             result[key] = _extract(data, path)
         else:
             result[key] = path  # fallback
+
+    # Filtra apenas os valores que não são None (que foram encontrados)
+    filtered_result = {k: v for k, v in result.items() if v is not None}
             
-    return result if result else data
+    # Se o mapeamento não resultou em nada útil, devolve o dado original
+    # para que o Agente ou UI tenham acesso ao payload completo.
+    return filtered_result if filtered_result else data
 
 
 def _is_mcp_error_response(text: str) -> bool:
