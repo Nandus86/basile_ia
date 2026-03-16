@@ -16,6 +16,36 @@ logger = logging.getLogger(__name__)
 # Controla as tasks rodando por job para podermos interceder via sinal de abort
 active_jobs = {}
 
+async def _listen_for_aborts():
+    """Background task to listen for abort signals via Redis PubSub."""
+    import asyncio
+    try:
+        # Pega a connection nativa do banco gerida pela class do redis_client
+        client = await redis_client.connect()
+        pubsub = client.pubsub()
+        await pubsub.subscribe("job_control")
+        logger.info("Listening for job aborts on Redis PubSub channel 'job_control'")
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                data = message["data"]
+                # No redis.asyncio o data pode vir como bytes ou srt dependendo do encoding
+                if isinstance(data, bytes):
+                    data = data.decode()
+                
+                if data.startswith("abort:"):
+                    job_to_abort = data.split(":", 1)[1]
+                    logger.warning(f"Recebido pedido de ABORT para o job: {job_to_abort}")
+                    task = active_jobs.get(job_to_abort)
+                    if task:
+                        logger.warning(f"Cancelando task do job {job_to_abort} imediatamente!")
+                        task.cancel()
+                    else:
+                        logger.info(f"Job {job_to_abort} nao esta ativo neste worker.")
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error(f"Error in pubsub abort listener: {e}")
+
 async def process_webhook_message(message: aio_pika.IncomingMessage):
     """Callback to process a message from RabbitMQ"""
     async with message.process():
@@ -156,7 +186,6 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         last_exception = e
                         logger.error(f"[Consumer] Attempt {attempts}/{max_retries+1} failed: {str(e)}")
                         if attempts <= max_retries:
-                            import asyncio
                             logger.info(f"[Consumer] Retrying in {retry_delay} seconds...")
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2  # Exponential backoff
@@ -286,27 +315,6 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
         finally:
             if 'job_id' in locals() and job_id in active_jobs:
                 active_jobs.pop(job_id, None)
-
-async def _listen_for_aborts():
-    """Background task to listen for abort signals via Redis PubSub."""
-    try:
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe("job_control")
-        logger.info("Listening for job aborts on Redis PubSub channel 'job_control'")
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                data = message["data"].decode()
-                if data.startswith("abort:"):
-                    job_to_abort = data.split(":", 1)[1]
-                    logger.warning(f"Recebido pedido de ABORT para o job: {job_to_abort}")
-                    task = active_jobs.get(job_to_abort)
-                    if task:
-                        logger.warning(f"Cancelando task do job {job_to_abort} imediatamente!")
-                        task.cancel()
-                    else:
-                        logger.info(f"Job {job_to_abort} nao esta ativo neste worker.")
-    except Exception as e:
-        logger.error(f"Error in pubsub abort listener: {e}")
 
 async def start_rabbitmq_consumer():
     """
