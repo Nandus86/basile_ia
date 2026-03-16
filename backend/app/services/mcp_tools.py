@@ -348,10 +348,12 @@ class MCPToolExecutor:
                     final_args[k] = v
             
             filled = sum(1 for p in all_params if p in final_args and final_args[p] is not None)
-            print(f"[MCPTool] 🛠️ {tool_name} — {filled}/{len(all_params)} params filled")
             missing = [p for p in all_params if p not in final_args]
-            if missing:
-                print(f"[MCPTool] ⚠️ Missing: {missing}")
+            logger.info(
+                f"[MCPTool] 🛠️  INVOKE  tool={tool_name!r}  protocol={protocol!r}  "
+                f"params={filled}/{len(all_params)} preenchidos  missing={missing or 'none'}"
+            )
+            logger.debug(f"[MCPTool] 📦 args enviados: {json.dumps(final_args, default=str, ensure_ascii=False)[:800]}")
             
             try:
                 mcp = await self.get_mcp_by_id(mcp_id)
@@ -383,6 +385,12 @@ class MCPToolExecutor:
                     for key in used_all:
                         cleaned_args.pop(key, None)
                     
+                    import time as _time
+                    _t0 = _time.monotonic()
+                    logger.info(
+                        f"[MCPTool] 🌐 MCP CALL  tool={tool_name!r}  "
+                        f"endpoint={mcp.endpoint!r}  args_keys={list(cleaned_args.keys())}"
+                    )
                     result = await execute_mcp_protocol(
                         endpoint=mcp.endpoint,
                         headers=mcp.headers or {},
@@ -392,11 +400,22 @@ class MCPToolExecutor:
                         tool_args=cleaned_args,
                         timeout=float(mcp.timeout_seconds or 60)
                     )
-                    
+                    _elapsed = (_time.monotonic() - _t0) * 1000
+
                     if result.get("success"):
-                        return json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
+                        raw = json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
+                        logger.info(
+                            f"[MCPTool] ✅ MCP OK  tool={tool_name!r}  "
+                            f"elapsed={_elapsed:.0f}ms  response_preview={raw[:500]!r}"
+                        )
+                        return raw
                     else:
-                        return json.dumps({"error": result.get("error", "Unknown error")})
+                        err = result.get("error", "Unknown error")
+                        logger.warning(
+                            f"[MCPTool] ❌ MCP ERRO  tool={tool_name!r}  "
+                            f"elapsed={_elapsed:.0f}ms  error={err!r}"
+                        )
+                        return json.dumps({"error": err})
                 
                 else:
                     import httpx
@@ -441,8 +460,16 @@ class MCPToolExecutor:
                     for hk, hv in headers.items():
                         safe_headers[str(hk).encode("utf-8")] = str(hv).encode("utf-8")
                     
+                    import time as _time
                     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
                         method = mcp.method.upper()
+                        _body_log = json.dumps(body, default=str, ensure_ascii=False)[:500] if body else "{}"
+                        _query_log = json.dumps(query, default=str, ensure_ascii=False)[:300] if query else "{}"
+                        logger.info(
+                            f"[MCPTool] 🌐 HTTP CALL  tool={tool_name!r}  method={method}  "
+                            f"url={endpoint_str!r}  body={_body_log}  query={_query_log}"
+                        )
+                        _t0 = _time.monotonic()
                         if method == "GET":
                             response = await client.get(endpoint_str, headers=safe_headers, params=query)
                         elif method == "POST":
@@ -455,12 +482,22 @@ class MCPToolExecutor:
                             response = await client.delete(endpoint_str, headers=safe_headers, params=query)
                         else:
                             raise ValueError(f"Unsupported HTTP method: {mcp.method}")
-                        
+                        _elapsed = (_time.monotonic() - _t0) * 1000
                         response.raise_for_status()
-                        return json.dumps(response.json(), indent=2, ensure_ascii=False)
+                        resp_json = response.json()
+                        resp_preview = json.dumps(resp_json, ensure_ascii=False)[:500]
+                        logger.info(
+                            f"[MCPTool] ✅ HTTP OK  tool={tool_name!r}  method={method}  "
+                            f"status={response.status_code}  elapsed={_elapsed:.0f}ms  "
+                            f"response_preview={resp_preview!r}"
+                        )
+                        return json.dumps(resp_json, indent=2, ensure_ascii=False)
                         
             except Exception as e:
-                logger.error(f"Tool execution error: {e}")
+                logger.error(
+                    f"[MCPTool] 💥 EXCEPTION  tool={tool_name!r}  error={type(e).__name__}: {e}",
+                    exc_info=True
+                )
                 return json.dumps({"error": str(e)})
         
         return execute_tool
