@@ -2,10 +2,24 @@
 Basile_IA_Orch - AI Agent Orchestrator
 Main FastAPI Application
 """
+import logging
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-import asyncio
+
+# ── Logging config ────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# Garante que os módulos da app emitem INFO mesmo com Uvicorn rodando
+for _mod in ("app.services.mcp_tools", "app.orchestrator.agent_factory",
+             "app.orchestrator.agent_orchestrator", "app.orchestrator.supervisor",
+             "app.worker.tasks"):
+    logging.getLogger(_mod).setLevel(logging.INFO)
+# ─────────────────────────────────────────────────────────────────────────────
 
 from app.database import engine, Base
 from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows
