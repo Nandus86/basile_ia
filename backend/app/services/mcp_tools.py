@@ -450,7 +450,11 @@ class MCPToolExecutor:
                     _elapsed = (_time.monotonic() - _t0) * 1000
 
                     if result.get("success"):
-                        raw = json.dumps(result.get("result", {}), indent=2, ensure_ascii=False)
+                        res_data = result.get("result", {})
+                        # Log do payload de saída (bruto para MCP protocol)
+                        logger.info(f"[MCPTool] 📦 PAYLOAD SAÍDA (MCP): {json.dumps(res_data, ensure_ascii=False)[:1000]}")
+                        
+                        raw = json.dumps(res_data, indent=2, ensure_ascii=False)
                         logger.info(
                             f"[MCPTool] ✅ MCP OK  tool={tool_name!r}  "
                             f"elapsed={_elapsed:.0f}ms  response_preview={raw[:500]!r}"
@@ -536,6 +540,9 @@ class MCPToolExecutor:
                         # Aplica o response mapping (extraindo só o essencial)
                         if getattr(mcp, "response_mapping", None):
                             resp_json = _apply_response_mapping(resp_json, mcp.response_mapping)
+                        
+                        # Log do payload de saída (após mapeamento se houver)
+                        logger.info(f"[MCPTool] 📦 PAYLOAD SAÍDA (HTTP): {json.dumps(resp_json, ensure_ascii=False)[:1000]}")
                             
                         resp_preview = json.dumps(resp_json, ensure_ascii=False)[:500]
                         logger.info(
