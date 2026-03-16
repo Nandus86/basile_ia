@@ -311,6 +311,11 @@ async def execute_sse(mcp: MCP, request_params: dict, timeout: float) -> dict:
 
 async def stream_sse(mcp: MCP, body: dict, timeout: float) -> AsyncGenerator[str, None]:
     """Stream SSE events as they arrive"""
+    # Log do payload de entrada (parâmetros da UI)
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[MCP API] 📤 PAYLOAD ENTRADA (HTTP): body={json.dumps(body, ensure_ascii=False)}")
+        
     async with httpx.AsyncClient(timeout=timeout) as client:
         headers = {**mcp.headers}
         headers["Accept"] = "text/event-stream"
@@ -388,6 +393,11 @@ async def execute_mcp(
             tool_name = request.params.get("_tool_name")
             tool_args = {k: v for k, v in request.params.items() if not k.startswith("_")}
             
+            # Log do payload de entrada (parâmetros da UI MCP Protocol)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"[MCP API] 📤 PAYLOAD ENTRADA (MCP): {json.dumps(params, ensure_ascii=False)}")
+                
             mcp_result = await execute_mcp_protocol(
                 endpoint=mcp.endpoint,
                 headers=mcp.headers or {},
