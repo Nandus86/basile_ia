@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from app.database import get_db
 from app.models.job_log import JobLog
+from app.redis_client import redis_client
 
 router = APIRouter()
 
@@ -124,3 +125,13 @@ async def test_job(job_id: str, db: AsyncSession = Depends(get_db)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to test job: {str(e)}")
+
+@router.post("/jobs/{job_id}/abort")
+async def abort_job(job_id: str):
+    """Abort an ongoing job currently running in the worker"""
+    try:
+        # Publish abort signal for worker to intercept
+        await redis_client.publish("job_control", f"abort:{job_id}")
+        return {"success": True, "message": f"Sinal de abort enviado para o job {job_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to abort job: {str(e)}")
