@@ -88,8 +88,16 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
     def _extract(obj, path):
         parts = str(path).split('.')
         current = obj
-        for part in parts:
-            if isinstance(current, dict) and part in current:
+        for i, part in enumerate(parts):
+            if part == '[*]':
+                if isinstance(current, list):
+                    remaining_path = '.'.join(parts[i+1:])
+                    if not remaining_path:
+                        return current
+                    return [_extract(item, remaining_path) for item in current]
+                else:
+                    return None
+            elif isinstance(current, dict) and part in current:
                 current = current[part]
             elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
                 current = current[int(part)]
