@@ -81,20 +81,19 @@ async def shutdown(ctx):
     await rabbitmq_client.disconnect()
 
 
-# ARQ Worker configuration map
-WorkerSettings = {
-    "functions": [
+class WorkerSettings:
+    """ARQ Worker Settings"""
+    functions = [
         process_message_task,
         process_message_structured_task,
-    ],
-    "redis_settings": get_redis_settings(),
-    "max_jobs": 10,
-    "job_timeout": 300,
-    "keep_result": 3600,
-    "retry_jobs": True,
-    "max_tries": 3,
-    "health_check_interval": 30,
-    "queue_name": "basile:queue",
-    "on_startup": startup,
-    "on_shutdown": shutdown,
-}
+    ]
+    redis_settings = get_redis_settings()
+    max_jobs = 10
+    job_timeout = 300
+    keep_result = 3600
+    retry_jobs = True
+    max_tries = 3
+    health_check_interval = 30
+    queue_name = "basile:queue"
+    on_startup = startup
+    on_shutdown = shutdown
