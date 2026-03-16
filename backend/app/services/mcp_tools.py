@@ -80,6 +80,33 @@ def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     return result, used_args
 
 
+def _apply_response_mapping(data: dict, mapping: dict) -> dict:
+    """Extrai partes de um JSON de resposta profundo e mapeia como especificado pelo admin"""
+    if not mapping or not isinstance(mapping, dict):
+        return data
+
+    def _extract(obj, path):
+        parts = str(path).split('.')
+        current = obj
+        for part in parts:
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+                current = current[int(part)]
+            else:
+                return None
+        return current
+
+    result = {}
+    for key, path in mapping.items():
+        if isinstance(path, str):
+            result[key] = _extract(data, path)
+        else:
+            result[key] = path  # fallback
+            
+    return result if result else data
+
+
 def _is_mcp_error_response(text: str) -> bool:
     """Check if an MCP response indicates a schema validation error.
     Only detects actual validation failures, NOT generic error fields in responses."""
@@ -485,6 +512,11 @@ class MCPToolExecutor:
                         _elapsed = (_time.monotonic() - _t0) * 1000
                         response.raise_for_status()
                         resp_json = response.json()
+                        
+                        # Aplica o response mapping (extraindo só o essencial)
+                        if getattr(mcp, "response_mapping", None):
+                            resp_json = _apply_response_mapping(resp_json, mcp.response_mapping)
+                            
                         resp_preview = json.dumps(resp_json, ensure_ascii=False)[:500]
                         logger.info(
                             f"[MCPTool] ✅ HTTP OK  tool={tool_name!r}  method={method}  "
