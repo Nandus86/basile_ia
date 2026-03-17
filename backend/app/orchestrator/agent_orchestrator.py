@@ -51,7 +51,10 @@ class AgentOrchestrator:
                 selectinload(Agent.skills),
                 selectinload(Agent.collaborator_settings)
                     .selectinload(AgentCollaborator.collaborator)
-                    .selectinload(Agent.skills)
+                    .options(
+                        selectinload(Agent.skills),
+                        selectinload(Agent.mcps)
+                    )
             )
             .where(Agent.id == agent_id)
         )
@@ -74,11 +77,23 @@ class AgentOrchestrator:
 
         def _format_agent_desc(a):
             desc = f"- {a.name}: {a.description or 'Especialista'}"
+            # Include Skill Intents (Capability Map)
             if hasattr(a, 'skills') and a.skills:
                 active = [s for s in a.skills if s.is_active]
                 if active:
-                    skill_names = ", ".join([s.name for s in active])
-                    desc += f" [Skills: {skill_names}]"
+                    capabilities = []
+                    for s in active:
+                        cap = s.name
+                        if s.intent:
+                            cap += f" (Pode: {s.intent})"
+                        capabilities.append(cap)
+                    desc += f"\n  - CAPACIDADES: {', '.join(capabilities)}"
+            
+            # Include Tool Names (Inventory Map)
+            if hasattr(a, 'mcps') and a.mcps:
+                tool_names = [m.name for m in a.mcps]
+                if tool_names:
+                    desc += f"\n  - FERRAMENTAS DISPONÍVEIS: {', '.join(tool_names)}"
             return desc
         enabled_desc = "\n".join([_format_agent_desc(a) for a in enabled_collaborators]) or "Nenhum"
         neutral_desc = "\n".join([_format_agent_desc(a) for a in neutral_collaborators]) or "Nenhum"

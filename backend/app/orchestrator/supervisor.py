@@ -92,21 +92,42 @@ class Supervisor:
         # Use LLM to select best agent
         agent_descriptions = []
         for agent in agents:
+            details = []
+            
+            # Capability Map (Skills + Intents)
+            if hasattr(agent, 'skills') and agent.skills:
+                active_skills = [s for s in agent.skills if s.is_active]
+                if active_skills:
+                    skills_text = ", ".join([
+                        f"{s.name}" + (f" (Pode: {s.intent})" if s.intent else "")
+                        for s in active_skills
+                    ])
+                    details.append(f"CAPACIDADES: {skills_text}")
+            
+            # Tool Map (MCPs)
             mcp_names = [m.name for m in agent.mcps] if agent.mcps else []
+            if mcp_names:
+                details.append(f"FERRAMENTAS: {', '.join(mcp_names)}")
+            
+            details_str = "\n".join(details)
             desc = f"""
 AGENTE: {agent.name}
 ID: {agent.id}
 DESCRIÇÃO: {agent.description or 'Sem descrição'}
-ESPECIALIDADE: {agent.system_prompt[:200]}...
-MCPs: {', '.join(mcp_names) if mcp_names else 'Nenhum'}
+{details_str}
 """
             agent_descriptions.append(desc)
         
         agents_str = "\n---\n".join(agent_descriptions)
         
-        selector_prompt = f"""Você é um roteador. Escolha o agente mais adequado para a mensagem.
+        selector_prompt = f"""Você é um roteador especializado. Sua tarefa é escolher o agente mais adequado para a mensagem.
+        
+REGRAS DE ESCOLHA:
+1. Analise as CAPACIDADES e FERRAMENTAS listadas para cada agente.
+2. Certifique-se de que o agente selecionado tem o escopo necessário para resolver a solicitação.
+3. Se a mensagem do usuário envolver uma ação específica (ex: agendar, buscar no banco), prefira agentes que tenham ferramentas (MCPs) para isso.
 
-MENSAGEM: "{user_message}"
+MENSAGEM DO USUÁRIO: "{user_message}"
 
 AGENTES DISPONÍVEIS:
 {agents_str}
@@ -515,12 +536,26 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             for a in all_collaborators:
                 if a.name not in agents_used:
                     priority = "PRIORITÁRIO" if a in enabled else "DISPONÍVEL"
-                    skills_desc = ""
+                    
+                    details = []
+                    # Capability Map (Skills + Intents)
                     if hasattr(a, 'skills') and a.skills:
                         active_skills = [s for s in a.skills if s.is_active]
                         if active_skills:
-                            skills_desc = f" [Skills: {', '.join([s.name for s in active_skills])}]"
-                    available.append(f"- {a.name} ({priority}): {a.description or 'Especialista'}{skills_desc}")
+                            skills_text = ", ".join([
+                                f"{s.name}" + (f" (Pode: {s.intent})" if s.intent else "")
+                                for s in active_skills
+                            ])
+                            details.append(f"CAPACIDADES: {skills_text}")
+                    
+                    # Tool Map (MCPs)
+                    if hasattr(a, 'mcps') and a.mcps:
+                        tool_names = [m.name for m in a.mcps]
+                        if tool_names:
+                            details.append(f"FERRAMENTAS: {', '.join(tool_names)}")
+                    
+                    details_str = "\n    - " + "\n    - ".join(details) if details else ""
+                    available.append(f"- {a.name} ({priority}): {a.description or 'Especialista'}{details_str}")
             
             if not available:
                 print("[Supervisor] All collaborators already consulted, completing")

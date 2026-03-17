@@ -48,7 +48,10 @@ async def select_specialist_agent(state: OrchestratorState, db: AsyncSession) ->
         # Use specific agent (if user has access)
         result = await db.execute(
             select(Agent)
-            .options(selectinload(Agent.mcps))
+            .options(
+                selectinload(Agent.mcps),
+                selectinload(Agent.skills)
+            )
             .where(Agent.id == agent_id, Agent.is_active == True)
         )
         agent = result.scalar_one_or_none()
@@ -61,7 +64,10 @@ async def select_specialist_agent(state: OrchestratorState, db: AsyncSession) ->
         # Get all active agents accessible to user's level
         result = await db.execute(
             select(Agent)
-            .options(selectinload(Agent.mcps))
+            .options(
+                selectinload(Agent.mcps),
+                selectinload(Agent.skills)
+            )
             .where(Agent.is_active == True)
         )
         all_agents = result.scalars().all()
@@ -113,31 +119,47 @@ async def _select_agent_with_llm(message: str, agents: List[Agent]) -> Optional[
     # Build agent descriptions
     agent_descriptions = []
     for agent in agents:
+        details = []
+        
+        # Capability Map (Skills + Intents)
+        if hasattr(agent, 'skills') and agent.skills:
+            active_skills = [s for s in agent.skills if s.is_active]
+            if active_skills:
+                skills_text = ", ".join([
+                    f"{s.name}" + (f" (Pode: {s.intent})" if s.intent else "")
+                    for s in active_skills
+                ])
+                details.append(f"CAPACIDADES: {skills_text}")
+        
+        # Tool Map (MCPs)
         mcp_names = [m.name for m in agent.mcps] if agent.mcps else []
+        if mcp_names:
+            details.append(f"FERRAMENTAS: {', '.join(mcp_names)}")
+        
+        details_str = "\n".join(details)
         desc = f"""
 AGENTE: {agent.name}
 ID: {agent.id}
 DESCRIÇÃO: {agent.description or 'Sem descrição'}
-ESPECIALIDADE: {agent.system_prompt[:200]}...
-MCPs: {', '.join(mcp_names) if mcp_names else 'Nenhum'}
+{details_str}
 """
         agent_descriptions.append(desc)
     
     agents_str = "\n---\n".join(agent_descriptions)
     
-    selector_prompt = f"""Você é um roteador de mensagens. Analise a mensagem e escolha o agente mais adequado.
+    selector_prompt = f"""Você é um roteador especializado. Analise a mensagem e escolha o agente mais adequado.
+
+REGRAS DE ESCOLHA:
+1. Analise as CAPACIDADES e FERRAMENTAS listadas para cada agente.
+2. Certifique-se de que o agente selecionado tem o escopo e as habilidades necessárias para resolver a solicitação.
+3. Se o usuário pedir uma ação (ex: agendar, buscar), use agentes que possuam ferramentas para isso.
 
 MENSAGEM: "{message}"
 
 AGENTES DISPONÍVEIS:
 {agents_str}
 
-REGRAS:
-1. Escolha o agente cuja especialidade mais se relaciona com a pergunta
-2. Se nenhum for claramente adequado, retorne "NENHUM"
-
-Responda APENAS com o ID do agente ou "NENHUM" (sem aspas, sem explicações).
-"""
+Responda APENAS com o ID do agente (UUID) ou "NENHUM". Sem explicações."""
     
     try:
         response = await llm.ainvoke([SystemMessage(content=selector_prompt)])
