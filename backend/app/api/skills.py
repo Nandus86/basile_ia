@@ -163,9 +163,9 @@ A skill is a markdown file with YAML frontmatter containing the name and descrip
 
 ### CRITICAL RULES:
 1. LANGUAGE: All instructions, workflows, and detailed content inside the markdown body MUST be written in ENGLISH. Even if the user request is in another language, the generated skill content must be in English.
-2. TOOL FORMATTING: If you define or list tools, methods, or actions, use exactly this format:
-   - **name_of_the_tool** <<short description of what it does>>
-   Example: - **fetch_data** <<Retrieves information from the primary database>>
+2. TOOL/SECTION FORMATTING: Use H2 headers for skills/tools and << >> for summary descriptions:
+   ## name_of_the_capability
+   << Short concise summary of this section in English >>
 
 Your goal is to output ONLY the raw Markdown text for the `SKILL.md` file, matching the user's intent. Do not output anything before or after the markdown. Do not enclose it in ```markdown code blocks.
 
@@ -177,7 +177,11 @@ description: [Short, pushy description on when the agent should trigger this ski
 
 # [Skill Name]
 
-[Detailed instructions, workflows, and best practices in ENGLISH. Use the **tool** <<desc>> format for tools.]
+[Detailed instructions in ENGLISH]
+
+## Primary Capability Name
+<< Summary of what this capability does in English >>
+[Workflows and instructions in English]
 
 ## Examples (Optional)
 [Examples in English]

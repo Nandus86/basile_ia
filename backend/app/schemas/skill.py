@@ -80,28 +80,32 @@ def get_skill_capability_description(skill_obj) -> str:
     if not content_md:
         return intent.replace("\n", " ").strip()
     
-    # Try to find tool names (pattern: - **tool_name** <<description>>)
-    # Support both the old format and the new format with << >>
-    tools_with_desc = re.findall(r'-\s+\*\*(.*?)\*\*(?:\s+<<(.*?)>>)?', content_md)
+    # Tools are now identified by ## tool_name headers
+    # Descriptions are within << >> markers
+    tool_sections = re.findall(r'##\s*(.*?)\n', content_md)
+    descriptions = re.findall(r'<<\s*(.*?)\s*>>', content_md)
     
     tools_parts = []
-    for name, desc in tools_with_desc:
-        tool_str = name.strip()
-        # If there's a description and it's short, we could include it, 
-        # but for the summary map, usually name is enough or name (desc)
-        tools_parts.append(tool_str)
+    # If we have headers, those are our technical tool/method names
+    for section in tool_sections:
+        tools_parts.append(section.strip())
         
     tools_text = f" [Usa: {', '.join(tools_parts)}]" if tools_parts else ""
     
-    # Take the first meaningful paragraph as the description, skipping headers
+    # Use the first << >> as the primary description if available, 
+    # otherwise fall back to the first paragraph
     description = ""
-    lines = content_md.split("\n")
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        description = line
-        break
+    if descriptions:
+        description = descriptions[0].strip()
+    else:
+        # Fallback to first non-header paragraph
+        lines = content_md.split("\n")
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("-"):
+                continue
+            description = line
+            break
         
     if not description:
         description = intent or "Sem descrição detalhada"
