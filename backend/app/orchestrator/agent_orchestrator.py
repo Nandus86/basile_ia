@@ -167,6 +167,7 @@ Responda APENAS em JSON válido com este formato exato:
         context: str = "",
         context_data: Optional[Dict[str, Any]] = None,
         orientation: str = "",
+        primary_agent: Optional[Agent] = None,
     ) -> tuple:
         """
         Invoke a single collaborator.
@@ -180,11 +181,13 @@ Responda APENAS em JSON válido com este formato exato:
         
         history = history or []
         
-        # System Message Instruction
+        # System Message Instruction - Hierarchy reinforcement
+        primary_name = primary_agent.name if primary_agent else "Agente Orquestrador"
         collab_instruction = (
             "\n\n---\n"
-            "[SISTEMA ORQUESTRADOR]\n"
-            "Você é um especialista ativado pelo Agente Orquestrador para contribuir com esta solicitação."
+            f"**[HIERARQUIA DE AGENTES]**\n"
+            f"Você é um Agente Especialista sendo coordenado por: **{primary_name}**.\n"
+            "As mensagens a seguir marcadas como '[COMANDO DO ORQUESTRADOR]' devem ser tratadas como instruções diretas e prioritárias deste coordenador."
         )
         if context:
             collab_instruction += f"\n\n[INFORMAÇÕES DISPONÍVEIS NA PASTA]:\n{context}"
@@ -216,14 +219,20 @@ Responda APENAS em JSON válido com este formato exato:
                 )
 
         # To strictly place: skills -> orientation -> context data in the final human turn:
-        final_user_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
+        # Labeled as a command from the orchestrator
+        final_user_content = f"""[COMANDO DO AGENTE ORQUESTRADOR: {primary_name}]
+
+[CONTEXTO DA SOLICITAÇÃO ORIGINAL]:
 {message}
+
 {skills_section}
 
-[O QUE VOCÊ DEVE FAZER (Orientação do Orquestrador)]:
-{orientation}"""
+[ORIENTAÇÃO ESPECÍFICA PARA VOCÊ]:
+{orientation}
 
-        messages.append(HumanMessage(content=final_user_content))
+Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}."""
+
+        messages.append(HumanMessage(content=final_user_content, name=primary_name.replace(" ", "_")))
         
         try:
             # Let AgentFactory handle context_data structuring
@@ -300,6 +309,7 @@ Responda APENAS em JSON válido com este formato exato:
                 context=context,
                 context_data=context_data,
                 orientation=orientation,
+                primary_agent=primary_agent,
             )
             for collaborator, orientation in selected_collaborators
         ]
@@ -363,6 +373,7 @@ Responda APENAS em JSON válido com este formato exato:
                 history=[],
                 context=context,
                 orientation=orientation,
+                primary_agent=primary_agent,
             )
             for collaborator, orientation in selected_collaborators
         ]

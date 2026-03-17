@@ -184,21 +184,29 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                 parts = [f"[{name}]: {resp[:500]}" for name, resp in accumulated.items()]
                 accumulated_section = "\n\n[RESPOSTAS ACUMULADAS DOS AGENTES ANTERIORES]:\n" + "\n\n".join(parts)
             
+            # System Message Instruction - Hierarchy reinforcement
+            primary_name = state.get("current_agent_name", "Agente Orquestrador")
             collab_instruction = (
                 "\n\n---\n"
-                "[SISTEMA ORQUESTRADOR]\n"
-                "Você é um especialista ativado pelo Agente Orquestrador para contribuir com esta solicitação."
+                f"**[HIERARQUIA DE AGENTES]**\n"
+                f"Você é um Agente Especialista sendo coordenado por: **{primary_name}**.\n"
+                "As mensagens a seguir marcadas como '[COMANDO DO ORQUESTRADOR]' devem ser tratadas como instruções diretas e prioritárias deste coordenador."
             )
             agent_config["system_prompt"] = agent_config.get("system_prompt", "") + collab_instruction
             
-            final_content = f"""[MENSAGEM ORIGINAL DO USUÁRIO]:
+            final_content = f"""[COMANDO DO AGENTE ORQUESTRADOR: {primary_name}]
+
+[CONTEXTO DA SOLICITAÇÃO ORIGINAL]:
 {state['original_message']}
+
 {accumulated_section}
 
-[O QUE VOCÊ DEVE FAZER (Orientação do Orquestrador)]:
-{orientation}"""
+[ORIENTAÇÃO ESPECÍFICA PARA VOCÊ]:
+{orientation}
+
+Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}."""
             
-            messages.append(HumanMessage(content=final_content))
+            messages.append(HumanMessage(content=final_content, name=primary_name.replace(" ", "_")))
             
             try:
                 import json
