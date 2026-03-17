@@ -112,6 +112,7 @@ class AgentFactory:
         if hasattr(agent, 'skills') and agent.skills:
             active_skills = [s for s in agent.skills if s.is_active]
             if active_skills:
+                skills_parts = []
                 from app.schemas.skill import get_skill_capability_description
                 for skill in active_skills:
                     skills_parts.append(f"### {skill.name}\n{skill.content_md}")
