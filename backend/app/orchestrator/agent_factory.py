@@ -298,16 +298,21 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
 
             # Extract final response
             for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage) and msg.content:
+                if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
                     if not (hasattr(msg, "tool_calls") and msg.tool_calls):
                         return msg.content
             
-            # Fallback
+            # Fallback: if the last AIMessage has tool_calls but the loop ended, 
+            # or if content is empty, look for the last non-empty AIMessage
             for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage) and msg.content:
+                if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
                     return msg.content
             
-            return "Não foi possível gerar uma resposta."
+            # If all AIMessages are empty and there were tool calls, the model 
+            # might be waiting for a final nudge or the react_agent didn't finish.
+            # But here we simply report the failure or return a safe default.
+            logger.warning(f"[AgentFactory] ⚠️ No non-empty final AIMessage found for agent '{agent_config['name']}'.")
+            return "Ocorreu um erro ao processar a resposta final. Por favor, tente novamente."
         
         else:
             # Simple LLM call

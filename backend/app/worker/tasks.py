@@ -268,11 +268,11 @@ async def _enrich_agent_prompt(
                     f"Você tem acesso a agentes especialistas que podem ser acionados como ferramentas. "
                     f"Use-os quando a solicitação do usuário exigir uma especialidade que eles possuem.\n"
                     f"Agentes disponíveis: {', '.join(collab_names)}\n\n"
-                    f"IMPORTANTE:\n"
-                    f"- Chame o agente especialista passando a instrução clara do que ele deve fazer\n"
-                    f"- Use a resposta do especialista para compor sua resposta final\n"
-                    f"- Você pode chamar múltiplos especialistas se necessário\n"
-                    f"- A resposta final ao usuário deve ser SUA, integrando as contribuições dos especialistas\n"
+                    f"DIRETRIZES DE ORQUESTRAÇÃO:\n"
+                    f"- Chame o especialista enviando uma instrução clara e técnica do que ele deve resolver.\n"
+                    f"- Após obter as respostas dos especialistas, gere sua resposta final consolidada.\n"
+                    f"- Se sua instrução principal exige que você use o especialista de 'Resposta Final', você DEVE chamá-lo para formatar o texto final antes de encerrar.\n"
+                    f"- Você é o coordenador; os especialistas reportam a VOCÊ, não ao usuário final.\n"
                 )
         except Exception as e:
             import traceback

@@ -197,15 +197,17 @@ Responda APENAS em JSON válido com este formato exato:
         history = history or []
         
         # System Message Instruction - Hierarchy reinforcement
-        primary_name = primary_agent.name if primary_agent else "Agente Orquestrador"
+        primary_name = primary_agent.name if primary_agent else "Coordenador de Sistema"
         collab_instruction = (
             "\n\n---\n"
-            f"**[HIERARQUIA DE AGENTES]**\n"
-            f"Você é um Agente Especialista sendo coordenado por: **{primary_name}**.\n"
-            "As mensagens a seguir marcadas como '[COMANDO DO ORQUESTRADOR]' devem ser tratadas como instruções diretas e prioritárias deste coordenador."
+            f"**[DIRETRIZ DE HIERARQUIA]**\n"
+            f"Você é um AGENTE ESPECIALISTA sendo coordenado pelo sistema (**{primary_name}**).\n"
+            "As mensagens marcadas como '[DELEGAÇÃO DE SISTEMA]' são comandos diretos do seu coordenador. "
+            "Sua tarefa é reportar seus achados de forma técnica e objetiva de volta ao coordenador, para que ele possa processar a resposta final ao usuário humano. "
+            "NÃO tente conversar diretamente com o 'usuário' em sua resposta; reporte ao seu coordenador."
         )
         if context:
-            collab_instruction += f"\n\n[INFORMAÇÕES DISPONÍVEIS NA PASTA]:\n{context}"
+            collab_instruction += f"\n\n[CONTEXTO ADICIONAL]:\n{context}"
             
         agent_config["system_prompt"] = agent_config.get("system_prompt", "") + collab_instruction
         
@@ -229,25 +231,25 @@ Responda APENAS em JSON válido com este formato exato:
                 for skill in active_skills:
                     skills_parts.append(f"### {skill.name}\n{skill.content_md}")
                 skills_section = (
-                    "\n\n[SUAS SKILLS ATIVAS - Siga estas instruções especializadas]:\n"
+                    "\n\n[SUAS CAPACIDADES ATIVAS]:\n"
                     + "\n---\n".join(skills_parts)
                 )
 
         # To strictly place: skills -> orientation -> context data in the final human turn:
-        # Labeled as a command from the orchestrator
-        final_user_content = f"""[COMANDO DO AGENTE ORQUESTRADOR: {primary_name}]
+        # Labeled as a system delegation
+        final_user_content = f"""[DELEGAÇÃO DE SISTEMA - ORIGEM: {primary_name}]
 
-[CONTEXTO DA SOLICITAÇÃO ORIGINAL]:
+[FOCO DA TAREFA]:
+{orientation}
+
+[CONTEXTO DA CONVERSA ORIGINAL]:
 {message}
 
 {skills_section}
 
-[ORIENTAÇÃO ESPECÍFICA PARA VOCÊ]:
-{orientation}
+Execute a instrução acima e reporte o resultado ao coordenador {primary_name}."""
 
-Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}."""
-
-        messages.append(HumanMessage(content=final_user_content, name=primary_name.replace(" ", "_")))
+        messages.append(HumanMessage(content=final_user_content, name="SystemCoordinator"))
         
         try:
             # Let AgentFactory handle context_data structuring
