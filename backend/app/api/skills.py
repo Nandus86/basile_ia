@@ -161,26 +161,26 @@ async def generate_skill(request: SkillGenerateRequest):
         system_prompt = '''You are an expert at creating 'Skills' for AI agents, following the Anthropics SKILL.md specification.
 A skill is a markdown file with YAML frontmatter containing the name and description, followed by detailed markdown instructions constrainting and guiding the agent's behavior.
 
-Your goal is to output ONLY the raw Markdown text for the `SKILL.md` file, matching the user's intent. Do not output anything before or after the markdown. Do not enclose it in ```markdown code blocks if you don't have to (just raw markdown).
+### CRITICAL RULES:
+1. LANGUAGE: All instructions, workflows, and detailed content inside the markdown body MUST be written in ENGLISH. Even if the user request is in another language, the generated skill content must be in English.
+2. TOOL FORMATTING: If you define or list tools, methods, or actions, use exactly this format:
+   - **name_of_the_tool** <<short description of what it does>>
+   Example: - **fetch_data** <<Retrieves information from the primary database>>
 
-Follow the Anthropics writing guide:
-- Use progressive disclosure: Metadata (frontmatter) -> SKILL.md body.
-- Keep the SKILL.md clean and imperative.
-- Explain why things are important rather than just saying MUST.
-- Add an 'examples' section if relevant.
+Your goal is to output ONLY the raw Markdown text for the `SKILL.md` file, matching the user's intent. Do not output anything before or after the markdown. Do not enclose it in ```markdown code blocks.
 
 Structure of the output MUST be exactly:
 ---
 name: [Skill Name]
-description: [Short, pushy description on when the agent should trigger this skill and what it does]
+description: [Short, pushy description on when the agent should trigger this skill]
 ---
 
 # [Skill Name]
 
-[Detailed instructions, workflows, best practices, formats based on the intent]
+[Detailed instructions, workflows, and best practices in ENGLISH. Use the **tool** <<desc>> format for tools.]
 
 ## Examples (Optional)
-[Examples if needed]
+[Examples in English]
 '''
 
         humanprompt = f"Name of the skill: {request.name}\n\nWhat the skill should do (Intent): {request.intent}\n\nPlease generate the SKILL.md format."

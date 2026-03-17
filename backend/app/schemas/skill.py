@@ -80,9 +80,18 @@ def get_skill_capability_description(skill_obj) -> str:
     if not content_md:
         return intent.replace("\n", " ").strip()
     
-    # Try to find tool names (common pattern: - **tool_name**)
-    tools = re.findall(r'-\s+\*\*(.*?)\*\*', content_md)
-    tools_text = f" [Usa: {', '.join(tools)}]" if tools else ""
+    # Try to find tool names (pattern: - **tool_name** <<description>>)
+    # Support both the old format and the new format with << >>
+    tools_with_desc = re.findall(r'-\s+\*\*(.*?)\*\*(?:\s+<<(.*?)>>)?', content_md)
+    
+    tools_parts = []
+    for name, desc in tools_with_desc:
+        tool_str = name.strip()
+        # If there's a description and it's short, we could include it, 
+        # but for the summary map, usually name is enough or name (desc)
+        tools_parts.append(tool_str)
+        
+    tools_text = f" [Usa: {', '.join(tools_parts)}]" if tools_parts else ""
     
     # Take the first meaningful paragraph as the description, skipping headers
     description = ""
