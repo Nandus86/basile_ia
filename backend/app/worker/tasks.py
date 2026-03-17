@@ -546,10 +546,11 @@ async def _build_collaborator_tools(
         
         # Capability Map (Skills + Intents)
         if hasattr(collab, 'skills') and collab.skills:
+            from app.schemas.skill import get_skill_capability_description
             active_skills = [s for s in collab.skills if s.is_active]
             if active_skills:
                 skills_text = ", ".join([
-                    f"{s.name}" + (f" (Pode: {s.intent})" if s.intent else "")
+                    f"{s.name}: {get_skill_capability_description(s)}"
                     for s in active_skills
                 ])
                 details.append(f"CAPACIDADES: {skills_text}")

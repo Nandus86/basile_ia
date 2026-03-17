@@ -112,10 +112,12 @@ class AgentFactory:
         if hasattr(agent, 'skills') and agent.skills:
             active_skills = [s for s in agent.skills if s.is_active]
             if active_skills:
-                skills_parts = []
+                from app.schemas.skill import get_skill_capability_description
                 for skill in active_skills:
                     skills_parts.append(f"### {skill.name}\n{skill.content_md}")
-                    skills_summary.append({"name": skill.name, "intent": skill.intent or ""})
+                    # Use the refined summary for orchestrator to see collaborator skills
+                    summary_text = get_skill_capability_description(skill)
+                    skills_summary.append({"name": skill.name, "description": summary_text})
                 skills_section = (
                     "\n\n## Skills e Instruções Especializadas\n\n"
                     "Siga estritamente as instruções abaixo como parte do seu comportamento:\n\n"

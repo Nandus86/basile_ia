@@ -65,3 +65,41 @@ class SkillGenerateRequest(BaseModel):
 class SkillGenerateResponse(BaseModel):
     """Schema for the LLM skill generation response"""
     content_md: str
+
+
+def get_skill_capability_description(skill_obj) -> str:
+    """
+    Extracts a concise capability description from a Skill's content_md and intent.
+    Used for Capability Maps in orchestrator routing.
+    """
+    import re
+    
+    intent = getattr(skill_obj, "intent", "") or ""
+    content_md = getattr(skill_obj, "content_md", "") or ""
+    
+    if not content_md:
+        return intent.replace("\n", " ").strip()
+    
+    # Try to find tool names (common pattern: - **tool_name**)
+    tools = re.findall(r'-\s+\*\*(.*?)\*\*', content_md)
+    tools_text = f" [Usa: {', '.join(tools)}]" if tools else ""
+    
+    # Take the first meaningful paragraph as the description, skipping headers
+    description = ""
+    lines = content_md.split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        description = line
+        break
+        
+    if not description:
+        description = intent or "Sem descrição detalhada"
+        
+    # Clean up: no newlines, limited length
+    description = description.replace("\n", " ").strip()
+    if len(description) > 300:
+        description = description[:297] + "..."
+        
+    return f"{description}{tools_text}".strip()

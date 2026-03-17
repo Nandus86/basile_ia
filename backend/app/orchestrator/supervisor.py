@@ -94,15 +94,15 @@ class Supervisor:
         for agent in agents:
             details = []
             
-            # Capability Map (Skills + Intents)
             if hasattr(agent, 'skills') and agent.skills:
+                from app.schemas.skill import get_skill_capability_description
                 active_skills = [s for s in agent.skills if s.is_active]
                 if active_skills:
-                    skills_text = ", ".join([
-                        f"{s.name}" + (f" (Pode: {s.intent})" if s.intent else "")
+                    skills_desc = ", ".join([
+                        f"{s.name}: {get_skill_capability_description(s)}"
                         for s in active_skills
                     ])
-                    details.append(f"CAPACIDADES: {skills_text}")
+                    details.append(f"CAPACIDADES: {skills_desc}")
             
             # Tool Map (MCPs)
             mcp_names = [m.name for m in agent.mcps] if agent.mcps else []
