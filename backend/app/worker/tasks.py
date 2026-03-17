@@ -540,18 +540,33 @@ async def _build_collaborator_tools(
         safe_name = re.sub(r'_+', '_', safe_name).strip('_')[:64]
         tool_name = f"consultar_{safe_name}"
 
-        # Build description
-        desc = collab.description or f"Agente especialista: {collab.name}"
-        skills_info = ""
+        # Build description with full Capability Map
+        base_desc = collab.description or "Especialista"
+        details = []
+        
+        # Capability Map (Skills + Intents)
         if hasattr(collab, 'skills') and collab.skills:
             active_skills = [s for s in collab.skills if s.is_active]
             if active_skills:
-                skills_info = f" Skills: {', '.join([s.name for s in active_skills])}."
+                skills_text = ", ".join([
+                    f"{s.name}" + (f" (Pode: {s.intent})" if s.intent else "")
+                    for s in active_skills
+                ])
+                details.append(f"CAPACIDADES: {skills_text}")
+        
+        # Tool Map (MCPs)
+        if hasattr(collab, 'mcps') and collab.mcps:
+            tool_names = [m.name for m in collab.mcps]
+            if tool_names:
+                details.append(f"FERRAMENTAS: {', '.join(tool_names)}")
         
         priority = "PRIORITÁRIO" if collab in enabled else "disponível"
-        tool_desc = f"Consulta o agente '{collab.name}' ({priority}). {desc}{skills_info} Envie uma instrução clara do que este agente deve fazer/buscar."
-        if len(tool_desc) > 200:
-            tool_desc = tool_desc[:197] + "..."
+        details_str = " | ".join(details) if details else ""
+        tool_desc = f"Consulta o agente '{collab.name}' ({priority}). {base_desc}. {details_str}. Envie uma instrução clara do que este agente deve fazer."
+        
+        # Keep a reasonable limit but much larger than 200 to allow the contract to be seen
+        if len(tool_desc) > 1000:
+            tool_desc = tool_desc[:997] + "..."
 
         # Create the tool executor (closure captures collab)
         _collab = collab
