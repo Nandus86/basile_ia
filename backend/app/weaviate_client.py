@@ -101,12 +101,13 @@ class WeaviateClient:
         agent_id: str,
         contact_id: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        memory_type: str = "fact"
     ) -> bool:
         """Save a new qualitative memory for a contact (async-safe)"""
         try:
             return await asyncio.to_thread( # type: ignore
-                self._sync_save_contact_memory, agent_id, contact_id, content, metadata
+                self._sync_save_contact_memory, agent_id, contact_id, content, metadata, memory_type
             )
         except Exception as e:
             print(f"Error saving contact memory: {e}")
@@ -117,15 +118,48 @@ class WeaviateClient:
         agent_id: str,
         contact_id: str,
         query: str,
-        limit: int = 5
+        limit: int = 5,
+        memory_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Search historical memories for a specific contact (async-safe)"""
         try:
             return await asyncio.to_thread( # type: ignore
-                self._sync_search_contact_memories, agent_id, contact_id, query, limit
+                self._sync_search_contact_memories, agent_id, contact_id, query, limit, memory_type
             )
         except Exception as e:
             print(f"Error searching contact memories: {e}")
+            return []
+
+    async def save_agent_self_memory(
+        self,
+        agent_id: str,
+        content: str,
+        memory_type: str = "self_correction",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Save an agent-level learning/correction memory (async-safe)"""
+        try:
+            return await asyncio.to_thread( # type: ignore
+                self._sync_save_agent_self_memory, agent_id, content, memory_type, metadata
+            )
+        except Exception as e:
+            print(f"Error saving agent self memory: {e}")
+            return False
+
+    async def search_agent_self_memories(
+        self,
+        agent_id: str,
+        query: str,
+        limit: int = 5,
+        memory_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Search agent-level learning memories (async-safe)"""
+        try:
+            return await asyncio.to_thread( # type: ignore
+                self._sync_search_agent_self_memories, agent_id, query, limit, memory_type
+            )
+        except Exception as e:
+            print(f"Error searching agent self memories: {e}")
             return []
 
     async def save_information_base_node(
@@ -211,7 +245,8 @@ class WeaviateClient:
         agent_id: str,
         contact_id: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        memory_type: str = "fact"
     ) -> bool:
         client = self._ensure_connected()
         collection_name = "ContactMemory"
@@ -226,6 +261,7 @@ class WeaviateClient:
                     weaviate.classes.config.Property(name="contact_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="content", data_type=weaviate.classes.config.DataType.TEXT),
                     weaviate.classes.config.Property(name="metadata", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="memory_type", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="created_at", data_type=weaviate.classes.config.DataType.DATE, skip_vectorization=True),
                 ]
             )
@@ -240,6 +276,7 @@ class WeaviateClient:
             "contact_id": str(contact_id),
             "content": content,
             "metadata": json.dumps(metadata) if metadata else "{}",
+            "memory_type": memory_type,
             "created_at": datetime.now(timezone.utc)
         }
         
@@ -251,7 +288,8 @@ class WeaviateClient:
         agent_id: str,
         contact_id: str,
         query: str,
-        limit: int = 5
+        limit: int = 5,
+        memory_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         client = self._ensure_connected()
         collection_name = "ContactMemory"
@@ -266,6 +304,11 @@ class WeaviateClient:
         filter_contact = weaviate.classes.query.Filter.by_property("contact_id").equal(str(contact_id))
         combined_filter = filter_agent & filter_contact
         
+        # Optionally filter by memory_type
+        if memory_type:
+            filter_type = weaviate.classes.query.Filter.by_property("memory_type").equal(memory_type)
+            combined_filter = combined_filter & filter_type
+        
         results = collection.query.near_text(
             query=query,
             limit=limit,
@@ -277,6 +320,90 @@ class WeaviateClient:
             props = dict(obj.properties)
             memories.append({
                 "content": props.get("content", ""),
+                "metadata": props.get("metadata", "{}"),
+                "memory_type": props.get("memory_type", "fact"),
+                "created_at": props.get("created_at"),
+                "distance": obj.metadata.distance if obj.metadata else None
+            })
+            
+        return memories
+
+    # ==================== Agent Self-Memory (agent-level learning) ====================
+
+    def _sync_save_agent_self_memory(
+        self,
+        agent_id: str,
+        content: str,
+        memory_type: str = "self_correction",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Save an agent-level learning/correction memory."""
+        client = self._ensure_connected()
+        collection_name = "AgentSelfMemory"
+        
+        if collection_name not in client.collections.list_all():
+            client.collections.create(
+                name=collection_name,
+                description="Agent-level self-correction and learning memory",
+                properties=[
+                    weaviate.classes.config.Property(name="agent_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="content", data_type=weaviate.classes.config.DataType.TEXT),
+                    weaviate.classes.config.Property(name="memory_type", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="metadata", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="created_at", data_type=weaviate.classes.config.DataType.DATE, skip_vectorization=True),
+                ]
+            )
+        
+        collection = client.collections.get(collection_name)
+        
+        import json
+        from datetime import datetime, timezone
+        
+        props = {
+            "agent_id": str(agent_id),
+            "content": content,
+            "memory_type": memory_type,
+            "metadata": json.dumps(metadata) if metadata else "{}",
+            "created_at": datetime.now(timezone.utc)
+        }
+        
+        collection.data.insert(properties=props)
+        return True
+
+    def _sync_search_agent_self_memories(
+        self,
+        agent_id: str,
+        query: str,
+        limit: int = 5,
+        memory_type: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Search agent-level learning memories."""
+        client = self._ensure_connected()
+        collection_name = "AgentSelfMemory"
+        
+        if collection_name not in client.collections.list_all():
+            return []
+            
+        collection = client.collections.get(collection_name)
+        
+        combined_filter = weaviate.classes.query.Filter.by_property("agent_id").equal(str(agent_id))
+        
+        if memory_type:
+            filter_type = weaviate.classes.query.Filter.by_property("memory_type").equal(memory_type)
+            combined_filter = combined_filter & filter_type
+        
+        results = collection.query.near_text(
+            query=query,
+            limit=limit,
+            filters=combined_filter
+        )
+        
+        memories = []
+        for obj in results.objects:
+            props = dict(obj.properties)
+            memories.append({
+                "content": props.get("content", ""),
+                "memory_type": props.get("memory_type", "self_correction"),
                 "metadata": props.get("metadata", "{}"),
                 "created_at": props.get("created_at"),
                 "distance": obj.metadata.distance if obj.metadata else None

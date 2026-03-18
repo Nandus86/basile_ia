@@ -211,6 +211,7 @@
           <v-tab value="knowledge" :disabled="!editing"><v-icon start>mdi-book-open-page-variant</v-icon>Conhecimento</v-tab>
           <v-tab value="information_bases" :disabled="!editing"><v-icon start>mdi-database-search</v-icon>Bases de Infor.</v-tab>
           <v-tab value="vfs_knowledge" :disabled="!editing"><v-icon start>mdi-file-document-multiple-outline</v-icon>VFS RAG 3.0</v-tab>
+          <v-tab value="prompt_preview" :disabled="!editing"><v-icon start>mdi-eye</v-icon>Prompt Geral</v-tab>
         </v-tabs>
 
         <v-card-text class="pa-6" style="min-height: 400px">
@@ -1443,6 +1444,70 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: Prompt Preview -->
+            <v-window-item value="prompt_preview">
+              <div v-if="loadingPrompt" class="d-flex flex-column align-center justify-center py-12">
+                <v-progress-circular indeterminate color="primary" size="64" width="6"></v-progress-circular>
+                <p class="mt-4 text-medium-emphasis">Gerando panorama do prompt...</p>
+              </div>
+              
+              <div v-else-if="promptPreview" class="prompt-preview-container">
+                <div class="d-flex align-center justify-space-between mb-4">
+                  <div class="d-flex align-center">
+                    <v-chip color="primary" variant="flat" size="small" class="mr-2">
+                      {{ promptPreview.model }}
+                    </v-chip>
+                    <span class="text-subtitle-1 font-weight-bold">Panorama de Construção do Prompt</span>
+                  </div>
+                  <div class="text-right">
+                    <v-chip color="info" variant="outlined" size="small">
+                      Tokens Est.: ~{{ promptPreview.total_estimated_tokens }}
+                    </v-chip>
+                    <v-btn icon="mdi-refresh" variant="text" size="small" @click="fetchPromptPreview" class="ml-2"></v-btn>
+                  </div>
+                </div>
+
+                <v-alert
+                  type="info"
+                  variant="tonal"
+                  class="mb-4"
+                  density="compact"
+                  icon="mdi-lightbulb-outline"
+                >
+                  Este panorama mostra as peças constantes do seu agente. Conteúdos de RAG e Memória são injetados dinamicamente em tempo de execução.
+                </v-alert>
+
+                <div class="prompt-sections">
+                  <v-expansion-panels variant="accordion">
+                    <v-expansion-panel
+                      v-for="(section, idx) in promptPreview.sections"
+                      :key="idx"
+                      class="prompt-section-panel mb-2"
+                    >
+                      <v-expansion-panel-title class="py-2">
+                        <div class="d-flex align-center w-100">
+                          <v-icon :color="getSourceColor(section.source)" size="20" class="mr-2">
+                            {{ getSourceIcon(section.source) }}
+                          </v-icon>
+                          <span class="font-weight-medium">{{ section.name }}</span>
+                          <v-spacer></v-spacer>
+                          <v-chip size="x-small" variant="tonal" :color="getSourceColor(section.source)" class="mr-4">
+                            {{ section.source.toUpperCase() }}
+                          </v-chip>
+                          <span class="text-caption text-medium-emphasis">{{ section.estimated_tokens }} tokens</span>
+                        </div>
+                      </v-expansion-panel-title>
+                      <v-expansion-panel-text>
+                        <div class="prompt-content-box">
+                          <pre class="prompt-text">{{ section.content }}</pre>
+                        </div>
+                      </v-expansion-panel-text>
+                    </v-expansion-panel>
+                  </v-expansion-panels>
+                </div>
+              </div>
+            </v-window-item>
+
           </v-window>
         </v-card-text>
         
@@ -1578,7 +1643,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import axios from '@/plugins/axios'
 
 // State
@@ -1795,6 +1860,10 @@ const deleteDialog = ref(false)
 const agentToDelete = ref(null)
 const deleting = ref(false)
 
+// Prompt Preview State
+const loadingPrompt = ref(false)
+const promptPreview = ref(null)
+
 // Snackbar
 const snackbar = reactive({
   show: false,
@@ -1936,6 +2005,55 @@ function showSnackbar(message, color = 'success') {
   snackbar.color = color
   snackbar.show = true
 }
+
+function getSourceColor(source) {
+  const colors = {
+    config: 'blue',
+    skill: 'amber',
+    tools: 'teal',
+    system: 'grey',
+    rag: 'indigo',
+    info_base: 'cyan',
+    vector_memory: 'deep-purple',
+    orchestrator: 'orange'
+  }
+  return colors[source] || 'grey'
+}
+
+function getSourceIcon(source) {
+  const icons = {
+    config: 'mdi-cog',
+    skill: 'mdi-star',
+    tools: 'mdi-tools',
+    system: 'mdi-application-cog',
+    rag: 'mdi-file-document',
+    info_base: 'mdi-database',
+    vector_memory: 'mdi-brain',
+    orchestrator: 'mdi-account-group'
+  }
+  return icons[source] || 'mdi-text'
+}
+
+async function fetchPromptPreview() {
+  if (!formData.id) return
+  
+  loadingPrompt.value = true
+  try {
+    const response = await axios.get(`/agents/${formData.id}/prompt-preview`)
+    promptPreview.value = response.data
+  } catch (error) {
+    console.error('Error fetching prompt preview:', error)
+    showSnackbar('Erro ao carregar panorama do prompt', 'error')
+  } finally {
+    loadingPrompt.value = false
+  }
+}
+
+watch(activeTab, (newTab) => {
+  if (newTab === 'prompt_preview') {
+    fetchPromptPreview()
+  }
+})
 
 function resetForm() {
   Object.assign(formData, {
@@ -2783,5 +2901,38 @@ onMounted(() => {
 .profile-chip:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.prompt-preview-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.prompt-sections {
+  max-height: 500px;
+  overflow-y: auto;
+  border-radius: 8px;
+}
+
+.prompt-section-panel {
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.2) !important;
+}
+
+.prompt-content-box {
+  background: #1e1e1e;
+  padding: 12px;
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.prompt-text {
+  font-family: 'Fira Code', 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  color: #dcdcdc;
 }
 </style>

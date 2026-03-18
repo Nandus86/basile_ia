@@ -184,24 +184,52 @@ async def _enrich_agent_prompt(
     except Exception as ib_err:
         print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
 
-    # 3. Vector Memory
+    # 3. Vector Memory (contact-level + agent-level)
     vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False)
     if vector_memory_enabled and agent_id and session_id:
         try:
             from app.weaviate_client import get_weaviate
             weaviate_client = get_weaviate()
             if weaviate_client:
-                memories = await weaviate_client.search_contact_memories(
+                # 3a. Corrections & Preferences (HIGH PRIORITY — separate section)
+                corrections = await weaviate_client.search_contact_memories(
                     agent_id=str(agent_id),
                     contact_id=str(session_id),
                     query=message,
                     limit=5,
+                    memory_type="correction"
                 )
-                if memories:
-                    print(f"[Task] 🧠 Retrieved {len(memories)} qualitative facts for contact {session_id}")
-                    # Include timestamps so the agent knows when each fact was learned
+                preferences = await weaviate_client.search_contact_memories(
+                    agent_id=str(agent_id),
+                    contact_id=str(session_id),
+                    query=message,
+                    limit=3,
+                    memory_type="preference"
+                )
+                priority_items = corrections + preferences
+                if priority_items:
+                    print(f"[Task] ⚠️ Retrieved {len(corrections)} corrections + {len(preferences)} preferences for contact {session_id}")
+                    priority_lines = [f"- {m['content']}" for m in priority_items]
+                    priority_str = "\n".join(priority_lines)
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                        f"\n\n## ⚠️ Correções e Preferências do Usuário (PRIORIDADE MÁXIMA)\n\n"
+                        f"As seguintes correções e preferências foram feitas PELO PRÓPRIO USUÁRIO. "
+                        f"NUNCA repita os erros corrigidos abaixo. Respeite as preferências SEMPRE:\n\n"
+                        f"{priority_str}\n"
+                    )
+
+                # 3b. General facts (normal priority)
+                facts = await weaviate_client.search_contact_memories(
+                    agent_id=str(agent_id),
+                    contact_id=str(session_id),
+                    query=message,
+                    limit=5,
+                    memory_type="fact"
+                )
+                if facts:
+                    print(f"[Task] 🧠 Retrieved {len(facts)} qualitative facts for contact {session_id}")
                     mem_lines = []
-                    for m in memories:
+                    for m in facts:
                         ts = m.get('created_at')
                         if ts:
                             try:
@@ -224,6 +252,24 @@ async def _enrich_agent_prompt(
                         f"Utilize isso para personalizar ativamente o engajamento de maneira natural:\n\n"
                         f"{mem_str}\n"
                     )
+
+                # 3c. Agent self-memories (agent-level learning)
+                agent_self_memories = await weaviate_client.search_agent_self_memories(
+                    agent_id=str(agent_id),
+                    query=message,
+                    limit=5,
+                )
+                if agent_self_memories:
+                    print(f"[Task] 🔧 Retrieved {len(agent_self_memories)} agent self-memories")
+                    self_lines = [f"- {m['content']}" for m in agent_self_memories]
+                    self_str = "\n".join(self_lines)
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                        f"\n\n## 🔧 Auto-Aprendizado do Agente (Lições Anteriores)\n\n"
+                        f"Em interações passadas, você cometeu os erros abaixo e aprendeu a corrigi-los. "
+                        f"NÃO repita esses erros:\n\n"
+                        f"{self_str}\n"
+                    )
+
         except Exception as e:
             print(f"[Task] Failed to retrieve vector memory: {e}")
 
@@ -268,12 +314,15 @@ async def _enrich_agent_prompt(
                     f"Você tem acesso a agentes especialistas que podem ser acionados como ferramentas. "
                     f"Use-os quando a solicitação do usuário exigir uma especialidade que eles possuem.\n"
                     f"Agentes disponíveis: {', '.join(collab_names)}\n\n"
-                    f"DIRETRIZES DE ORQUESTRAÇÃO:\n"
-                    f"- Chame o especialista enviando uma instrução clara e técnica do que ele deve resolver.\n"
-                    f"- Após obter as respostas dos especialistas, gere sua resposta final consolidada.\n"
-                    f"- Se sua instrução principal exige que você use o especialista de 'Resposta Final', você DEVE chamá-lo para formatar o texto final antes de encerrar.\n"
-                    f"- Você é o coordenador; os especialistas reportam a VOCÊ, não ao usuário final.\n"
+                    f"DIRETRIZES DE ORQUESTRAÇÃO (OBRIGATÓRIO):\n"
+                    f"1. ANÁLISE: Antes de chamar um especialista, avalie se a solicitação realmente requer expertise externa.\n"
+                    f"2. INSTRUÇÃO CLARA: Ao acionar um especialista, envie uma instrução técnica e direta do que ele deve resolver. Inclua contexto relevante.\n"
+                    f"3. SÍNTESE OBRIGATÓRIA: Após obter respostas dos especialistas, você DEVE sintetizar e compor sua resposta final. NUNCA simplesmente repasse a resposta do especialista sem tratamento.\n"
+                    f"4. RESPOSTA FINAL: Se sua instrução principal exige um especialista de 'Resposta Final', você DEVE chamá-lo para formatar o texto final antes de encerrar.\n"
+                    f"5. HIERARQUIA: Você é o COORDENADOR. Os especialistas reportam a VOCÊ, não ao usuário final. Você é responsável pela qualidade da resposta final.\n"
+                    f"6. NÃO REDUNDÂNCIA: Se você já possui informação suficiente na conversa ou no contexto, NÃO acione especialistas desnecessariamente.\n"
                 )
+
         except Exception as e:
             import traceback
             print(f"[Task] Error loading collaborator tools: {e}")
@@ -752,6 +801,9 @@ async def process_message_task(
             if mtm_context_note:
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + mtm_context_note
 
+            # Save original system prompt before enrichment (for self-correction analysis)
+            agent_config["original_system_prompt"] = agent_config.get("system_prompt", "")
+
             # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation)
             rag_context = await _enrich_agent_prompt(
                 db, agent_config, agent_id, message, session_id, context_data, history, transition_data
@@ -822,6 +874,25 @@ async def process_message_task(
                 response_data["transition_data"] = transition_data
             if callback_url:
                 await _send_callback(callback_url, response_data)
+
+            # Agent self-correction: detect prompt violations in background
+            if vector_memory_enabled and agent_id and final_result:
+                try:
+                    from app.services.vector_memory_service import extract_agent_self_corrections
+                    import asyncio
+                    agent_response_str = str(final_result) if not isinstance(final_result, str) else final_result
+                    original_system_prompt = agent_config.get("original_system_prompt", agent_config.get("system_prompt", ""))
+                    asyncio.create_task(
+                        extract_agent_self_corrections(
+                            agent_id=str(agent_id),
+                            system_prompt=original_system_prompt,
+                            agent_response=agent_response_str,
+                            user_message=message,
+                            history=(history or [])[:],
+                        )
+                    )
+                except Exception as e:
+                    print(f"[Task] Failed to launch self-correction task: {e}")
 
             return response_data
 

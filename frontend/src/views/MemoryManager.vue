@@ -319,7 +319,12 @@
           <!-- ── Vector Memory Tab ── -->
           <v-window-item value="vector">
             <div class="d-flex align-center justify-space-between mb-4 flex-wrap ga-3">
-              <div class="d-flex ga-3 flex-wrap">
+              <div class="d-flex ga-3 flex-wrap align-center">
+                <v-tabs v-model="vectorSubType" density="compact" bg-color="transparent" color="primary" slider-color="primary" class="mr-4">
+                  <v-tab value="contacts" size="small">Contatos</v-tab>
+                  <v-tab value="agent" size="small">Auto-Agente</v-tab>
+                </v-tabs>
+
                 <v-text-field
                   v-model="vectorSearch"
                   prepend-inner-icon="mdi-magnify"
@@ -329,9 +334,11 @@
                   hide-details
                   rounded="lg"
                   class="search-field"
-                  style="max-width: 280px"
+                  style="max-width: 240px"
                 ></v-text-field>
+                
                 <v-text-field
+                  v-if="vectorSubType === 'contacts'"
                   v-model="vectorContactFilter"
                   prepend-inner-icon="mdi-account-outline"
                   placeholder="Contact ID..."
@@ -340,11 +347,23 @@
                   hide-details
                   rounded="lg"
                   class="search-field"
-                  style="max-width: 220px"
+                  style="max-width: 180px"
                 ></v-text-field>
+                
+                <v-select
+                  v-model="vectorTypeFilter"
+                  :items="memoryTypeOptions"
+                  label="Tipo"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  rounded="lg"
+                  class="search-field"
+                  style="max-width: 160px"
+                ></v-select>
               </div>
               <div class="d-flex ga-2">
-                <v-btn color="primary" variant="tonal" size="small" @click="fetchVectorMemories" :loading="loadingVector">
+                <v-btn color="primary" variant="tonal" size="small" @click="fetchActiveVectorTab" :loading="loadingVector">
                   <v-icon start size="16">mdi-refresh</v-icon> Atualizar
                 </v-btn>
                 <v-btn
@@ -360,8 +379,8 @@
 
             <v-data-table
               v-model="selectedVectorMemories"
-              :headers="vectorHeaders"
-              :items="filteredVectorMemories"
+              :headers="vectorSubType === 'contacts' ? vectorHeaders : agentVectorHeaders"
+              :items="vectorSubType === 'contacts' ? filteredVectorMemories : filteredAgentMemories"
               :loading="loadingVector"
               item-value="uuid"
               show-select
@@ -369,6 +388,12 @@
               class="memory-table bg-transparent"
               hover
             >
+              <template #item.memory_type="{ item }">
+                <v-chip size="x-small" :color="getMemoryTypeColor(item.memory_type)" variant="tonal" class="font-weight-bold">
+                  <v-icon start size="12">{{ getMemoryTypeIcon(item.memory_type) }}</v-icon>
+                  {{ getMemoryTypeLabel(item.memory_type) }}
+                </v-chip>
+              </template>
               <template #item.contact_id="{ item }">
                 <v-chip size="small" variant="tonal" color="info" class="font-weight-medium">
                   {{ item.contact_id ? item.contact_id.substring(0, 12) + '...' : '—' }}
@@ -482,7 +507,17 @@ const stmKeys = ref([])
 const mtmSessions = ref([])
 const jobKeys = ref([])
 const vectorMemories = ref([])
+const agentSelfMemories = ref([])
 const vectorCollections = ref([])
+
+const vectorSubType = ref('contacts')
+const vectorTypeFilter = ref('all')
+const memoryTypeOptions = [
+  { title: 'Todos', value: 'all' },
+  { title: 'Fato', value: 'fact' },
+  { title: 'Correção', value: 'correction' },
+  { title: 'Preferência', value: 'preference' }
+]
 
 const selectedStmKeys = ref([])
 const selectedMtmSessions = ref([])
@@ -523,8 +558,17 @@ const jobHeaders = [
 ]
 
 const vectorHeaders = [
+  { title: 'Tipo', key: 'memory_type', sortable: true, width: '120px' },
   { title: 'Contato', key: 'contact_id', sortable: true, width: '160px' },
   { title: 'Agente', key: 'agent_id', sortable: true, width: '140px' },
+  { title: 'Conteúdo', key: 'content', sortable: false },
+  { title: 'Criado em', key: 'created_at', sortable: true, width: '160px' },
+  { title: 'Ações', key: 'actions', sortable: false, width: '80px', align: 'center' },
+]
+
+const agentVectorHeaders = [
+  { title: 'Tipo', key: 'memory_type', sortable: true, width: '120px' },
+  { title: 'Agente', key: 'agent_id', sortable: true, width: '160px' },
   { title: 'Conteúdo', key: 'content', sortable: false },
   { title: 'Criado em', key: 'created_at', sortable: true, width: '160px' },
   { title: 'Ações', key: 'actions', sortable: false, width: '80px', align: 'center' },
@@ -561,6 +605,21 @@ const filteredVectorMemories = computed(() => {
     const c = vectorContactFilter.value.toLowerCase()
     items = items.filter(m => m.contact_id.toLowerCase().includes(c))
   }
+  if (vectorTypeFilter.value !== 'all') {
+    items = items.filter(m => m.memory_type === vectorTypeFilter.value)
+  }
+  return items
+})
+
+const filteredAgentMemories = computed(() => {
+  let items = agentSelfMemories.value
+  if (vectorSearch.value) {
+    const s = vectorSearch.value.toLowerCase()
+    items = items.filter(m => m.content.toLowerCase().includes(s))
+  }
+  if (vectorTypeFilter.value !== 'all') {
+    items = items.filter(m => m.memory_type === vectorTypeFilter.value)
+  }
   return items
 })
 
@@ -593,6 +652,33 @@ function showSnack(msg, color = 'success') {
   snackMessage.value = msg
   snackColor.value = color
   snackbar.value = true
+}
+
+function getMemoryTypeColor(type) {
+  const colors = {
+    fact: 'info',
+    correction: 'error',
+    preference: 'warning'
+  }
+  return colors[type] || 'grey'
+}
+
+function getMemoryTypeIcon(type) {
+  const icons = {
+    fact: 'mdi-information-outline',
+    correction: 'mdi-alert-circle-outline',
+    preference: 'mdi-heart-outline'
+  }
+  return icons[type] || 'mdi-brain'
+}
+
+function getMemoryTypeLabel(type) {
+  const labels = {
+    fact: 'Fato',
+    correction: 'Correção',
+    preference: 'Preferência'
+  }
+  return labels[type] || type
 }
 
 // ── Fetch ──
@@ -629,6 +715,26 @@ async function fetchVectorMemories() {
     showSnack('Erro ao buscar memórias vetoriais', 'error')
   } finally {
     loadingVector.value = false
+  }
+}
+
+async function fetchAgentSelfMemories() {
+  loadingVector.value = true
+  try {
+    const res = await axios.get('/memory/vector/agent-memories', { params: { limit: 200 } })
+    agentSelfMemories.value = res.data.memories || []
+  } catch (e) {
+    showSnack('Erro ao buscar memórias de auto-aprendizado', 'error')
+  } finally {
+    loadingVector.value = false
+  }
+}
+
+function fetchActiveVectorTab() {
+  if (vectorSubType.value === 'contacts') {
+    fetchVectorMemories()
+  } else {
+    fetchAgentSelfMemories()
   }
 }
 
@@ -748,12 +854,19 @@ function deleteVectorMemory(item) {
 
 function deleteSelectedVector() {
   const count = selectedVectorMemories.value.length
-  confirmMessage.value = `Tem certeza que deseja apagar ${count} memória(s) vetorial(is)?`
+  const isAgent = vectorSubType.value === 'agent'
+  confirmMessage.value = `Tem certeza que deseja apagar ${count} memória(s) ${isAgent ? 'de auto-aprendizado' : 'vetorial(is)'}?`
   pendingConfirmAction = async () => {
-    await axios.delete('/memory/vector/memories', { data: selectedVectorMemories.value })
-    showSnack(`${count} memória(s) vetorial(is) apagada(s)`)
+    if (isAgent) {
+      for (const uuid of selectedVectorMemories.value) {
+        await axios.delete(`/memory/vector/agent-memories/${uuid}`)
+      }
+    } else {
+      await axios.delete('/memory/vector/memories', { data: selectedVectorMemories.value })
+    }
+    showSnack(`${count} memória(s) apagada(s)`)
     selectedVectorMemories.value = []
-    fetchVectorMemories()
+    fetchActiveVectorTab()
   }
   confirmDialog.value = true
 }
@@ -777,7 +890,7 @@ onMounted(() => {
   fetchStmKeys()
   fetchMtmSessions()
   fetchJobKeys()
-  fetchVectorMemories()
+  fetchActiveVectorTab()
   fetchVectorCollections()
 })
 </script>

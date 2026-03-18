@@ -189,6 +189,7 @@ async def list_vector_memories(
                     "agent_id": props.get("agent_id", ""),
                     "contact_id": props.get("contact_id", ""),
                     "content": props.get("content", ""),
+                    "memory_type": props.get("memory_type", "fact"),
                     "metadata": props.get("metadata", "{}"),
                     "created_at": str(props.get("created_at", "")),
                 })
@@ -200,9 +201,81 @@ async def list_vector_memories(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/vector/agent-memories")
+async def list_agent_self_memories(
+    agent_id: Optional[str] = None,
+    memory_type: Optional[str] = None,
+    limit: int = Query(50, le=200),
+):
+    """List agent-level self-correction memories from AgentSelfMemory collection"""
+    import asyncio
+    try:
+        def _sync_list_agent():
+            import weaviate as wv
+            client = weaviate_client._ensure_connected()
+            collection_name = "AgentSelfMemory"
+            
+            if collection_name not in client.collections.list_all():
+                return []
+            
+            collection = client.collections.get(collection_name)
+            
+            # Build filter
+            filters = None
+            if agent_id and memory_type:
+                f1 = wv.classes.query.Filter.by_property("agent_id").equal(agent_id)
+                f2 = wv.classes.query.Filter.by_property("memory_type").equal(memory_type)
+                filters = f1 & f2
+            elif agent_id:
+                filters = wv.classes.query.Filter.by_property("agent_id").equal(agent_id)
+            elif memory_type:
+                filters = wv.classes.query.Filter.by_property("memory_type").equal(memory_type)
+            
+            results = collection.query.fetch_objects(
+                limit=limit,
+                filters=filters,
+                include_vector=False,
+            )
+            
+            memories = []
+            for obj in results.objects:
+                props = dict(obj.properties)
+                memories.append({
+                    "uuid": str(obj.uuid),
+                    "agent_id": props.get("agent_id", ""),
+                    "content": props.get("content", ""),
+                    "memory_type": props.get("memory_type", "correction"),
+                    "metadata": props.get("metadata", "{}"),
+                    "created_at": str(props.get("created_at", "")),
+                })
+            return memories
+        
+        memories = await asyncio.to_thread(_sync_list_agent)
+        return {"memories": memories, "count": len(memories)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/vector/agent-memories/{uuid}")
+async def delete_agent_self_memory(uuid: str):
+    """Delete a specific agent self-memory by UUID"""
+    import asyncio
+    try:
+        def _sync_delete_agent():
+            client = weaviate_client._ensure_connected()
+            collection = client.collections.get("AgentSelfMemory")
+            collection.data.delete_by_id(uuid)
+            return True
+        
+        await asyncio.to_thread(_sync_delete_agent)
+        return {"status": "deleted", "uuid": uuid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/vector/memories/{uuid}")
 async def delete_vector_memory(uuid: str):
-    """Delete a specific vector memory by UUID"""
+    """Delete a specific contact vector memory by UUID"""
     import asyncio
     try:
         def _sync_delete():
@@ -219,7 +292,7 @@ async def delete_vector_memory(uuid: str):
 
 @router.delete("/vector/memories")
 async def delete_vector_memories_bulk(uuids: List[str]):
-    """Delete multiple vector memories by UUIDs"""
+    """Delete multiple contact vector memories by UUIDs"""
     import asyncio
     
     def _sync_bulk_delete():

@@ -1285,3 +1285,229 @@ async def remove_document_from_agent(
     
     agent.documents.remove(doc_to_remove)
     await db.commit()
+
+
+# ==================== Prompt Preview Endpoint ====================
+
+class PromptSection(BaseModel):
+    """A section of the agent's prompt"""
+    name: str
+    content: str
+    source: str  # config, skill, tools, system, rag, info_base, vector_memory, orchestrator
+    estimated_tokens: int = 0
+
+class PromptPreviewResponse(BaseModel):
+    """Full prompt preview for an agent"""
+    sections: List[PromptSection]
+    total_estimated_tokens: int
+    model: str
+
+
+@router.get("/{agent_id}/prompt-preview")
+async def get_prompt_preview(
+    agent_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Returns a static preview of all sections that compose the full prompt sent to the LLM.
+    Dynamic sections (RAG, vector memory) show placeholder descriptions.
+    """
+    from app.models.vfs_knowledge_base import VFSKnowledgeBase
+    
+    result = await db.execute(
+        select(Agent)
+        .options(
+            selectinload(Agent.mcps),
+            selectinload(Agent.mcp_groups),
+            selectinload(Agent.skills),
+            selectinload(Agent.information_bases),
+            selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator),
+            selectinload(Agent.emotional_profile),
+            selectinload(Agent.documents),
+            selectinload(Agent.vfs_knowledge_bases),
+            selectinload(Agent.resilience_config),
+        )
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    sections = []
+    
+    def estimate_tokens(text: str) -> int:
+        """Rough estimate: ~4 chars per token"""
+        return len(text) // 4
+    
+    # 1. System Prompt Base
+    if agent.system_prompt:
+        sections.append(PromptSection(
+            name="System Prompt Base",
+            content=agent.system_prompt,
+            source="config",
+            estimated_tokens=estimate_tokens(agent.system_prompt)
+        ))
+    
+    # 2. Emotional Profile
+    if agent.emotional_profile:
+        ep = agent.emotional_profile
+        ep_text = f"Perfil Emocional: {ep.name} ({ep.category})\nIntensidade: {agent.emotional_intensity}"
+        if hasattr(ep, 'prompt_instructions') and ep.prompt_instructions:
+            ep_text += f"\n\n{ep.prompt_instructions}"
+        sections.append(PromptSection(
+            name=f"Perfil Emocional: {ep.name}",
+            content=ep_text,
+            source="config",
+            estimated_tokens=estimate_tokens(ep_text)
+        ))
+    
+    # 3. Skills
+    active_skills = [s for s in (agent.skills or []) if s.is_active]
+    if active_skills:
+        for skill in active_skills:
+            skill_text = f"## {skill.name}\n\n"
+            if skill.intent:
+                skill_text += f"**Intenção:** {skill.intent}\n\n"
+            skill_text += skill.content_md or ""
+            sections.append(PromptSection(
+                name=f"Skill: {skill.name}",
+                content=skill_text,
+                source="skill",
+                estimated_tokens=estimate_tokens(skill_text)
+            ))
+    
+    # 4. Tools/MCPs
+    all_mcps = list(agent.mcps or [])
+    for group in (agent.mcp_groups or []):
+        if hasattr(group, 'mcps') and group.mcps:
+            all_mcps.extend(group.mcps)
+    if all_mcps:
+        tool_lines = []
+        for mcp in all_mcps:
+            protocol = getattr(mcp, 'protocol', 'http') or 'http'
+            tool_lines.append(f"- **{mcp.name}** (protocolo: {protocol})")
+        tools_text = "Ferramentas disponíveis para o agente:\n" + "\n".join(tool_lines)
+        sections.append(PromptSection(
+            name="Ferramentas / MCPs",
+            content=tools_text,
+            source="tools",
+            estimated_tokens=estimate_tokens(tools_text)
+        ))
+    
+    # 5. Input Schema
+    if agent.input_schema:
+        import json
+        schema_text = "Esquema de entrada esperado (context_data):\n```json\n" + json.dumps(agent.input_schema, indent=2, ensure_ascii=False) + "\n```"
+        sections.append(PromptSection(
+            name="Input Schema",
+            content=schema_text,
+            source="config",
+            estimated_tokens=estimate_tokens(schema_text)
+        ))
+    
+    # 6. Output Schema
+    if agent.output_schema:
+        import json
+        out_text = "Esquema de saída estruturada:\n```json\n" + json.dumps(agent.output_schema, indent=2, ensure_ascii=False) + "\n```"
+        sections.append(PromptSection(
+            name="Output Schema (Structured Output)",
+            content=out_text,
+            source="config",
+            estimated_tokens=estimate_tokens(out_text)
+        ))
+    
+    # 7. Resilience Config
+    if agent.resilience_config:
+        rc = agent.resilience_config
+        rc_text = f"Configuração de Resiliência:\n- Max iterations: {getattr(rc, 'max_iterations', 'N/A')}\n- Timeout: {getattr(rc, 'timeout_seconds', 'N/A')}s"
+        sections.append(PromptSection(
+            name="Resiliência",
+            content=rc_text,
+            source="system",
+            estimated_tokens=estimate_tokens(rc_text)
+        ))
+    
+    # 8. Collaborators (if orchestrator)
+    if agent.is_orchestrator and agent.collaborator_settings:
+        collab_lines = []
+        for setting in agent.collaborator_settings:
+            collab = setting.collaborator
+            status_icon = "✅" if setting.status.value == "enabled" else "⚪" if setting.status.value == "neutral" else "🚫"
+            collab_lines.append(f"- {status_icon} **{collab.name}**: {collab.description or 'Sem descrição'} (status: {setting.status.value})")
+        collab_text = "Agentes Especialistas (Colaboradores):\n" + "\n".join(collab_lines)
+        sections.append(PromptSection(
+            name="Orquestração: Colaboradores",
+            content=collab_text,
+            source="orchestrator",
+            estimated_tokens=estimate_tokens(collab_text)
+        ))
+    
+    # 9. Information Bases (dynamic — show placeholder)
+    if agent.information_bases:
+        ib_names = [ib.name for ib in agent.information_bases if ib.is_active]
+        if ib_names:
+            ib_text = f"Bases de informação ativas: {', '.join(ib_names)}\n\n[Conteúdo injetado dinamicamente com base na mensagem do usuário — pesquisa vetorial]"
+            sections.append(PromptSection(
+                name="Bases de Informação",
+                content=ib_text,
+                source="info_base",
+                estimated_tokens=estimate_tokens(ib_text) + 200  # estimated dynamic content
+            ))
+    
+    # 10. Documents / RAG (dynamic - show placeholder)
+    if agent.documents:
+        doc_names = [d.name for d in agent.documents]
+        rag_text = f"Documentos RAG disponíveis: {', '.join(doc_names)}\n\n[Contexto injetado dinamicamente via busca semântica nos documentos]"
+        sections.append(PromptSection(
+            name="RAG (Documentos)",
+            content=rag_text,
+            source="rag",
+            estimated_tokens=estimate_tokens(rag_text) + 500
+        ))
+    
+    # 11. VFS Knowledge Bases (dynamic - show placeholder)
+    if agent.vfs_knowledge_bases:
+        vfs_names = [kb.name for kb in agent.vfs_knowledge_bases]
+        vfs_text = f"VFS RAG 3.0 Knowledge Bases: {', '.join(vfs_names)}\n\n[Contexto injetado dinamicamente via VFS RAG 3.0]"
+        sections.append(PromptSection(
+            name="VFS RAG 3.0",
+            content=vfs_text,
+            source="rag",
+            estimated_tokens=estimate_tokens(vfs_text) + 300
+        ))
+    
+    # 12. Vector Memory (dynamic - show placeholder)
+    if agent.vector_memory_enabled:
+        vm_text = (
+            "Memória Vetorial Inteligente: ATIVA\n\n"
+            "Seções injetadas dinamicamente por prioridade:\n"
+            "1. ⚠️ Correções do Usuário (PRIORIDADE MÁXIMA)\n"
+            "2. 💡 Preferências do Usuário\n"
+            "3. 📋 Fatos Qualitativos do Contato\n"
+            "4. 🔧 Auto-Aprendizado do Agente (Lições Anteriores)\n\n"
+            "[Conteúdo personalizado por contato/sessão via Weaviate]"
+        )
+        sections.append(PromptSection(
+            name="Memória Vetorial Inteligente",
+            content=vm_text,
+            source="vector_memory",
+            estimated_tokens=estimate_tokens(vm_text) + 200
+        ))
+    
+    # 13. System context (date/time, etc.)
+    sys_text = "Data/hora do sistema: [injetado dinamicamente]\nFuso horário configurado: America/Sao_Paulo"
+    sections.append(PromptSection(
+        name="Contexto do Sistema",
+        content=sys_text,
+        source="system",
+        estimated_tokens=estimate_tokens(sys_text)
+    ))
+    
+    total_tokens = sum(s.estimated_tokens for s in sections)
+    
+    return PromptPreviewResponse(
+        sections=sections,
+        total_estimated_tokens=total_tokens,
+        model=agent.model or "gpt-4o-mini"
+    )

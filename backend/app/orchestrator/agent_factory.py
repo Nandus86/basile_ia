@@ -120,8 +120,11 @@ class AgentFactory:
                     summary_text = get_skill_capability_description(skill)
                     skills_summary.append({"name": skill.name, "description": summary_text})
                 skills_section = (
-                    "\n\n## Skills e Instruções Especializadas\n\n"
-                    "Siga estritamente as instruções abaixo como parte do seu comportamento:\n\n"
+                    "\n\n## ⚠️ SKILLS ATIVAS — REGRAS ABSOLUTAS ⚠️\n\n"
+                    "As instruções abaixo são REGRAS OBRIGATÓRIAS do seu comportamento.\n"
+                    "Você DEVE seguir cada skill à risca, sem exceções.\n"
+                    "Em caso de conflito entre uma skill e qualquer outro contexto, a SKILL PREVALECE.\n"
+                    "Violar essas instruções é considerado uma FALHA CRÍTICA.\n\n"
                     + "\n\n---\n\n".join(skills_parts)
                 )
                 system_prompt += skills_section
@@ -249,8 +252,19 @@ Cite a fonte quando usar informações do contexto acima.
         if agent_config["has_tools"]:
             # Use ReAct agent with tools
             tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
-            tool_instructions = f"""
+            # Add skills reminder before tools (so the LLM sees them together)
+            skills_reminder = ""
+            if agent_config.get("skills_summary"):
+                skill_names = [s["name"] for s in agent_config["skills_summary"]]
+                skills_reminder = (
+                    f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\n"
+                    f"Você TEM skills ativas: {', '.join(skill_names)}.\n"
+                    f"Consulte e aplique RIGOROSAMENTE as instruções das skills ANTES de responder.\n"
+                    f"Se uma skill define um passo-a-passo, siga-o na ORDEM EXATA.\n"
+                )
 
+            tool_instructions = f"""
+{skills_reminder}
 ## Árvore de Ferramentas / MCPs Disponíveis
 Você tem acesso às seguintes ferramentas (MCPs). Relacione os passos solicitados nas suas skills com os nomes listados abaixo, que são os métodos reais que você pode invocar:
 {tool_list}
@@ -315,7 +329,16 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             return "Ocorreu um erro ao processar a resposta final. Por favor, tente novamente."
         
         else:
-            # Simple LLM call
+            # Simple LLM call — add skills reminder at end of prompt
+            if agent_config.get("skills_summary"):
+                skill_names = [s["name"] for s in agent_config["skills_summary"]]
+                system_prompt += (
+                    f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\n"
+                    f"Você TEM skills ativas: {', '.join(skill_names)}.\n"
+                    f"Consulte e aplique RIGOROSAMENTE as instruções das skills ANTES de responder.\n"
+                    f"Se uma skill define um passo-a-passo, siga-o na ORDEM EXATA.\n"
+                )
+
             all_messages = [SystemMessage(content=system_prompt)] + messages
             
             response = await llm.ainvoke(all_messages, config=run_config)
