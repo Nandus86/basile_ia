@@ -749,6 +749,7 @@ async def process_message_task(
 
             # ── agent_id provided: execute directly ──
             stm_enabled, stm_ttl_seconds = _resolve_stm_config(agent_config)
+            vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False)
 
             # STM: load history
             history = []
