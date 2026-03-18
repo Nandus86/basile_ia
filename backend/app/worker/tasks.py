@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, List
 from app.database import AsyncSessionLocal
 from app.redis_client import redis_client
 from app.config import settings
+from app.worker.status_monitor import StatusMonitor
 
 
 # ─────────────────────────────────────────────────────────────
@@ -28,8 +29,9 @@ async def _enrich_agent_prompt(
     message: str,
     session_id: str,
     context_data: Optional[Dict[str, Any]] = None,
-    history: Optional[list] = None,
+    history: Optional[List] = None,
     transition_data: Optional[Dict[str, Any]] = None,
+    monitor: Optional[StatusMonitor] = None,
 ):
     """
     Enrich an agent's system_prompt with all contextual data:
@@ -341,6 +343,7 @@ async def _enrich_agent_prompt(
                 context_data=context_data,
                 history=history,
                 session_id=session_id,
+                monitor=monitor,
             )
             if subordinate_context:
                 print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
@@ -682,6 +685,10 @@ async def process_message_task(
     """
     start_time = time.time()
 
+    agent = None
+    agent_config = None
+    monitor = None
+
     try:
         async with AsyncSessionLocal() as db:
             from app.orchestrator.agent_factory import AgentFactory
@@ -690,13 +697,21 @@ async def process_message_task(
             factory = AgentFactory(db)
 
             # ── Resolve agent ──
-            agent = None
-            agent_config = None
             if agent_id:
                 agent = await factory.get_agent_by_id(agent_id)
                 if agent:
                     agent_config = await factory.get_agent_config(agent, context_data=context_data)
             
+            # Job Status Updates Monitor
+            if callback_url and agent:
+                monitor = StatusMonitor(
+                    callback_url=callback_url,
+                    agent_name=agent.name,
+                    enabled=agent.status_updates_enabled,
+                    config=agent.status_updates_config
+                )
+                monitor.start()
+
             if not agent_config:
                 # No specific agent → fallback to Supervisor router
                 from app.orchestrator import run_orchestrator_v2

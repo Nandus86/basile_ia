@@ -211,6 +211,7 @@
           <v-tab value="knowledge" :disabled="!editing"><v-icon start>mdi-book-open-page-variant</v-icon>Conhecimento</v-tab>
           <v-tab value="information_bases" :disabled="!editing"><v-icon start>mdi-database-search</v-icon>Bases de Infor.</v-tab>
           <v-tab value="vfs_knowledge" :disabled="!editing"><v-icon start>mdi-file-document-multiple-outline</v-icon>VFS RAG 3.0</v-tab>
+          <v-tab value="interactivity" :disabled="!editing"><v-icon start>mdi-message-flash</v-icon>Interatividade</v-tab>
           <v-tab value="prompt_preview" :disabled="!editing"><v-icon start>mdi-eye</v-icon>Prompt Geral</v-tab>
         </v-tabs>
 
@@ -1444,6 +1445,135 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: Interactivity (Status Updates) -->
+            <v-window-item value="interactivity">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para configurar interatividade.
+              </v-alert>
+
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">
+                    <v-icon size="20" class="mr-1">mdi-message-flash</v-icon>
+                    Mensagens de Status em Tempo Real
+                  </h3>
+                </div>
+
+                <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                  <template v-slot:prepend>
+                    <v-icon>mdi-information</v-icon>
+                  </template>
+                  Configure mensagens automáticas enviadas ao usuário enquanto o agente está processando.
+                  Ideal para jobs longos que envolvem consultas a colaboradores ou ferramentas externas.
+                </v-alert>
+
+                <v-card variant="outlined" class="mb-4">
+                  <v-card-text class="d-flex align-center py-2">
+                    <v-switch
+                      v-model="formData.status_updates_enabled"
+                      label="Ativar Atualizações de Status"
+                      color="teal"
+                      hide-details
+                      density="compact"
+                    ></v-switch>
+                    <v-chip v-if="formData.status_updates_enabled" color="teal" size="small" variant="tonal" class="ml-4">
+                      <v-icon start size="14">mdi-check-circle</v-icon>
+                      Ativo
+                    </v-chip>
+                  </v-card-text>
+                </v-card>
+
+                <v-expand-transition>
+                  <div v-if="formData.status_updates_enabled">
+                    <v-row>
+                      <v-col cols="12" md="4">
+                        <v-text-field
+                          v-model.number="formData.status_updates_config.initial_delay_seconds"
+                          label="Atraso Inicial (s)"
+                          type="number"
+                          min="1"
+                          max="60"
+                          prepend-inner-icon="mdi-timer-sand"
+                          hint="Tempo antes da 1ª mensagem"
+                          persistent-hint
+                        ></v-text-field>
+                      </v-col>
+                      <v-col cols="12" md="4">
+                        <v-text-field
+                          v-model.number="formData.status_updates_config.follow_up_interval_seconds"
+                          label="Intervalo Follow-up (s)"
+                          type="number"
+                          min="5"
+                          max="120"
+                          prepend-inner-icon="mdi-timer-outline"
+                          hint="Tempo entre mensagens seguintes"
+                          persistent-hint
+                        ></v-text-field>
+                      </v-col>
+                      <v-col cols="12" md="4">
+                        <v-text-field
+                          v-model.number="formData.status_updates_config.max_updates"
+                          label="Máx. Atualizações"
+                          type="number"
+                          min="1"
+                          max="10"
+                          prepend-inner-icon="mdi-counter"
+                          hint="Limite de mensagens intermediárias"
+                          persistent-hint
+                        ></v-text-field>
+                      </v-col>
+                    </v-row>
+
+                    <v-row class="mt-2">
+                      <v-col cols="12" md="6">
+                        <v-textarea
+                          v-model="formData.status_updates_config.initial_message"
+                          label="Mensagem Inicial"
+                          rows="2"
+                          prepend-inner-icon="mdi-message-text-outline"
+                          hint="Enviada após o atraso inicial"
+                          persistent-hint
+                        ></v-textarea>
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <v-textarea
+                          v-model="formData.status_updates_config.follow_up_message"
+                          label="Mensagem de Acompanhamento"
+                          rows="2"
+                          prepend-inner-icon="mdi-message-processing-outline"
+                          hint="Enviada nos intervalos seguintes"
+                          persistent-hint
+                        ></v-textarea>
+                      </v-col>
+                    </v-row>
+
+                    <v-card variant="tonal" color="teal" class="mt-4">
+                      <v-card-title class="text-subtitle-2 py-2">
+                        <v-icon start size="18">mdi-timeline-clock</v-icon>
+                        Exemplo de Fluxo
+                      </v-card-title>
+                      <v-card-text class="pt-0 text-body-2">
+                        <div class="d-flex align-center mb-1">
+                          <v-icon size="14" class="mr-2">mdi-circle-small</v-icon>
+                          <strong>{{ formData.status_updates_config.initial_delay_seconds }}s:</strong>&nbsp;
+                          "{{ formData.status_updates_config.initial_message?.substring(0, 50) }}..."
+                        </div>
+                        <div class="d-flex align-center mb-1">
+                          <v-icon size="14" class="mr-2">mdi-circle-small</v-icon>
+                          <strong>{{ formData.status_updates_config.initial_delay_seconds + formData.status_updates_config.follow_up_interval_seconds }}s:</strong>&nbsp;
+                          "{{ formData.status_updates_config.follow_up_message?.substring(0, 50) }}..."
+                        </div>
+                        <div class="d-flex align-center">
+                          <v-icon size="14" class="mr-2">mdi-check-circle</v-icon>
+                          <strong>Fim:</strong>&nbsp;Resposta final do agente
+                        </div>
+                      </v-card-text>
+                    </v-card>
+                  </div>
+                </v-expand-transition>
+              </div>
+            </v-window-item>
+
             <!-- Tab: Prompt Preview -->
             <v-window-item value="prompt_preview">
               <div v-if="loadingPrompt" class="d-flex flex-column align-center justify-center py-12">
@@ -1684,6 +1814,14 @@ const formData = reactive({
     max_completion_tokens: 16384,
     short_term_memory_enabled: true,
     short_term_memory_ttl_hours: 24
+  },
+  status_updates_enabled: false,
+  status_updates_config: {
+    initial_delay_seconds: 5,
+    follow_up_interval_seconds: 10,
+    initial_message: 'Aguarde um momentinho, estou processando sua solicitação...',
+    follow_up_message: 'Ainda estou trabalhando nisso, já estou quase terminando...',
+    max_updates: 3
   }
 })
 
@@ -2350,6 +2488,14 @@ async function openDialog(agent = null) {
           short_term_memory_enabled: fullAgent.config?.short_term_memory_enabled ?? true,
           short_term_memory_ttl_hours: fullAgent.config?.short_term_memory_ttl_hours || 24,
           ...(fullAgent.config || {})
+        },
+        status_updates_enabled: fullAgent.status_updates_enabled ?? false,
+        status_updates_config: {
+          initial_delay_seconds: fullAgent.status_updates_config?.initial_delay_seconds ?? 5,
+          follow_up_interval_seconds: fullAgent.status_updates_config?.follow_up_interval_seconds ?? 10,
+          initial_message: fullAgent.status_updates_config?.initial_message || 'Aguarde um momentinho, estou processando sua solicitação...',
+          follow_up_message: fullAgent.status_updates_config?.follow_up_message || 'Ainda estou trabalhando nisso, já estou quase terminando...',
+          max_updates: fullAgent.status_updates_config?.max_updates ?? 3
         }
       })
       

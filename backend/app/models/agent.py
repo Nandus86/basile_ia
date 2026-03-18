@@ -99,6 +99,10 @@ class Agent(Base):
     is_orchestrator = Column(Boolean, default=False, nullable=False)
     orchestrator_config = Column(JSON, default=dict)  # Additional orchestrator settings
     
+    # New status configuration for long-running jobs
+    status_updates_enabled = Column(Boolean, default=False)
+    status_updates_config = Column(JSON, nullable=True) # {delay_1_seconds: X, delay_1_message: Y, ...}
+    
     # Intelligent Vector Memory - for storing temporal/qualitative data about contacts
     vector_memory_enabled = Column(Boolean, default=False, nullable=False)
     
