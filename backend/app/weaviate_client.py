@@ -256,6 +256,7 @@ class WeaviateClient:
             client.collections.create(
                 name=collection_name,
                 description="Intelligent Vector Memory for Agent Contacts",
+                vectorizer_config=weaviate.classes.config.Configure.Vectorizer.text2vec_openai(),
                 properties=[
                     weaviate.classes.config.Property(name="agent_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="contact_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
@@ -345,6 +346,7 @@ class WeaviateClient:
             client.collections.create(
                 name=collection_name,
                 description="Agent-level self-correction and learning memory",
+                vectorizer_config=weaviate.classes.config.Configure.Vectorizer.text2vec_openai(),
                 properties=[
                     weaviate.classes.config.Property(name="agent_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="content", data_type=weaviate.classes.config.DataType.TEXT),
