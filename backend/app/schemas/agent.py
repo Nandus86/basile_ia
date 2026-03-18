@@ -71,6 +71,8 @@ class AgentBase(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
     vector_memory_enabled: bool = False
+    status_updates_enabled: bool = False
+    status_updates_config: Optional[Dict[str, Any]] = Field(default=None)
 
 
 class AgentCreate(AgentBase):
@@ -112,6 +114,8 @@ class AgentUpdate(BaseModel):
     transition_output_schema: Optional[Dict[str, Any]] = None
     transition_input_schema: Optional[Dict[str, Any]] = None
     vector_memory_enabled: Optional[bool] = None
+    status_updates_enabled: Optional[bool] = None
+    status_updates_config: Optional[Dict[str, Any]] = None
 
 
 class AgentResponse(BaseModel):
@@ -135,6 +139,8 @@ class AgentResponse(BaseModel):
     transition_output_schema: Optional[Dict[str, Any]] = None
     transition_input_schema: Optional[Dict[str, Any]] = None
     vector_memory_enabled: bool = False
+    status_updates_enabled: bool = False
+    status_updates_config: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []

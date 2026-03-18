@@ -153,6 +153,8 @@ async def get_agent(
         input_schema=agent.input_schema,
         transition_input_schema=agent.transition_input_schema,
         transition_output_schema=agent.transition_output_schema,
+        status_updates_enabled=agent.status_updates_enabled,
+        status_updates_config=agent.status_updates_config,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],

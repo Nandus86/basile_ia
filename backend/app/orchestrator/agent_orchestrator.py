@@ -183,11 +183,14 @@ Responda APENAS em JSON válido com este formato exato:
         context_data: Optional[Dict[str, Any]] = None,
         orientation: str = "",
         primary_agent: Optional[Agent] = None,
+        monitor: Optional[Any] = None,
     ) -> tuple:
         """
         Invoke a single collaborator.
         Directly injects context_data into the input message based on input_schema.
         """
+        if monitor:
+            monitor.log_progress(f"Consultando agente colaborador: {agent.name}")
         from app.orchestrator.agent_factory import AgentFactory
         import json
         
@@ -293,6 +296,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         context_data: Optional[Dict[str, Any]] = None,
         history: Optional[list] = None,
         session_id: Optional[str] = None,
+        monitor: Optional[Any] = None,
     ) -> str:
         """Consult subordinate agents BEFORE the primary orchestrator responds."""
         agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
@@ -324,6 +328,9 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                     selected_collaborators.append((agent, orientation))
                     break
         
+        if monitor:
+            monitor.log_progress(f"Iniciando consulta a {len(selected_collaborators)} colaboradores")
+            
         print(f"[Orchestrator] 🔄 Consulting {len(selected_collaborators)} selected collaborators (from {len(decision['agents_to_consult'])} requested)")
         
         conversation_history = history or []
@@ -336,6 +343,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 context_data=context_data,
                 orientation=orientation,
                 primary_agent=primary_agent,
+                monitor=monitor,
             )
             for collaborator, orientation in selected_collaborators
         ]
@@ -361,7 +369,8 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         message: str,
         primary_agent: Agent,
         primary_response: str,
-        context: str = ""
+        context: str = "",
+        monitor: Optional[Any] = None,
     ) -> str:
         """Post-response orchestration fallback."""
         if not hasattr(primary_agent, 'collaboration_enabled') or not primary_agent.collaboration_enabled:
@@ -379,6 +388,9 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             elif setting.status == CollaborationStatus.NEUTRAL:
                 neutral.append(setting.collaborator)
         
+        if monitor:
+            monitor.log_progress("Iniciando orquestração final pós-resposta")
+            
         decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
         if not decision["should_collaborate"] or not decision["agents_to_consult"]:
             return primary_response
@@ -400,6 +412,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 context=context,
                 orientation=orientation,
                 primary_agent=primary_agent,
+                monitor=monitor,
             )
             for collaborator, orientation in selected_collaborators
         ]

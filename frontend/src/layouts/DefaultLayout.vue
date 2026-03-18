@@ -59,7 +59,7 @@
       <template v-slot:append>
         <div class="sidebar-footer" v-show="!rail">
           <div class="d-flex align-center justify-center mb-3">
-            <span class="version-badge">v0.0.10</span>
+            <span class="version-badge">v0.0.12</span>
           </div>
           <div class="d-flex align-center pa-3">
             <v-avatar size="32" class="mr-3 border-avatar">
