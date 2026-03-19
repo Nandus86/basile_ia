@@ -97,7 +97,9 @@ class AgentFactory:
         tools = []
         try:
             from app.services.mcp_tools import get_tools_for_agent
-            tools = await get_tools_for_agent(self.db, agent_id, filtered_context)
+            # Usamos o context_data ORIGINAL para as ferramentas pre-resolverem seus placeholders {{ $request }}
+            # independentemente do input_schema do agente.
+            tools = await get_tools_for_agent(self.db, agent_id, context_data)
             if tools:
                 tool_names = [t.name for t in tools]
                 logger.info(f"[AgentFactory] 🧰 Agent '{agent.name}' carregou {len(tools)} tool(s): {tool_names}")
@@ -238,10 +240,21 @@ class AgentFactory:
                 from app.services.mcp_tools import get_agent_mcp_metadata
                 mcp_meta = await get_agent_mcp_metadata(self.db, agent_config["id"])
                 
-                # Identify fields that are ONLY for $request (system) and NOT for $fromAI (agent)
-                # These should be HIDDEN from the agent to prevent "IA decision" leaks.
-                request_only_paths = mcp_meta["request_paths"] - mcp_meta["from_ai_names"]
+                from_ai_names = mcp_meta["from_ai_names"]
+                request_only_paths = mcp_meta["request_paths"] - from_ai_names
                 
+                # 1. Enrichment: Ensure $fromAI fields are in the context prompt if they exist in source
+                # even if not explicitly in input_schema.
+                effective_input_schema = input_schema.copy() if isinstance(input_schema, dict) else {}
+                for name in from_ai_names:
+                    if name not in effective_input_schema:
+                        effective_input_schema[name] = {"type": "string", "description": "Campo dinâmico para ferramenta"}
+                
+                # Update input_schema reference for format_context_data_for_prompt
+                input_schema = effective_input_schema
+
+                # 2. Pruning: Identify fields that are ONLY for $request (system) and NOT for $fromAI (agent)
+                # These should be HIDDEN from the agent to prevent "IA decision" leaks.
                 if request_only_paths:
                     # Create a copy to avoid mutating original context_data
                     context_data = context_data.copy()
@@ -260,7 +273,8 @@ class AgentFactory:
                     for path in request_only_paths:
                         prune_path(context_data, path.split('.'))
                     
-                    logger.info(f"[AgentFactory] 🛡️ Pruned {len(request_only_paths)} request-only field(s) from prompt context")
+                    logger.info(f"[AgentFactory] 🛡️ Pruned {len(request_only_paths)} request-only field(s) from prompt context: {list(request_only_paths)}")
+
             except Exception as e:
                 logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering: {e}")
 
