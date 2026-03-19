@@ -232,6 +232,38 @@ class AgentFactory:
         # Inject context data if provided
         if context_data:
             input_schema = agent_config.get("input_schema")
+            
+            # --- Ultra-strict filtering based on MCP metadata ---
+            try:
+                from app.services.mcp_tools import get_agent_mcp_metadata
+                mcp_meta = await get_agent_mcp_metadata(self.db, agent_config["id"])
+                
+                # Identify fields that are ONLY for $request (system) and NOT for $fromAI (agent)
+                # These should be HIDDEN from the agent to prevent "IA decision" leaks.
+                request_only_paths = mcp_meta["request_paths"] - mcp_meta["from_ai_names"]
+                
+                if request_only_paths:
+                    # Create a copy to avoid mutating original context_data
+                    context_data = context_data.copy()
+                    
+                    def prune_path(data, parts):
+                        if not parts or not isinstance(data, dict):
+                            return
+                        key = parts[0]
+                        if len(parts) == 1:
+                            if key in data:
+                                del data[key]
+                        else:
+                            if key in data and isinstance(data[key], dict):
+                                prune_path(data[key], parts[1:])
+                    
+                    for path in request_only_paths:
+                        prune_path(context_data, path.split('.'))
+                    
+                    logger.info(f"[AgentFactory] 🛡️ Pruned {len(request_only_paths)} request-only field(s) from prompt context")
+            except Exception as e:
+                logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering: {e}")
+
             context_section = format_context_data_for_prompt(context_data, input_schema)
             if context_section:
                 system_prompt += context_section

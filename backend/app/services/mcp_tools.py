@@ -20,6 +20,14 @@ from app.services.mcp_client import MCPClient, execute_mcp_protocol
 logger = logging.getLogger(__name__)
 
 
+def _extract_request_paths(text: str) -> set:
+    """Extrai todos os caminhos de {{ $request.path }} em um texto"""
+    if not text:
+        return set()
+    matches = re.finditer(r'\{\{\s*\$request\.(.*?)\s*\}\}', text)
+    return {m.group(1).strip() for m in matches}
+
+
 def _extract_from_ai_params(text: str) -> dict:
     params = {}
     if not text:
@@ -765,6 +773,35 @@ class MCPToolExecutor:
         else:
             self._tool_cache.clear()
 
+
+async def get_agent_mcp_metadata(db: AsyncSession, agent_id: str) -> Dict[str, Any]:
+    """
+    Descobre metadados de todos os MCPs de um agente (campos $request e $fromAI).
+    Útil para filtrar o contexto do Agente de forma ultra-estrita.
+    """
+    executor = MCPToolExecutor(db)
+    mcps = await executor.get_agent_mcps(agent_id)
+    
+    metadata = {
+        "request_paths": set(),
+        "from_ai_names": set()
+    }
+    
+    import urllib.parse
+    for mcp in mcps:
+        templates = [
+            urllib.parse.unquote(mcp.endpoint or ""),
+            json.dumps(mcp.headers or {}),
+            json.dumps(mcp.body_template or {}),
+            json.dumps(getattr(mcp, "query_template", {}) or {})
+        ]
+        
+        for t in templates:
+            metadata["request_paths"].update(_extract_request_paths(t))
+            ai_params = _extract_from_ai_params(t)
+            metadata["from_ai_names"].update(ai_params.keys())
+            
+    return metadata
 
 async def get_tools_for_agent(db: AsyncSession, agent_id: str, context_data: Optional[Dict[str, Any]] = None) -> List[StructuredTool]:
     """
