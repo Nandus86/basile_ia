@@ -5,7 +5,11 @@ import asyncio
 import json
 import re
 import ast
-from typing import List, Dict, Any, Optional, Callable
+import os
+import uuid
+import copy
+import urllib.parse
+from typing import List, Optional, Dict, Any, Union, Callable
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -172,6 +176,51 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
     # Se o mapeamento não resultou em nada útil, devolve o dado original
     # para que o Agente ou UI tenham acesso ao payload completo.
     return filtered_result if filtered_result else data
+
+
+def _filter_sensitive_response_fields(data: Any) -> Any:
+    """Recursively removes common sensitive fields from API responses"""
+    sensitive_keys = {
+        "bank_details", "password", "token", "apikey", "secret", 
+        "auth", "credential", "private", "key"
+    }
+    
+    if isinstance(data, dict):
+        new_data = {}
+        for k, v in data.items():
+            if k.lower() in sensitive_keys:
+                continue
+            new_data[k] = _filter_sensitive_response_fields(v)
+        return new_data
+    elif isinstance(data, list):
+        return [_filter_sensitive_response_fields(item) for item in data]
+    return data
+
+
+def _truncate_large_response(data: Any, max_len: int = 10000) -> Any:
+    """Truncates very large responses to prevent LLM context overflow/crashes"""
+    text = json.dumps(data, ensure_ascii=False)
+    if len(text) <= max_len:
+        return data
+        
+    # If it's a list, try taking just the first few items
+    if isinstance(data, list) and len(data) > 3:
+        truncated_list = data[:3]
+        return {
+            "items": truncated_list,
+            "total_items": len(data),
+            "warning": f"Response truncated from {len(data)} items to 3 to prevent context overflow."
+        }
+    
+    # If it's a dict with a large body, truncate the body
+    if isinstance(data, dict) and "body" in data and isinstance(data["body"], list):
+        if len(data["body"]) > 3:
+            data["body"] = data["body"][:3]
+            data["warning"] = f"Body list truncated from {len(data['body'])} to 3 items."
+            return data
+
+    # Fallback to string truncation if still too big
+    return text[:max_len] + "... [TRUNCATED]"
 
 
 def _is_mcp_error_response(text: str) -> bool:
@@ -601,7 +650,11 @@ class MCPToolExecutor:
                             f"status={response.status_code}  elapsed={_elapsed:.0f}ms  "
                             f"response_preview={resp_preview!r}"
                         )
-                        return json.dumps(resp_json, indent=2, ensure_ascii=False)
+                        # Apply safe filtering and truncation to prevent leaks and crashes
+                        filtered_json = _filter_sensitive_response_fields(resp_json)
+                        safe_json = _truncate_large_response(filtered_json)
+                        
+                        return json.dumps(safe_json, indent=2, ensure_ascii=False)
                         
             except Exception as e:
                 logger.error(
@@ -612,16 +665,16 @@ class MCPToolExecutor:
         
         return execute_tool
     
-    def _schema_to_pydantic(self, schema: Dict[str, Any], tool_name: str) -> type:
+    def _schema_to_pydantic(self, schema: Dict[str, Any], tool_name: str, exclude_props: Optional[set] = None) -> type:
         """Convert JSON schema to Pydantic model.
-        All fields are exposed to the AI, allowing it to satisfy $fromAI parameters.
-        Fallback to context data occurs in execute_tool if the AI leaves them null.
+        Excludes properties that are satisfied by $request (system) to reduce AI token bloat.
         """
         properties = schema.get("properties", {})
+        exclude_props = exclude_props or set()
         
         fields = {}
         for prop_name, prop_schema in properties.items():
-            if not isinstance(prop_schema, dict):
+            if not isinstance(prop_schema, dict) or prop_name in exclude_props:
                 continue
                 
             prop_type = prop_schema.get("type", "string")
@@ -711,11 +764,16 @@ class MCPToolExecutor:
                     
                 input_schema = tool_def.get("input_schema", {})
                 
-                # ALL params the MCP expects (including context ones)
-                all_params = list(input_schema.get("properties", {}).keys())
-                
+                # Identify props that are actually $request to exclude them from AI model
+                request_props = set()
+                # Check properties whose name or description indicates it's context-filled
+                for p_name, p_schema in input_schema.get("properties", {}).items():
+                    desc = str(p_schema.get("description", "")).lower()
+                    if "$request" in desc:
+                        request_props.add(p_name)
+
                 # Pydantic model for LLM (context fields excluded)
-                args_schema = self._schema_to_pydantic(input_schema, tool_name)
+                args_schema = self._schema_to_pydantic(input_schema, tool_name, exclude_props=request_props)
                 
                 # Executor knows ALL params so it can fill context
                 # Pass pre-resolved templates so $request is already filled
@@ -787,6 +845,32 @@ async def get_agent_mcp_metadata(db: AsyncSession, agent_id: str) -> Dict[str, A
         "from_ai_names": set()
     }
     
+    # Process agent's own MCPs
+    _extract_metadata_from_mcps(mcps, metadata)
+    
+    # RECURSIVE: If agent is orchestrator, also collect metadata from collaborators
+    # to allow pruning their $request fields from the orchestrator's prompt.
+    from sqlalchemy import select
+    from app.models.agent import Agent, AgentCollaborator, CollaborationStatus
+    
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.id == uuid.UUID(agent_id))
+    )
+    agent = result.scalar_one_or_none()
+    
+    if agent and agent.is_orchestrator:
+        for collab_rel in agent.collaborator_settings:
+            if collab_rel.status != CollaborationStatus.BLOCKED:
+                sub_executor = MCPToolExecutor(db)
+                sub_mcps = await sub_executor.get_agent_mcps(str(collab_rel.collaborator_id))
+                _extract_metadata_from_mcps(sub_mcps, metadata)
+            
+    return metadata
+
+
+def _extract_metadata_from_mcps(mcps: List[MCP], metadata: Dict[str, Any]):
+    """Helper to extract metadata from a list of MCPs"""
     import urllib.parse
     for mcp in mcps:
         templates = [
@@ -800,8 +884,6 @@ async def get_agent_mcp_metadata(db: AsyncSession, agent_id: str) -> Dict[str, A
             metadata["request_paths"].update(_extract_request_paths(t))
             ai_params = _extract_from_ai_params(t)
             metadata["from_ai_names"].update(ai_params.keys())
-            
-    return metadata
 
 async def get_tools_for_agent(db: AsyncSession, agent_id: str, context_data: Optional[Dict[str, Any]] = None) -> List[StructuredTool]:
     """

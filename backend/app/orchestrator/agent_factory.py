@@ -245,6 +245,11 @@ class AgentFactory:
                 from_ai_names = mcp_meta["from_ai_names"]
                 request_only_paths = mcp_meta["request_paths"] - from_ai_names
                 
+                # Add global safety paths that should ALMOST NEVER be seen by AI
+                # unless they are explicitly marked as $fromAI (unlikely)
+                global_safe_prune = {"system.apikey", "system.baseUrlBasileia", "church._id", "member.phone"}
+                request_only_paths.update(global_safe_prune - from_ai_names)
+                
                 # 1. Enrichment: Ensure $fromAI fields are in the context prompt if they exist in source
                 # even if not explicitly in input_schema.
                 effective_input_schema = input_schema.copy() if isinstance(input_schema, dict) else {}
