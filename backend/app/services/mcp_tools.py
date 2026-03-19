@@ -200,17 +200,13 @@ def _build_error_diagnostics(
         else:
             sent_summary[k] = "NULL ← precisa preencher"
     
-    # Find available values from context that could fill nulls
+    # Suggestions should ONLY be from all_params or known $fromAI fields
+    # to avoid leaking hidden request context data.
     suggestions = {}
     for null_key in null_keys:
-        # Look for similar keys in flat_context
-        candidates = []
-        for ctx_key, ctx_val in flat_context.items():
-            if null_key in ctx_key or ctx_key in null_key:
-                if not isinstance(ctx_val, (dict, list)):
-                    candidates.append(f"{ctx_key}={ctx_val}")
-        if candidates:
-            suggestions[null_key] = candidates[:3]
+        # Instead of searching flat_context, we just suggest the field is missing
+        # if it's part of the expected tool schema.
+        pass
     
     diagnostics = {
         "tool_error": True,
@@ -301,12 +297,7 @@ class MCPToolExecutor:
             if query_template:
                 ai_params.update(_extract_from_ai_params(json.dumps(query_template)))
             
-            schema_properties = {
-                "params": {
-                    "type": "object",
-                    "description": "Parameters to send to the endpoint"
-                }
-            }
+            schema_properties = {}
             required_fields = []
             
             for p_name, p_info in ai_params.items():
@@ -543,20 +534,17 @@ class MCPToolExecutor:
                     headers = json.loads(headers_str)
                     query = json.loads(query_str)
                     
-                    # Also include explicit 'params' object passed by the LLM (legacy behavior)
+                    # Legacy behavior: Include explicit 'params' object passed by the LLM
+                    # (Only if it was explicitly defined in the schema, which it isn't anymore by default)
                     if "params" in final_args and isinstance(final_args["params"], dict):
                         if mcp.method.upper() == "GET":
                             query.update(final_args["params"])
                         else:
                             body.update(final_args["params"])
-                    else:
-                        # Forward remaining non-macro args into body/query, skipping ones already used in macros
-                        for k, v in final_args.items():
-                            if k not in ["params"] and k not in used_all:
-                                if mcp.method.upper() == "GET":
-                                    query[k] = v
-                                else:
-                                    body[k] = v
+                    
+                    # IMPORTANT: We NO LONGER forward remaining non-macro args into body/query
+                    # to prevent information leakage from context_data.
+                    # Only fields explicitly in the template or AI-provided params are sent.
                     
                     # Prevent httpx 'ascii' codec error handling non-ASCII headers
                     safe_headers = {}
