@@ -764,6 +764,9 @@ class MCPToolExecutor:
                     
                 input_schema = tool_def.get("input_schema", {})
                 
+                # ALL params the MCP expects (including context ones)
+                all_params = list(input_schema.get("properties", {}).keys())
+
                 # Identify props that are actually $request to exclude them from AI model
                 request_props = set()
                 # Check properties whose name or description indicates it's context-filled
