@@ -46,6 +46,45 @@ def _extract_from_ai_params(text: str) -> dict:
             pass
     return params
 
+
+def _get_value_by_path(data: dict, path: str) -> Any:
+    """Extrai valor de um dicionário usando notação de ponto (a.b.c)"""
+    if not data or not path:
+        return None
+    
+    parts = path.split('.')
+    current = data
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit():
+            idx = int(part)
+            current = current[idx] if idx < len(current) else None
+        else:
+            return None
+    return current
+
+
+def _inject_request_params(text: str, context_data: dict) -> str:
+    """Substitui {{ $request.path.to.field }} por valores reais do context_data"""
+    if not text or not context_data:
+        return text
+    
+    def replacer(match):
+        path = match.group(1).strip()
+        val = _get_value_by_path(context_data, path)
+        
+        if val is None:
+            return match.group(0)  # Mantém o placeholder se não encontrar
+            
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, (dict, list)):
+            return json.dumps(val, ensure_ascii=False)
+        return str(val)
+            
+    return re.sub(r'\{\{\s*\$request\.(.*?)\s*\}\}', replacer, text)
+
 def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     """Replace {{ $fromAI(...) }} with real values from kwargs"""
     if not text:
@@ -487,6 +526,15 @@ class MCPToolExecutor:
                     headers_str, u_headers = _inject_from_ai_params(headers_str, final_args)
                     query_str, u_query = _inject_from_ai_params(query_str, final_args)
                     endpoint_str, u_endpoint = _inject_from_ai_params(endpoint_str, final_args)
+                    
+                    # Inject direct request/context parameters using dot notation
+                    # This uses the RAW flattened context or original context_data
+                    # (Note: context was already flattened into flat_context if needed, 
+                    # but _get_value_by_path works better with the original 'context')
+                    body_str = _inject_request_params(body_str, context)
+                    headers_str = _inject_request_params(headers_str, context)
+                    query_str = _inject_request_params(query_str, context)
+                    endpoint_str = _inject_request_params(endpoint_str, context)
                     
                     used_all.update(u_body, u_headers, u_query, u_endpoint)
                     
