@@ -15,6 +15,8 @@ from app.config import settings
 
 import logging
 import json
+import copy
+import urllib.parse
 logger = logging.getLogger(__name__)
 
 
@@ -238,7 +240,7 @@ class AgentFactory:
             # --- Ultra-strict filtering based on MCP metadata ---
             try:
                 from app.services.mcp_tools import get_agent_mcp_metadata
-                mcp_meta = await get_agent_mcp_metadata(self.db, agent_config["id"])
+                mcp_meta = await get_agent_mcp_metadata(self.db, str(agent_config["id"]))
                 
                 from_ai_names = mcp_meta["from_ai_names"]
                 request_only_paths = mcp_meta["request_paths"] - from_ai_names
@@ -256,8 +258,8 @@ class AgentFactory:
                 # 2. Pruning: Identify fields that are ONLY for $request (system) and NOT for $fromAI (agent)
                 # These should be HIDDEN from the agent to prevent "IA decision" leaks.
                 if request_only_paths:
-                    # Create a copy to avoid mutating original context_data
-                    context_data = context_data.copy()
+                    # Create a DEEP copy to avoid mutating original context_data shared across agents/turns
+                    context_data_for_prompt = copy.deepcopy(context_data)
                     
                     def prune_path(data, parts):
                         if not parts or not isinstance(data, dict):
@@ -271,14 +273,17 @@ class AgentFactory:
                                 prune_path(data[key], parts[1:])
                     
                     for path in request_only_paths:
-                        prune_path(context_data, path.split('.'))
+                        prune_path(context_data_for_prompt, path.split('.'))
                     
                     logger.info(f"[AgentFactory] 🛡️ Pruned {len(request_only_paths)} request-only field(s) from prompt context: {list(request_only_paths)}")
-
+                    
+                    # Use the pruned copy for formatting
+                    context_section = format_context_data_for_prompt(context_data_for_prompt, input_schema)
+                else:
+                    context_section = format_context_data_for_prompt(context_data, input_schema)
             except Exception as e:
                 logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering: {e}")
-
-            context_section = format_context_data_for_prompt(context_data, input_schema)
+            
             if context_section:
                 system_prompt += context_section
         
