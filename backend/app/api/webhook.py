@@ -71,12 +71,11 @@ async def process_message(
     start_time = time.time()
     
     # Set request context for deep services (MCP tools)
+    # We store the FULL model dump to allow {{ $request.field }} for any field
     from app.context import set_request_context
-    if request.context_data:
-        print(f"[Webhook] 📥 Received context_data: {request.context_data}")
-        set_request_context(request.context_data)
-    else:
-        set_request_context({})
+    full_payload = request.model_dump()
+    print(f"[Webhook] 📥 Received full request context: {list(full_payload.keys())}")
+    set_request_context(full_payload)
     
     try:
         # Resolve STM configuration
@@ -212,6 +211,10 @@ async def process_message_structured(
     from langchain_core.messages import HumanMessage, AIMessage
     
     start_time = time.time()
+    
+    # Set request context for deep services (MCP tools)
+    from app.context import set_request_context
+    set_request_context(request.model_dump())
     
     try:
         # Initialize factory and resolve STM
@@ -503,6 +506,10 @@ async def process_dynamic_webhook(
         db.add(job_log)
         await db.commit()
         await db.refresh(job_log)
+        
+        # Set request context for deep services (MCP tools)
+        from app.context import set_request_context
+        set_request_context(request.model_dump())
         
         try:
             result = await process_message_task(

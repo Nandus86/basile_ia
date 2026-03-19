@@ -684,6 +684,10 @@ async def process_message_task(
       - Supervisor (run_orchestrator_v2) only used as fallback when no agent_id
     """
     start_time = time.time()
+    
+    # Set request context for deep services (MCP tools)
+    from app.context import set_request_context
+    set_request_context(context_data or {})
 
     agent = None
     agent_config = None
