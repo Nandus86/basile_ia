@@ -368,10 +368,13 @@ class MCPToolExecutor:
         
         return []
     
-    def _create_tool_executor(self, mcp_id: str, tool_name: str, protocol: str, all_params: list) -> Callable:
+    def _create_tool_executor(self, mcp_id: str, tool_name: str, protocol: str, all_params: list,
+                              pre_resolved_templates: Optional[Dict[str, Any]] = None) -> Callable:
         """Create an async executor function for a tool.
         all_params: ALL parameter names the MCP tool expects (including context ones)
+        pre_resolved_templates: Templates with {{ $request }} already resolved
         """
+        _pre_resolved = pre_resolved_templates or {}
         async def execute_tool(**kwargs) -> str:
             from app.context import get_request_context
             import os
@@ -515,11 +518,12 @@ class MCPToolExecutor:
                     timeout = float(mcp.timeout_seconds or 30)
                     
                     import urllib.parse
-                    body_str = json.dumps(mcp.body_template or {})
-                    headers_str = json.dumps(mcp.headers or {})
-                    query_template = getattr(mcp, "query_template", {}) or {}
-                    query_str = json.dumps(query_template)
-                    endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
+                    
+                    # Use pre-resolved templates if available ({{ $request }} already filled)
+                    body_str = _pre_resolved.get('body_str') or json.dumps(mcp.body_template or {})
+                    headers_str = _pre_resolved.get('headers_str') or json.dumps(mcp.headers or {})
+                    query_str = _pre_resolved.get('query_str') or json.dumps(getattr(mcp, 'query_template', {}) or {})
+                    endpoint_str = _pre_resolved.get('endpoint_str') or urllib.parse.unquote(mcp.endpoint or '')
                     
                     used_all = set()
                     body_str, u_body = _inject_from_ai_params(body_str, final_args)
@@ -527,10 +531,7 @@ class MCPToolExecutor:
                     query_str, u_query = _inject_from_ai_params(query_str, final_args)
                     endpoint_str, u_endpoint = _inject_from_ai_params(endpoint_str, final_args)
                     
-                    # Inject direct request/context parameters using dot notation
-                    # This uses the RAW flattened context or original context_data
-                    # (Note: context was already flattened into flat_context if needed, 
-                    # but _get_value_by_path works better with the original 'context')
+                    # Safety net: inject any remaining $request params not pre-resolved
                     body_str = _inject_request_params(body_str, context)
                     headers_str = _inject_request_params(headers_str, context)
                     query_str = _inject_request_params(query_str, context)
@@ -661,7 +662,9 @@ class MCPToolExecutor:
         return model
     
     async def create_langchain_tools(self, mcp: MCP) -> List[StructuredTool]:
-        """Create LangChain tools from an MCP"""
+        """Create LangChain tools from an MCP.
+        Pre-resolves {{ $request }} placeholders BEFORE presenting tools to the agent.
+        """
         cache_key = str(mcp.id)
         
         # Check cache
@@ -669,6 +672,31 @@ class MCPToolExecutor:
             return self._tool_cache[cache_key]
         
         tools = []
+        
+        # ── Pre-resolve {{ $request }} in MCP templates ──
+        # This ensures the agent NEVER sees $request data; only $fromAI remains.
+        pre_resolved_templates = {}
+        if mcp.protocol != 'mcp':
+            from app.context import get_request_context
+            import urllib.parse
+            raw_ctx = get_request_context() or {}
+            # Merge filtered context_data with raw request context (raw takes priority)
+            merged_ctx = {**self.context_data, **raw_ctx}
+            
+            if merged_ctx:
+                endpoint_str = urllib.parse.unquote(mcp.endpoint or '')
+                body_str = json.dumps(mcp.body_template or {})
+                headers_str = json.dumps(mcp.headers or {})
+                query_template = getattr(mcp, 'query_template', {}) or {}
+                query_str = json.dumps(query_template)
+                
+                pre_resolved_templates = {
+                    'endpoint_str': _inject_request_params(endpoint_str, merged_ctx),
+                    'body_str': _inject_request_params(body_str, merged_ctx),
+                    'headers_str': _inject_request_params(headers_str, merged_ctx),
+                    'query_str': _inject_request_params(query_str, merged_ctx),
+                }
+                logger.info(f"[MCPTool] 🔑 Pre-resolved $request placeholders for MCP '{mcp.name}'")
         
         try:
             # Discover available tools
@@ -694,11 +722,13 @@ class MCPToolExecutor:
                 args_schema = self._schema_to_pydantic(input_schema, tool_name)
                 
                 # Executor knows ALL params so it can fill context
+                # Pass pre-resolved templates so $request is already filled
                 executor = self._create_tool_executor(
                     mcp_id=str(mcp.id),
                     tool_name=tool_name,
                     protocol=tool_def.get("protocol", "http"),
-                    all_params=all_params
+                    all_params=all_params,
+                    pre_resolved_templates=pre_resolved_templates
                 )
                 
                 # Sanitize tool name for provider compatibility
