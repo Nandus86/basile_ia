@@ -236,6 +236,7 @@ class AgentFactory:
         # Inject context data if provided
         if context_data:
             input_schema = agent_config.get("input_schema")
+            context_section = None  # Initialize before try to avoid UnboundLocalError
             
             # --- Ultra-strict filtering based on MCP metadata ---
             try:
@@ -288,6 +289,8 @@ class AgentFactory:
                     context_section = format_context_data_for_prompt(context_data, input_schema)
             except Exception as e:
                 logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering: {e}")
+                # Fallback: format context without pruning so the agent still works
+                context_section = format_context_data_for_prompt(context_data, input_schema)
             
             if context_section:
                 system_prompt += context_section
