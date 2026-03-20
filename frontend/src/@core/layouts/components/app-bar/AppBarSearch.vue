@@ -93,7 +93,7 @@ import { mdiMagnify, mdiClose } from '@mdi/js'
 import { useVModel, useMagicKeys, whenever } from '@vueuse/core'
 import { ref, watch } from '@vue/composition-api'
 import { useRouter } from '@core/utils'
-import store from '@/store'
+import { useAppStore } from '@/stores/app'
 
 export default {
   props: {
@@ -115,6 +115,7 @@ export default {
     },
   },
   setup(props, { emit }) {
+    const appStore = useAppStore()
     const shallShowFullSearchLocal = useVModel(props, 'shallShowFullSearch', emit)
     const searchQueryLocal = useVModel(props, 'searchQuery', emit)
 
@@ -122,7 +123,7 @@ export default {
 
     watch(shallShowFullSearchLocal, value => {
       if (!value) searchQueryLocal.value = ''
-      store.commit('app/TOGGLE_CONTENT_OVERLAY', value)
+      appStore.toggleContentOverlay(value)
 
       // ? We create our own autofucs logic because `autofocus` prop was creating issue on `esc` key
       if (value) {

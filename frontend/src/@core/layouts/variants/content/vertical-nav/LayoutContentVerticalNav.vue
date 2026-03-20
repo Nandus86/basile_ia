@@ -47,7 +47,7 @@
       </app-content-container>
     </v-main>
     <v-overlay
-      :value="$store.state.app.shallContentShowOverlay"
+      :value="shallContentShowOverlay"
       z-index="4"
       absolute
       class="content-overlay"
@@ -70,12 +70,13 @@
 </template>
 
 <script>
-import { ref, watch } from '@vue/composition-api'
+import { ref, watch, computed } from '@vue/composition-api'
 import AppContentContainer from '@core/layouts/components/app-content-container/AppContentContainer.vue'
-import { getVuetify } from '@/@core/utils'
-import useAppConfig from '@core/@app-config/useAppConfig'
+import { getVuetify } from '@core/utils'
+import useAppConfig from 'core/@app-config/useAppConfig'
 import VerticalNavMenu from '@core/layouts/components/vertical-nav-menu/VerticalNavMenu.vue'
 import { useWindowScroll } from '@vueuse/core'
+import { useAppStore } from '@/stores/app'
 
 export default {
   components: {
@@ -93,8 +94,11 @@ export default {
     const { menuIsVerticalNavMini, menuIsMenuHidden, appBarType, appBarIsBlurred, footerType, appContentWidth } =
       useAppConfig()
     const $vuetify = getVuetify()
+    const appStore = useAppStore()
 
     const isVerticalNavMenuActive = ref(true)
+
+    const shallContentShowOverlay = computed(() => appStore.shallContentShowOverlay)
 
     // TODO: Check do we need below watch
     watch(
@@ -110,6 +114,23 @@ export default {
     const toggleVerticalNavMenuActive = () => {
       isVerticalNavMenuActive.value = !isVerticalNavMenuActive.value
     }
+
+    const { y: scrollY } = useWindowScroll()
+
+    return {
+      isVerticalNavMenuActive,
+      toggleVerticalNavMenuActive,
+      menuIsVerticalNavMini,
+      menuIsMenuHidden,
+      appBarType,
+      appBarIsBlurred,
+      footerType,
+      appContentWidth,
+      scrollY,
+      shallContentShowOverlay,
+    }
+  },
+}
 
     const { y: scrollY } = useWindowScroll()
 

@@ -31,7 +31,7 @@
         </div>
       </div>
       <v-overlay
-        :value="$store.state.app.shallContentShowOverlay"
+        :value="shallContentShowOverlay"
         z-index="5"
         absolute
         class="system-bar-overlay"
@@ -59,6 +59,7 @@
 </template>
 
 <script>
+import { computed, ref, watch } from '@vue/composition-api'
 import LayoutContentHorizontalNav from '@core/layouts/variants/content/horizontal-nav/LayoutContentHorizontalNav.vue'
 import AppCustomizer from '@core/layouts/components/app-customizer/AppCustomizer.vue'
 
@@ -68,13 +69,12 @@ import AppBarThemeSwitcher from '@core/layouts/components/app-bar/AppBarThemeSwi
 
 // Search Data
 
-import { ref, watch } from '@vue/composition-api'
-
 import themeConfig from '@themeConfig'
 import { mdiHeartOutline } from '@mdi/js'
 import appBarSearchData from '@/assets/app-bar-search-data'
 import AppBarUserMenu from '@/components/AppBarUserMenu.vue'
 import navMenuItems from '@/navigation/horizontal'
+import { useAppStore } from '@/stores/app'
 
 export default {
   components: {
@@ -87,6 +87,9 @@ export default {
     AppBarUserMenu,
   },
   setup() {
+    const appStore = useAppStore()
+    const shallContentShowOverlay = computed(() => appStore.shallContentShowOverlay)
+
     // Search
     const appBarSearchQuery = ref('')
     const shallShowFullSearch = ref(false)
@@ -143,6 +146,9 @@ export default {
       icons: {
         mdiHeartOutline,
       },
+
+      // Overlay
+      shallContentShowOverlay,
     }
   },
 }

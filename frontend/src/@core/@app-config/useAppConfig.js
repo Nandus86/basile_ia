@@ -1,71 +1,72 @@
-import store from '@/store'
+import { useAppConfigStore } from '@/stores/appConfig'
 import { getVuetify } from '@core/utils'
 import { computed } from '@vue/composition-api'
 
 export default function useAppConfig() {
+  const appConfigStore = useAppConfigStore()
   const $vuetify = getVuetify()
 
   const appContentLayoutNav = computed({
-    get: () => store.state.appConfig.app.contentLayoutNav,
+    get: () => appConfigStore.app.contentLayoutNav,
     set: value => {
-      store.commit('appConfig/UPDATE_CONTENT_LAYOUT_NAV', value)
+      appConfigStore.updateContentLayoutNav(value)
     },
   })
 
   const appRouteTransition = computed({
-    get: () => store.state.appConfig.app.routeTransition,
+    get: () => appConfigStore.app.routeTransition,
     set: value => {
-      store.commit('appConfig/UPDATE_APP_ROUTE_TRANSITION', value)
+      appConfigStore.updateAppRouteTransition(value)
     },
   })
 
   const appSkinVariant = computed({
-    get: () => store.state.appConfig.app.skinVariant,
+    get: () => appConfigStore.app.skinVariant,
     set: value => {
-      store.commit('appConfig/UPDATE_APP_SKIN_VARIANT', value)
+      appConfigStore.updateAppSkinVariant(value)
       localStorage.setItem('materio-skin-variant', value)
     },
   })
 
   const appContentWidth = computed({
-    get: () => store.state.appConfig.app.contentWidth,
+    get: () => appConfigStore.app.contentWidth,
     set: value => {
-      store.commit('appConfig/UPDATE_APP_CONTENT_WIDTH', value)
+      appConfigStore.updateAppContentWidth(value)
     },
   })
 
   const menuIsMenuHidden = computed({
-    get: () => store.state.appConfig.menu.isMenuHidden,
+    get: () => appConfigStore.menu.isMenuHidden,
     set: value => {
-      store.commit('appConfig/TOGGLE_MENU_MENU_HIDDEN', value)
+      appConfigStore.toggleMenuHidden(value)
     },
   })
 
   const menuIsVerticalNavMini = computed({
-    get: () => store.state.appConfig.menu.isVerticalNavMini,
+    get: () => appConfigStore.menu.isVerticalNavMini,
     set: value => {
-      store.commit('appConfig/TOGGLE_MENU_VERTICAL_NAV_MINI', value)
+      appConfigStore.toggleVerticalNavMini(value)
     },
   })
 
   const appBarType = computed({
-    get: () => store.state.appConfig.appBar.type,
+    get: () => appConfigStore.appBar.type,
     set: value => {
-      store.commit('appConfig/UPDATE_APP_BAR_TYPE', value)
+      appConfigStore.updateAppBarType(value)
     },
   })
 
   const appBarIsBlurred = computed({
-    get: () => store.state.appConfig.appBar.isBlurred,
+    get: () => appConfigStore.appBar.isBlurred,
     set: value => {
-      store.commit('appConfig/UPDATE_APP_BAR_IS_BLURRED', value)
+      appConfigStore.updateAppBarIsBlurred(value)
     },
   })
 
   const footerType = computed({
-    get: () => store.state.appConfig.footer.type,
+    get: () => appConfigStore.footer.type,
     set: value => {
-      store.commit('appConfig/UPDATE_FOOTER_TYPE', value)
+      appConfigStore.updateFooterType(value)
     },
   })
 
@@ -87,10 +88,7 @@ export default function useAppConfig() {
   const themes = computed({
     get: () => $vuetify.theme.themes,
     set: value => {
-      store.commit('appConfig/UPDATE_THEMES', value)
-
-      // ? We have to assign light and dark individually to make it reflect changes in UI
-      // ! `$vuetify.theme.themes = value` isn't reactive
+      appConfigStore.updateThemes(value)
       $vuetify.theme.themes.light = value.light
       $vuetify.theme.themes.dark = value.dark
     },

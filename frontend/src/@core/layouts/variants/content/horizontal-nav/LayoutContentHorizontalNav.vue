@@ -38,7 +38,7 @@
       </app-content-container>
     </v-main>
     <v-overlay
-      :value="$store.state.app.shallContentShowOverlay"
+      :value="shallContentShowOverlay"
       z-index="6"
       absolute
       class="content-overlay"
@@ -60,9 +60,11 @@
 </template>
 
 <script>
+import { computed } from '@vue/composition-api'
 import AppContentContainer from '@core/layouts/components/app-content-container/AppContentContainer.vue'
-import useAppConfig from '@core/@app-config/useAppConfig'
+import useAppConfig from 'core/@app-config/useAppConfig'
 import HorizontalNavMenu from '@/@core/layouts/components/horizontal-nav-menu/HorizontalNavMenu.vue'
+import { useAppStore } from '@/stores/app'
 
 export default {
   components: {
@@ -76,8 +78,10 @@ export default {
     },
   },
   setup() {
-    // eslint-disable-next-line object-curly-newline
     const { menuIsMenuHidden, appBarType, appBarIsBlurred, footerType, appContentWidth } = useAppConfig()
+    const appStore = useAppStore()
+
+    const shallContentShowOverlay = computed(() => appStore.shallContentShowOverlay)
 
     return {
       menuIsMenuHidden,
@@ -85,6 +89,7 @@ export default {
       appBarIsBlurred,
       footerType,
       appContentWidth,
+      shallContentShowOverlay,
     }
   },
 }
