@@ -511,13 +511,13 @@
           ></v-textarea>
           
           <!-- Variables ($request) -->
-          <div v-if="hasRequestVars">
+          <div>
             <p class="text-subtitle-2 text-medium-emphasis mb-2 mt-4">
               <v-icon size="18" class="mr-1">mdi-variable</v-icon>
               Variáveis (<code>$request</code>)
             </p>
             <v-alert type="info" variant="tonal" density="compact" class="mb-2">
-              Substitui <code v-pre>{{ $request.xxx }}</code> antes de enviar a requisição.
+              Valores para substituir <code v-pre>{{ $request.xxx }}</code> no endpoint/body/headers antes de enviar.
             </v-alert>
             <v-textarea
               v-model="executeVariablesJson"
@@ -1119,15 +1119,17 @@ async function deleteMcp() {
 function openExecuteDialog(mcp) {
   selectedMcp.value = mcp
   executeResult.value = null
-  
-  // Scan all MCP fields to find $fromAI and $request placeholders
-  const textToScan = [
-    mcp.endpoint || '',
+
+  // Build a combined text to scan — endpoint raw + all JSON-stringified fields
+  const rawEndpoint = mcp.endpoint || ''
+  const pieces = [
+    rawEndpoint,
     JSON.stringify(mcp.headers || {}),
     JSON.stringify(mcp.body_template || {}),
     JSON.stringify(mcp.query_template || {})
-  ].join('\n')
-  
+  ]
+  const textToScan = pieces.join('\n')
+
   // ── Extract $fromAI params ──
   const extractedParams = {}
   const fromAIRegex = /\{\{\s*\$fromAI\(([^)]+)\)\s*\}\}/g
@@ -1152,18 +1154,23 @@ function openExecuteDialog(mcp) {
   const mergedParams = { ...(mcp.body_template || {}), ...extractedParams }
   executeParamsJson.value = JSON.stringify(mergedParams, null, 2)
 
-  // ── Extract $request variable paths ──
-  const requestRegex = /\{\{\s*\$request\.([^\s}]+?)\s*\}\}/g
+  // ── Extract ALL unique $request paths ──
+  // Scan every piece individually so URL-encoding or JSON escaping doesn't hide any match
+  const REQUEST_RE = /\{\{\s*\$request\.([^\s}]+?)\s*\}\}/g
   const extractedVars = {}
-  let varMatch
-  while ((varMatch = requestRegex.exec(textToScan)) !== null) {
-    const path = varMatch[1].trim()
-    if (!(path in extractedVars)) {
-      extractedVars[path] = ''
+  for (const piece of pieces) {
+    let m
+    // clone regex to reset lastIndex for each piece
+    const re = new RegExp(REQUEST_RE.source, 'g')
+    while ((m = re.exec(piece)) !== null) {
+      const path = m[1].trim()
+      if (!(path in extractedVars)) {
+        extractedVars[path] = ''
+      }
     }
   }
   executeVariablesJson.value = JSON.stringify(extractedVars, null, 2)
-  
+
   executeDialog.value = true
 }
 
