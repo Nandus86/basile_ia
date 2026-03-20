@@ -252,45 +252,64 @@
               </template>
             </v-autocomplete>
 
-            <v-switch
-              v-model="editedWebhook.require_token"
-              label="Exigir Token de Autenticação (Bearer)"
-              color="primary"
-              class="mb-2"
-              hide-details
-            ></v-switch>
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-2 py-3 px-4 d-flex align-center">
+                <v-icon class="mr-2" size="20">mdi-lock</v-icon>
+                Autenticação
+              </v-card-title>
+              <v-divider></v-divider>
+              <v-card-text class="pt-3 pb-3">
+                <v-switch
+                  v-model="editedWebhook.require_token"
+                  label="Exigir Token de Autenticação (Bearer)"
+                  color="primary"
+                  hide-details
+                  density="comfortable"
+                ></v-switch>
 
-            <v-switch
-              v-model="editedWebhook.sync_mode"
-              label="Processamento Síncrono (Ignorar fila de Jobs)"
-              color="purple"
-              class="mb-2"
-              hide-details
-            ></v-switch>
+                <v-expand-transition>
+                  <div v-if="editedWebhook.require_token" class="mt-4">
+                    <v-text-field
+                      v-model="editedWebhook.access_token"
+                      label="Token de Acesso (Bearer)"
+                      variant="outlined"
+                      type="password"
+                      :rules="editedWebhook.require_token && !editedWebhook.id ? [v => !!v || 'Token é obrigatório'] : []"
+                      :placeholder="editedWebhook.id ? 'Deixe em branco para manter o atual' : 'Defina um secret forte'"
+                      prepend-inner-icon="mdi-key"
+                      append-inner-icon="mdi-refresh"
+                      @click:append-inner="generateToken"
+                    ></v-text-field>
+                  </div>
+                </v-expand-transition>
+              </v-card-text>
+            </v-card>
 
-            <v-expand-transition>
-              <div v-if="editedWebhook.require_token" class="mt-4">
-                <v-text-field
-                  v-model="editedWebhook.access_token"
-                  label="Token de Acesso (Bearer)"
-                  variant="outlined"
-                  type="password"
-                  :rules="editedWebhook.require_token && !editedWebhook.id ? [v => !!v || 'Token é obrigatório'] : []"
-                  :placeholder="editedWebhook.id ? 'Deixe em branco para manter o atual' : 'Defina um secret forte'"
-                  class="mb-4 input-glass"
-                  bg-color="transparent"
-                  append-inner-icon="mdi-refresh"
-                  @click:append-inner="generateToken"
-                ></v-text-field>
-              </div>
-            </v-expand-transition>
-
-            <v-switch
-              v-model="editedWebhook.is_active"
-              label="Ativo"
-              color="success"
-              hide-details
-            ></v-switch>
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-2 py-3 px-4 d-flex align-center">
+                <v-icon class="mr-2" size="20">mdi-cog</v-icon>
+                Configurações
+              </v-card-title>
+              <v-divider></v-divider>
+              <v-card-text class="pt-3 pb-3">
+                <v-switch
+                  v-model="editedWebhook.sync_mode"
+                  label="Processamento Síncrono (Ignorar fila de Jobs)"
+                  color="purple"
+                  hide-details
+                  density="comfortable"
+                ></v-switch>
+                
+                <v-switch
+                  v-model="editedWebhook.is_active"
+                  label="Webhook Ativo"
+                  color="success"
+                  hide-details
+                  density="comfortable"
+                  class="mt-3"
+                ></v-switch>
+              </v-card-text>
+            </v-card>
           </v-form>
         </v-card-text>
         <v-card-actions class="pa-6 border-t">

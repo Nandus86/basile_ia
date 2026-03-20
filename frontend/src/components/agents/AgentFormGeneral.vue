@@ -47,7 +47,7 @@
     </p>
     
     <v-row>
-      <v-col cols="12" md="3">
+      <v-col cols="12" md="6">
         <v-select
           v-model="activeProvider"
           label="Provedor (Grupo)"
@@ -55,7 +55,7 @@
           prepend-inner-icon="mdi-domain"
         ></v-select>
       </v-col>
-      <v-col cols="12" md="3">
+      <v-col cols="12" md="6">
         <v-combobox
           v-model="formData.model"
           label="Modelo LLM"
@@ -77,7 +77,10 @@
           </template>
         </v-combobox>
       </v-col>
-      <v-col cols="12" md="3" v-if="!formData.config.is_reasoning_model">
+    </v-row>
+
+    <v-row v-if="!formData.config.is_reasoning_model">
+      <v-col cols="12" md="6">
         <v-text-field
           v-model="formData.temperature"
           label="Temperature"
@@ -88,7 +91,7 @@
           prepend-inner-icon="mdi-thermometer"
         ></v-text-field>
       </v-col>
-      <v-col cols="12" md="3" v-if="!formData.config.is_reasoning_model">
+      <v-col cols="12" md="6">
         <v-text-field
           v-model="formData.max_tokens"
           label="Max Tokens"
@@ -98,7 +101,10 @@
           prepend-inner-icon="mdi-counter"
         ></v-text-field>
       </v-col>
-      <v-col cols="12" md="3" v-if="formData.config.is_reasoning_model">
+    </v-row>
+
+    <v-row v-if="formData.config.is_reasoning_model">
+      <v-col cols="12" md="6">
         <v-select
           v-model="formData.config.reasoning_effort"
           label="Reasoning Effort"
@@ -110,7 +116,7 @@
           persistent-hint
         ></v-select>
       </v-col>
-      <v-col cols="12" md="3" v-if="formData.config.is_reasoning_model">
+      <v-col cols="12" md="6">
         <v-text-field
           v-model="formData.config.max_completion_tokens"
           label="Max Completion Tokens"
@@ -124,119 +130,138 @@
       </v-col>
     </v-row>
 
-    <v-expand-transition>
-      <v-card variant="outlined" class="mt-2 mb-2" :color="formData.config.is_reasoning_model ? 'purple' : undefined">
-        <v-card-text class="d-flex align-center py-2">
-          <v-switch
-            v-model="formData.config.is_reasoning_model"
-            label="Modelo de Raciocínio"
-            color="purple"
-            hide-details
-            density="compact"
-            class="mr-4"
-          ></v-switch>
-          <v-chip v-if="formData.config.is_reasoning_model" color="purple" size="small" variant="tonal">
-            <v-icon start size="14">mdi-head-lightbulb</v-icon>
-            O1 / O3 / DeepSeek R1
-          </v-chip>
-          <span v-else class="text-caption text-medium-emphasis">
-            Ative para modelos como O1, O3-mini, DeepSeek R1 (sem temperature, com reasoning_effort)
-          </span>
-        </v-card-text>
-      </v-card>
-    </v-expand-transition>
+    <v-card variant="outlined" class="mt-3 mb-3" :color="formData.config.is_reasoning_model ? 'purple' : undefined">
+      <v-card-text class="d-flex align-center py-3">
+        <v-switch
+          v-model="formData.config.is_reasoning_model"
+          label="Modelo de Raciocínio"
+          color="purple"
+          hide-details
+          density="comfortable"
+          class="mr-4"
+        ></v-switch>
+        <v-chip v-if="formData.config.is_reasoning_model" color="purple" size="small" variant="tonal">
+          <v-icon start size="14">mdi-head-lightbulb</v-icon>
+          O1 / O3 / DeepSeek R1
+        </v-chip>
+        <span v-else class="text-caption text-medium-emphasis">
+          Ative para modelos como O1, O3-mini, DeepSeek R1 (sem temperature, com reasoning_effort)
+        </span>
+      </v-card-text>
+    </v-card>
     
     <v-divider class="my-4"></v-divider>
     
-    <v-row>
-      <v-col cols="12" md="4">
-        <v-switch
-          v-model="formData.is_active"
-          label="Agente Ativo"
-          color="success"
-          hide-details
-        >
-          <template v-slot:prepend>
-            <v-icon :color="formData.is_active ? 'success' : 'grey'">mdi-power</v-icon>
-          </template>
-        </v-switch>
-      </v-col>
-      <v-col cols="12" md="4">
-        <v-switch
-          v-model="formData.collaboration_enabled"
-          label="Colaboração"
-          color="info"
-          hide-details
-        >
-          <template v-slot:prepend>
-            <v-icon :color="formData.collaboration_enabled ? 'info' : 'grey'">mdi-account-group</v-icon>
-          </template>
-        </v-switch>
-      </v-col>
-      <v-col cols="12" md="4">
-        <v-switch
-          v-model="formData.vector_memory_enabled"
-          label="Memória Vetorial"
-          color="deep-purple"
-          hide-details
-        >
-          <template v-slot:prepend>
-            <v-icon :color="formData.vector_memory_enabled ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
-          </template>
-        </v-switch>
-      </v-col>
-    </v-row>
-
-    <v-row class="mt-0">
-      <v-col cols="12" md="4">
-        <v-switch
-          v-model="formData.is_orchestrator"
-          label="Modo Orquestrador"
-          color="purple"
-          hide-details
-        >
-          <template v-slot:prepend>
-            <v-icon :color="formData.is_orchestrator ? 'purple' : 'grey'">mdi-account-supervisor</v-icon>
-          </template>
-        </v-switch>
-      </v-col>
-      <v-col cols="12" md="8" v-if="formData.is_orchestrator">
-        <v-alert type="info" variant="tonal" density="compact">
-          <template v-slot:prepend>
-            <v-icon>mdi-information</v-icon>
-          </template>
-          Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
-        </v-alert>
-      </v-col>
-    </v-row>
+    <p class="text-subtitle-2 text-medium-emphasis mb-3">
+      <v-icon size="18" class="mr-1">mdi-toggle-switch</v-icon>
+      Configurações de Ativação
+    </p>
     
-    <v-row class="mt-2">
-      <v-col cols="12" md="6">
-        <v-switch
-          v-model="formData.config.short_term_memory_enabled"
-          label="Memória de Curto Prazo (STM)"
-          color="teal"
-          hide-details
-        >
-          <template v-slot:prepend>
-            <v-icon :color="formData.config.short_term_memory_enabled ? 'teal' : 'grey'">mdi-history</v-icon>
-          </template>
-        </v-switch>
-      </v-col>
-      <v-col cols="12" md="6">
-        <v-text-field
-          v-model="formData.config.short_term_memory_ttl_hours"
-          label="Tempo de Retenção (Horas)"
-          type="number"
-          min="1"
-          max="720"
-          prepend-inner-icon="mdi-clock-outline"
-          :disabled="!formData.config.short_term_memory_enabled"
-          hint="Tempo que o agente lembrará da conversa"
-          persistent-hint
-        ></v-text-field>
-      </v-col>
-    </v-row>
+    <v-card variant="outlined" class="mb-4">
+      <v-card-text class="pt-4 pb-4">
+        <v-row>
+          <v-col cols="12" sm="6">
+            <v-switch
+              v-model="formData.is_active"
+              label="Agente Ativo"
+              color="success"
+              hide-details
+              density="comfortable"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.is_active ? 'success' : 'grey'">mdi-power</v-icon>
+              </template>
+            </v-switch>
+          </v-col>
+          <v-col cols="12" sm="6">
+            <v-switch
+              v-model="formData.collaboration_enabled"
+              label="Colaboração"
+              color="info"
+              hide-details
+              density="comfortable"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.collaboration_enabled ? 'info' : 'grey'">mdi-account-group</v-icon>
+              </template>
+            </v-switch>
+          </v-col>
+          <v-col cols="12" sm="6">
+            <v-switch
+              v-model="formData.vector_memory_enabled"
+              label="Memória Vetorial"
+              color="deep-purple"
+              hide-details
+              density="comfortable"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.vector_memory_enabled ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
+              </template>
+            </v-switch>
+          </v-col>
+          <v-col cols="12" sm="6">
+            <v-switch
+              v-model="formData.is_orchestrator"
+              label="Modo Orquestrador"
+              color="purple"
+              hide-details
+              density="comfortable"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.is_orchestrator ? 'purple' : 'grey'">mdi-account-supervisor</v-icon>
+              </template>
+            </v-switch>
+          </v-col>
+        </v-row>
+        
+        <v-expand-transition>
+          <v-alert v-if="formData.is_orchestrator" type="info" variant="tonal" density="compact" class="mt-3 mb-0">
+            <template v-slot:prepend>
+              <v-icon>mdi-information</v-icon>
+            </template>
+            Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
+          </v-alert>
+        </v-expand-transition>
+      </v-card-text>
+    </v-card>
+
+    <p class="text-subtitle-2 text-medium-emphasis mb-3">
+      <v-icon size="18" class="mr-1">mdi-memory</v-icon>
+      Memória de Curto Prazo
+    </p>
+    
+    <v-card variant="outlined">
+      <v-card-text class="pt-4 pb-4">
+        <v-row>
+          <v-col cols="12" md="6">
+            <v-switch
+              v-model="formData.config.short_term_memory_enabled"
+              label="Ativar Memória STM"
+              color="teal"
+              hide-details
+              density="comfortable"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.config.short_term_memory_enabled ? 'teal' : 'grey'">mdi-history</v-icon>
+              </template>
+            </v-switch>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="formData.config.short_term_memory_ttl_hours"
+              label="Tempo de Retenção (Horas)"
+              type="number"
+              min="1"
+              max="720"
+              prepend-inner-icon="mdi-clock-outline"
+              :disabled="!formData.config.short_term_memory_enabled"
+              hint="Tempo que o agente lembrará da conversa"
+              persistent-hint
+            ></v-text-field>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
   </v-form>
 </template>
 

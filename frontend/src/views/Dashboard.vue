@@ -303,10 +303,25 @@ onMounted(() => {
 
 .opacity-90 { opacity: 0.9; }
 
+.quick-action-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 12px 0 0 12px;
+  transition: width 0.25s ease;
+}
+
 .quick-action-btn.primary-glow {
   background: linear-gradient(135deg, rgba(85, 8, 206, 0.85) 0%, rgba(157, 78, 221, 0.45) 100%);
   border: 1px solid rgba(157, 78, 221, 0.6);
   box-shadow: inset 0 1px 12px rgba(255,255,255,0.08), 0 0 16px rgba(157,78,221,0.15);
+}
+
+.quick-action-btn.primary-glow::before {
+  background: linear-gradient(180deg, #7C3AED, #9D4EDD);
 }
 
 .quick-action-btn.secondary-glow {
@@ -314,14 +329,37 @@ onMounted(() => {
   border: 1px solid rgba(123, 44, 191, 0.45);
 }
 
+.quick-action-btn.secondary-glow::before {
+  background: linear-gradient(180deg, #00A3FF, #00D1FF);
+}
+
 .quick-action-btn.neutral-glow {
   background: rgba(255,255,255,0.02);
   border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.quick-action-btn.neutral-glow::before {
+  background: rgba(255,255,255,0.3);
 }
 
 .quick-action-btn:hover {
   transform: translateY(-2px);
   filter: brightness(1.15);
   box-shadow: 0 6px 20px rgba(0,0,0,0.3), inset 0 1px 12px rgba(255,255,255,0.1);
+}
+
+.quick-action-btn:hover::before {
+  width: 6px;
+}
+
+/* Stat Cards Hover Enhancement */
+.stat-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: default;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(157, 78, 221, 0.25);
 }
 </style>

@@ -253,7 +253,7 @@
             </p>
             
             <v-row>
-              <v-col cols="12" md="8">
+              <v-col cols="12" md="6">
                 <v-text-field
                   v-model="formData.name"
                   label="Nome do MCP"
@@ -262,7 +262,7 @@
                   prepend-inner-icon="mdi-puzzle"
                 ></v-text-field>
               </v-col>
-              <v-col cols="12" md="4">
+              <v-col cols="12" md="6">
                 <v-select
                   v-model="formData.group_id"
                   :items="mcpGroups"
@@ -273,12 +273,16 @@
                   clearable
                 ></v-select>
               </v-col>
-              <v-col cols="12" md="2">
+            </v-row>
+            
+            <v-row>
+              <v-col cols="12" md="6">
                 <v-switch
                   v-model="formData.is_active"
-                  label="Ativo"
+                  label="Servidor Ativo"
                   color="success"
                   hide-details
+                  density="comfortable"
                 >
                   <template v-slot:prepend>
                     <v-icon :color="formData.is_active ? 'success' : 'grey'">mdi-power</v-icon>
@@ -304,7 +308,7 @@
             </p>
             
             <v-row>
-              <v-col cols="12" md="4">
+              <v-col cols="12" sm="4">
                 <v-select
                   v-model="formData.protocol"
                   label="Protocolo"
@@ -324,20 +328,20 @@
                   </template>
                 </v-select>
               </v-col>
-              <v-col cols="12" md="4">
+              <v-col cols="12" sm="4">
                 <v-select
                   v-model="formData.method"
-                  label="Método"
+                  label="Método HTTP"
                   :items="httpMethods"
                   item-title="label"
                   item-value="value"
                   prepend-inner-icon="mdi-web"
                 ></v-select>
               </v-col>
-              <v-col cols="12" md="4">
+              <v-col cols="12" sm="4">
                 <v-text-field
                   v-model="formData.timeout_seconds"
-                  label="Timeout (s)"
+                  label="Timeout (segundos)"
                   type="number"
                   min="1"
                   max="300"
@@ -368,35 +372,38 @@
             <v-divider class="my-4"></v-divider>
 
             <!-- Headers & Body -->
+            <p class="text-subtitle-2 text-medium-emphasis mb-3">
+              <v-icon size="18" class="mr-1">mdi-code-json</v-icon>
+              Headers & Body
+            </p>
+            
             <v-row>
               <v-col cols="12" md="6">
-                <p class="text-subtitle-2 text-medium-emphasis mb-2">
-                  <v-icon size="18" class="mr-1">mdi-code-json</v-icon>
-                  Headers (JSON)
-                </p>
                 <v-textarea
                   v-model="headersJson"
+                  label="Headers (JSON)"
                   placeholder='{"Authorization": "Bearer ...", "Content-Type": "application/json"}'
-                  rows="4"
+                  rows="5"
                   variant="outlined"
-                  density="compact"
                   :error-messages="headersError"
                   @blur="validateHeaders"
+                  hint="Cabeçalhos HTTP da requisição"
+                  persistent-hint
+                  class="font-monospace"
                 ></v-textarea>
               </v-col>
               <v-col cols="12" md="6">
-                <p class="text-subtitle-2 text-medium-emphasis mb-2">
-                  <v-icon size="18" class="mr-1">mdi-code-braces</v-icon>
-                  Body Template (JSON)
-                </p>
                 <v-textarea
                   v-model="bodyJson"
+                  label="Body Template (JSON)"
                   placeholder='{"query": "", "limit": 10}'
-                  rows="4"
+                  rows="5"
                   variant="outlined"
-                  density="compact"
                   :error-messages="bodyError"
                   @blur="validateBody"
+                  hint="Corpo da requisição (template)"
+                  persistent-hint
+                  class="font-monospace"
                 ></v-textarea>
               </v-col>
             </v-row>
@@ -426,34 +433,29 @@
             <!-- Response Mapping & Keywords -->
             <v-row>
               <v-col cols="12" md="6">
-                <p class="text-subtitle-2 text-medium-emphasis mb-2">
-                  <v-icon size="18" class="mr-1">mdi-map</v-icon>
-                  Response Mapping (JSON)
-                </p>
                 <v-textarea
                   v-model="responseMappingJson"
+                  label="Response Mapping (JSON)"
                   placeholder='{"result": "data.items", "total": "meta.total"}'
-                  rows="3"
+                  rows="4"
                   variant="outlined"
-                  density="compact"
                   hint="Mapeia campos da resposta para uso pelo agente"
                   persistent-hint
+                  prepend-inner-icon="mdi-map"
+                  class="font-monospace"
                 ></v-textarea>
               </v-col>
               <v-col cols="12" md="6">
-                <p class="text-subtitle-2 text-medium-emphasis mb-2">
-                  <v-icon size="18" class="mr-1">mdi-tag-multiple</v-icon>
-                  Trigger Keywords
-                </p>
                 <v-combobox
                   v-model="formData.trigger_keywords"
                   label="Palavras-chave que ativam este MCP"
+                  placeholder="Digite e pressione Enter"
                   multiple
                   chips
                   closable-chips
                   variant="outlined"
-                  density="compact"
-                  hint="Pressione Enter para adicionar"
+                  prepend-inner-icon="mdi-tag-multiple"
+                  hint="Pressione Enter para adicionar cada palavra"
                   persistent-hint
                 ></v-combobox>
               </v-col>
@@ -1187,5 +1189,20 @@ onMounted(() => {
 
 :deep(.v-data-table) {
   background: transparent !important;
+}
+
+/* Form Improvements */
+.font-monospace :deep(.v-field__input) {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.875rem;
+}
+
+:deep(.v-card-title) {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+:deep(.v-tabs) {
+  font-size: 0.875rem;
 }
 </style>
