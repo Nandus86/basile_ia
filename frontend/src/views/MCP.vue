@@ -508,6 +508,24 @@
             variant="outlined"
           ></v-textarea>
           
+          <!-- Variables ($request) -->
+          <div v-if="hasRequestVars">
+            <p class="text-subtitle-2 text-medium-emphasis mb-2 mt-4">
+              <v-icon size="18" class="mr-1">mdi-variable</v-icon>
+              Variáveis (<code>$request</code>)
+            </p>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-2">
+              Substitui <code>{{ '{{ $request.xxx }}' }}</code> antes de enviar a requisição.
+            </v-alert>
+            <v-textarea
+              v-model="executeVariablesJson"
+              placeholder='{"system.baseUrlBasileia": "https://dash.basileia.global"}'
+              rows="4"
+              variant="outlined"
+              class="font-monospace"
+            ></v-textarea>
+          </div>
+          
           <!-- Result -->
           <div v-if="executeResult" class="mt-4">
             <v-alert :type="executeResult.success ? 'success' : 'error'" variant="tonal" class="mb-2">
@@ -697,6 +715,7 @@ const newGroup = reactive({ id: null, name: '', description: '' })
 const executeDialog = ref(false)
 const selectedMcp = ref(null)
 const executeParamsJson = ref('{}')
+const executeVariablesJson = ref('{}')
 const executeResult = ref(null)
 const executing = ref(false)
 
@@ -774,6 +793,15 @@ const formatResult = computed(() => {
   if (!executeResult.value) return ''
   const data = executeResult.value.result || executeResult.value.error || {}
   return JSON.stringify(data, null, 2)
+})
+
+const hasRequestVars = computed(() => {
+  try {
+    const vars = JSON.parse(executeVariablesJson.value || '{}')
+    return Object.keys(vars).length > 0
+  } catch {
+    return false
+  }
 })
 
 // Helpers
@@ -1088,45 +1116,52 @@ async function deleteMcp() {
 
 function openExecuteDialog(mcp) {
   selectedMcp.value = mcp
+  executeResult.value = null
   
-  // Extract $fromAI macros for a better testing experience
+  // Scan all MCP fields to find $fromAI and $request placeholders
   const textToScan = [
     mcp.endpoint || '',
     JSON.stringify(mcp.headers || {}),
     JSON.stringify(mcp.body_template || {}),
     JSON.stringify(mcp.query_template || {})
-  ].join('\\n')
+  ].join('\n')
   
+  // ── Extract $fromAI params ──
   const extractedParams = {}
-  const regex = /\\{\\{\\s*\\$fromAI\\(([^)]+)\\)\\s*\\}\\}/g
+  const fromAIRegex = /\{\{\s*\$fromAI\(([^)]+)\)\s*\}\}/g
   let match
-  while ((match = regex.exec(textToScan)) !== null) {
+  while ((match = fromAIRegex.exec(textToScan)) !== null) {
     try {
       const argsStr = match[1]
-      const firstArgMatch = argsStr.match(/^\\s*['"]([^'"]+)['"]/)
+      const firstArgMatch = argsStr.match(/^\s*['"]([^'"]+)['"]/)
       if (firstArgMatch && firstArgMatch[1]) {
         const name = firstArgMatch[1]
-        
         const allArgs = argsStr.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-        let defaultValue = ""
+        let defaultValue = ''
         if (allArgs.length >= 4 && allArgs[3] !== 'null' && allArgs[3] !== 'undefined' && allArgs[3] !== '') {
-            defaultValue = allArgs[3]
+          defaultValue = allArgs[3]
         }
-        
         if (!extractedParams[name]) {
-            extractedParams[name] = defaultValue || ""
+          extractedParams[name] = defaultValue || ''
         }
       }
-    } catch (e) {
-      // Ignore individually
+    } catch (e) { /* ignore */ }
+  }
+  const mergedParams = { ...(mcp.body_template || {}), ...extractedParams }
+  executeParamsJson.value = JSON.stringify(mergedParams, null, 2)
+
+  // ── Extract $request variable paths ──
+  const requestRegex = /\{\{\s*\$request\.([^\s}]+?)\s*\}\}/g
+  const extractedVars = {}
+  let varMatch
+  while ((varMatch = requestRegex.exec(textToScan)) !== null) {
+    const path = varMatch[1].trim()
+    if (!(path in extractedVars)) {
+      extractedVars[path] = ''
     }
   }
+  executeVariablesJson.value = JSON.stringify(extractedVars, null, 2)
   
-  // Combine base body fields (if any) with extracted params
-  const mergedParams = { ...(mcp.body_template || {}), ...extractedParams }
-  
-  executeParamsJson.value = JSON.stringify(mergedParams, null, 2)
-  executeResult.value = null
   executeDialog.value = true
 }
 
@@ -1135,7 +1170,8 @@ async function runMcp() {
   executeResult.value = null
   try {
     const params = JSON.parse(executeParamsJson.value || '{}')
-    const response = await axios.post(`/mcp/${selectedMcp.value.id}/execute`, { params })
+    const variables = JSON.parse(executeVariablesJson.value || '{}')
+    const response = await axios.post(`/mcp/${selectedMcp.value.id}/execute`, { params, variables })
     executeResult.value = response.data
   } catch (error) {
     console.error('Error executing MCP:', error)
