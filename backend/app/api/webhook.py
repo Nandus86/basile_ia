@@ -71,9 +71,9 @@ async def process_message(
     start_time = time.time()
     
     # Set request context for deep services (MCP tools)
-    # We store the FULL model dump to allow {{ $request.field }} for any field
+    # We combine model_dump() with model_extra (extra fields like system, member)
     from app.context import set_request_context
-    full_payload = request.model_dump()
+    full_payload = {**request.model_dump(), **(request.model_extra or {})}
     print(f"[Webhook] 📥 Received full request context: {list(full_payload.keys())}")
     set_request_context(full_payload)
     
@@ -113,7 +113,7 @@ async def process_message(
         
         # Extract extra root fields and add to context_data
         standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
-        payload = request.model_dump()
+        payload = {**request.model_dump(), **(request.model_extra or {})}
         c_data = request.context_data or {}
         for k, v in payload.items():
             if k not in standard_keys:
@@ -214,7 +214,7 @@ async def process_message_structured(
     
     # Set request context for deep services (MCP tools)
     from app.context import set_request_context
-    set_request_context(request.model_dump())
+    set_request_context({**request.model_dump(), **(request.model_extra or {})})
     
     try:
         # Initialize factory and resolve STM
@@ -509,7 +509,7 @@ async def process_dynamic_webhook(
         
         # Set request context for deep services (MCP tools)
         from app.context import set_request_context
-        set_request_context(request.model_dump())
+        set_request_context({**request.model_dump(), **(request.model_extra or {})})
         
         try:
             result = await process_message_task(

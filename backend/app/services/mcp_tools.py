@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 import logging
 
 from app.models.mcp import MCP
-from app.models.agent import Agent
+from app.models.agent import Agent, CollaborationStatus
 from app.services.mcp_client import MCPClient, execute_mcp_protocol
 
 logger = logging.getLogger(__name__)
@@ -439,6 +439,10 @@ class MCPToolExecutor:
                     prefix_parts = []
                 for key, value in d.items():
                     current_parts = prefix_parts + [str(key)]
+                    # Store with both dot and dash notation for compatibility
+                    dot_key = ".".join(current_parts)
+                    flat_context[dot_key] = value
+                    
                     for i in range(len(current_parts)):
                         flat_key = "-".join(current_parts[i:])
                         if flat_key not in flat_context:
@@ -448,6 +452,15 @@ class MCPToolExecutor:
             
             if context:
                 flatten_dict(context)
+
+            # ── Dynamic Fallback for {{ $request }} ──
+            # If templates still have placeholders, try resolving them NOW
+            # (Safety net if pre-resolution during creation failed due to missing context)
+            _final_templates = _pre_resolved.copy()
+            for key in ['endpoint_str', 'body_str', 'headers_str', 'query_str']:
+                val = _final_templates.get(key)
+                if val and '{{' in val and '$request' in val:
+                    _final_templates[key] = _inject_request_params(val, context)
             
             # Build final_args using ALL expected params, not just kwargs
             final_args = {}
@@ -745,6 +758,7 @@ class MCPToolExecutor:
                     'headers_str': _inject_request_params(headers_str, merged_ctx),
                     'query_str': _inject_request_params(query_str, merged_ctx),
                 }
+
                 logger.info(f"[MCPTool] 🔑 Pre-resolved $request placeholders for MCP '{mcp.name}'")
         
         try:
@@ -769,10 +783,20 @@ class MCPToolExecutor:
 
                 # Identify props that are actually $request to exclude them from AI model
                 request_props = set()
-                # Check properties whose name or description indicates it's context-filled
+                # 1. Identify by $request in template strings (Dynamic discovery)
+                mcp_endpoint_raw = getattr(mcp, "endpoint", "") or ""
+                mcp_body_raw = json.dumps(mcp.body_template or {})
+                mcp_headers_raw = json.dumps(mcp.headers or {})
+                mcp_query_raw = json.dumps(getattr(mcp, "query_template", {}) or {})
+                
+                for t_val in [mcp_endpoint_raw, mcp_body_raw, mcp_headers_raw, mcp_query_raw]:
+                    if t_val:
+                        request_props.update(_extract_request_paths(t_val))
+
+                # 2. Check properties whose name or description indicates it's context-filled
                 for p_name, p_schema in input_schema.get("properties", {}).items():
                     desc = str(p_schema.get("description", "")).lower()
-                    if "$request" in desc:
+                    if "$request" in desc or p_name in request_props:
                         request_props.add(p_name)
 
                 # Pydantic model for LLM (context fields excluded)
@@ -856,18 +880,22 @@ async def get_agent_mcp_metadata(db: AsyncSession, agent_id: str) -> Dict[str, A
     from sqlalchemy import select
     from app.models.agent import Agent, AgentCollaborator, CollaborationStatus
     
-    result = await db.execute(
-        select(Agent)
-        .where(Agent.id == uuid.UUID(agent_id))
-    )
-    agent = result.scalar_one_or_none()
-    
-    if agent and agent.is_orchestrator:
-        for collab_rel in agent.collaborator_settings:
-            if collab_rel.status != CollaborationStatus.BLOCKED:
-                sub_executor = MCPToolExecutor(db)
-                sub_mcps = await sub_executor.get_agent_mcps(str(collab_rel.collaborator_id))
-                _extract_metadata_from_mcps(sub_mcps, metadata)
+    if agent:
+        # Check if agent has collaborator_settings (orchestrator check)
+        from sqlalchemy.orm import selectinload
+        result = await db.execute(
+            select(Agent)
+            .options(selectinload(Agent.collaborator_settings))
+            .where(Agent.id == uuid.UUID(agent_id))
+        )
+        agent = result.scalar_one_or_none()
+        
+        if agent and getattr(agent, "is_orchestrator", False):
+            for collab_rel in agent.collaborator_settings:
+                if collab_rel.status != CollaborationStatus.BLOCKED:
+                    sub_executor = MCPToolExecutor(db)
+                    sub_mcps = await sub_executor.get_agent_mcps(str(collab_rel.collaborator_id))
+                    _extract_metadata_from_mcps(sub_mcps, metadata)
             
     return metadata
 
