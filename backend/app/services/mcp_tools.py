@@ -423,9 +423,28 @@ class MCPToolExecutor:
         pre_resolved_templates: Templates with {{ $request }} already resolved
         """
         _pre_resolved = pre_resolved_templates or {}
+        
+        # State to track identical calls within this executor's lifecycle (per turn)
+        _call_history: Dict[str, Any] = {}
+        
         async def execute_tool(**kwargs) -> str:
             from app.context import get_request_context
             import os
+            import hashlib
+            
+            # Simple deduplication: hash kwargs to detect identical repeat calls
+            kwargs_hash = hashlib.md5(json.dumps(kwargs, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            if kwargs_hash in _call_history:
+                _calldata = _call_history[kwargs_hash]
+                _calldata["count"] += 1
+                
+                # If called more than 2 times identical, short-circuit
+                if _calldata["count"] > 2:
+                    logger.warning(f"[MCPTool] 🛑 PREVENTED RECURSION LOOP tool={tool_name!r} args_hash={kwargs_hash} (called {_calldata['count']} times)")
+                    return "SISTEMA: Você está repetindo a mesma chamada com os mesmos argumentos em loop. Pare e analise o último resultado. Avance para a próxima etapa."
+            else:
+                _call_history[kwargs_hash] = {"count": 1, "last_result": None}
+            
             
             context = self.context_data.copy()
             req_ctx = get_request_context()
@@ -667,14 +686,18 @@ class MCPToolExecutor:
                         filtered_json = _filter_sensitive_response_fields(resp_json)
                         safe_json = _truncate_large_response(filtered_json)
                         
-                        return json.dumps(safe_json, indent=2, ensure_ascii=False)
+                        final_res = json.dumps(safe_json, indent=2, ensure_ascii=False)
+                        _call_history[kwargs_hash]["last_result"] = final_res
+                        return final_res
                         
             except Exception as e:
                 logger.error(
                     f"[MCPTool] 💥 EXCEPTION  tool={tool_name!r}  error={type(e).__name__}: {e}",
                     exc_info=True
                 )
-                return json.dumps({"error": str(e)})
+                err_res = json.dumps({"error": str(e)})
+                _call_history[kwargs_hash]["last_result"] = err_res
+                return err_res
         
         return execute_tool
     

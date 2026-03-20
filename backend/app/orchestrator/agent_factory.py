@@ -333,9 +333,11 @@ Você tem acesso às seguintes ferramentas (MCPs). Relacione os passos solicitad
 ## Instruções de Ferramentas e Resiliência (MUITO IMPORTANTE)
 
 Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que necessário para completar suas tarefas ou consultar o banco.
- REGRA CRÍTICA DE RETENTATIVA: Se a execução de uma ferramenta retornar qualquer ERRO, "Falha", ou avisar que campos estão indisponíveis, você **NÃO DEVE DESISTIR** imediatamente.
-- Você DEVE TENTAR EXECUTAR A FERRAMENTA NOVAMENTE AO MENOS MAIS DUAS VEZES (totalizando 3 tentativas), corrigindo, omitindo ou variando os parâmetros enviados com base no seu entendimento da conversa.
-- Somente se falhar definitivamente após as 3 tentativas consecutivas, explique ao usuário detalhadamente o porquê da falha baseado na mensagem de erro que a ferramenta devolveu.
+ REGRA CRÍTICA DE RETENTATIVA: Se a execução de uma ferramenta retornar explicitamente um campo "error" ou status de falha, você **NÃO DEVE DESISTIR** imediatamente.
+- Você DEVE TENTAR EXECUTAR A FERRAMENTA NOVAMENTE AO MENOS MAIS UMA VEZ (totalizando 2 tentativas), corrigindo os parâmetros com base na mensagem de erro.
+- Se uma ferramenta retornar dados válidos (lista, objeto, mensagem de sucesso), NÃO repita a chamada. Avance para o próximo passo.
+- Somente se falhar definitivamente após 2 tentativas, explique ao usuário o motivo da falha.
+- **NUNCA chame a mesma ferramenta com os mesmos argumentos mais de 2 vezes.**
 """
             full_prompt = system_prompt + tool_instructions
             
@@ -352,7 +354,10 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             )
             result = await react_agent.ainvoke(
                 {"messages": agent_messages},
-                config=run_config
+                config={
+                    **run_config,
+                    "recursion_limit": 12  # Prevent infinite tool loops (6 iterations * 2 steps each)
+                }
             )
 
             # Log tool calls executed during this run
