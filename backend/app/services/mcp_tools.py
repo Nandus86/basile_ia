@@ -441,7 +441,9 @@ class MCPToolExecutor:
                 # If called more than 2 times identical, short-circuit
                 if _calldata["count"] > 2:
                     logger.warning(f"[MCPTool] 🛑 PREVENTED RECURSION LOOP tool={tool_name!r} args_hash={kwargs_hash} (called {_calldata['count']} times)")
-                    return "SISTEMA: Você está repetindo a mesma chamada com os mesmos argumentos em loop. Pare e analise o último resultado. Avance para a próxima etapa."
+                    # Instead of returning a string that the LLM ignores, we raise an exception
+                    # This hard-crashes the local ReAct loop so it skips this tool and proceeds.
+                    raise RuntimeError(f"Tool {tool_name} repetida consecutivamente. Execução bloqueada para prevenir loop infinito.")
             else:
                 _call_history[kwargs_hash] = {"count": 1, "last_result": None}
             
