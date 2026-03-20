@@ -517,7 +517,7 @@
               Variáveis (<code>$request</code>)
             </p>
             <v-alert type="info" variant="tonal" density="compact" class="mb-2">
-              Substitui <code>{{ '{{ $request.xxx }}' }}</code> antes de enviar a requisição.
+              Substitui <code v-pre>{{ $request.xxx }}</code> antes de enviar a requisição.
             </v-alert>
             <v-textarea
               v-model="executeVariablesJson"
