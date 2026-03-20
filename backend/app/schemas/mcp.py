@@ -75,6 +75,10 @@ class MCPList(BaseModel):
 class MCPExecuteRequest(BaseModel):
     """Schema for executing an MCP"""
     params: Dict[str, Any] = Field(default_factory=dict)
+    variables: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Values for {{ $request.xxx }} placeholders used in testing (dot-path keys, e.g. 'system.baseUrlBasileia')"
+    )
     stream: bool = Field(default=False, description="Whether to stream SSE responses")
 
 

@@ -140,16 +140,39 @@ async def delete_mcp(
     await db.commit()
 
 
-from app.services.mcp_tools import _inject_from_ai_params, _apply_response_mapping
+from app.services.mcp_tools import _inject_from_ai_params, _apply_response_mapping, _inject_request_params
 import urllib.parse
 
-async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
+
+def _unflatten_dot_paths(flat: dict) -> dict:
+    """Converts flat dot-path keys into nested dicts.
+    e.g. {'system.baseUrlBasileia': 'https://...'} -> {'system': {'baseUrlBasileia': 'https://...'}}
+    """
+    result = {}
+    for key, value in flat.items():
+        parts = key.split('.')
+        d = result
+        for part in parts[:-1]:
+            d = d.setdefault(part, {})
+        d[parts[-1]] = value
+    return result
+
+
+async def execute_http(mcp: MCP, request_params: dict, timeout: float, variables: dict = None) -> dict:
     """Execute standard HTTP request"""
     # Build safely injected params
     body_str = json.dumps(mcp.body_template or {})
     headers_str = json.dumps(mcp.headers or {})
     endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
     query_str = json.dumps(getattr(mcp, "query_template", {}) or {})
+    
+    # First resolve {{ $request.xxx }} using test variables (if provided)
+    if variables:
+        test_ctx = _unflatten_dot_paths(variables)
+        endpoint_str = _inject_request_params(endpoint_str, test_ctx)
+        body_str = _inject_request_params(body_str, test_ctx)
+        headers_str = _inject_request_params(headers_str, test_ctx)
+        query_str = _inject_request_params(query_str, test_ctx)
     
     body_str, _ = _inject_from_ai_params(body_str, request_params)
     headers_str, _ = _inject_from_ai_params(headers_str, request_params)
@@ -230,7 +253,7 @@ async def execute_http(mcp: MCP, request_params: dict, timeout: float) -> dict:
         return resp_json
 
 
-async def execute_sse(mcp: MCP, request_params: dict, timeout: float) -> dict:
+async def execute_sse(mcp: MCP, request_params: dict, timeout: float, variables: dict = None) -> dict:
     """Execute SSE (Server-Sent Events) request and collect all events"""
     events = []
     final_result = None
@@ -240,6 +263,14 @@ async def execute_sse(mcp: MCP, request_params: dict, timeout: float) -> dict:
     headers_str = json.dumps(mcp.headers or {})
     endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
     query_str = json.dumps(getattr(mcp, "query_template", {}) or {})
+    
+    # First resolve {{ $request.xxx }} using test variables (if provided)
+    if variables:
+        test_ctx = _unflatten_dot_paths(variables)
+        endpoint_str = _inject_request_params(endpoint_str, test_ctx)
+        body_str = _inject_request_params(body_str, test_ctx)
+        headers_str = _inject_request_params(headers_str, test_ctx)
+        query_str = _inject_request_params(query_str, test_ctx)
     
     body_str, _ = _inject_from_ai_params(body_str, request_params)
     headers_str, _ = _inject_from_ai_params(headers_str, request_params)
@@ -384,10 +415,10 @@ async def execute_mcp(
         protocol = (mcp.protocol or "http").lower()
         
         if protocol == "http":
-            result_data = await execute_http(mcp, request.params, timeout)
+            result_data = await execute_http(mcp, request.params, timeout, variables=request.variables or {})
             events = None
         elif protocol == "sse":
-            sse_result = await execute_sse(mcp, request.params, timeout)
+            sse_result = await execute_sse(mcp, request.params, timeout, variables=request.variables or {})
             result_data = sse_result.get("result")
             events = sse_result.get("events")
         elif protocol == "mcp":
