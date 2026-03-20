@@ -1,11 +1,12 @@
 <template>
   <v-app>
     <router-view />
+    <ToastNotifications />
   </v-app>
 </template>
 
 <script setup>
-// App root component
+import ToastNotifications from '@/components/ToastNotifications.vue'
 </script>
 
 <style>
