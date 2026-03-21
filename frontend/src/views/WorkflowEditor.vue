@@ -397,6 +397,7 @@ async function saveDefinition() {
     saveStatus.value = { text: 'Erro ao Salvar', color: 'error', icon: 'mdi-close-circle' }
   } finally {
     saving.value = false
+  }
 }
 
 function goBack() {
