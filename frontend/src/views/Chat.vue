@@ -110,7 +110,7 @@
           <!-- Context Data -->
           <div class="mb-4">
              <div class="d-flex align-center justify-space-between mb-2">
-               <div class="text-caption text-medium-emphasis font-weight-medium">CONTEXT DATA (JSON)</div>
+               <div class="text-caption text-medium-emphasis font-weight-medium">SIMULADOR DE WEBHOOK (JSON)</div>
                <v-btn variant="text" size="x-small" color="primary" @click="contextDialog = true">Editar</v-btn>
              </div>
              <v-card 
@@ -283,17 +283,22 @@
     <v-dialog v-model="contextDialog" maxWidth="600">
       <v-card rounded="xl">
         <v-card-title class="d-flex align-center px-6 py-4 border-b">
-          <v-icon color="primary" class="mr-2">mdi-code-json</v-icon>
-          Editar Dados de Contexto
+          <v-icon color="primary" class="mr-2">mdi-webhook</v-icon>
+          Simulador de Webhook (JSON)
           <v-spacer></v-spacer>
           <v-btn icon="mdi-close" variant="text" @click="contextDialog = false"></v-btn>
         </v-card-title>
         <v-card-text class="pa-0">
-          <div class="bg-surface-light px-6 py-2 border-b d-flex gap-2 align-center">
-            <span class="text-caption text-medium-emphasis">Presets:</span>
-            <v-chip size="x-small" label link @click="applyContextPreset('church')">Igreja</v-chip>
-            <v-chip size="x-small" label link @click="applyContextPreset('whatsapp')">WhatsApp</v-chip>
-            <v-chip size="x-small" label link @click="applyContextPreset('clear')" color="error" variant="text">Limpar</v-chip>
+          <div class="bg-surface-light px-6 py-2 border-b">
+            <p class="text-caption text-medium-emphasis mb-2">O JSON digitado abaixo será injetado na raiz do payload (junto com a mensagem do chat e a sessão). Você pode simular dados contextuais, transition_data, callback_url e metadados customizados.</p>
+            <div class="d-flex gap-2 align-center">
+              <span class="text-caption font-weight-bold">Presets:</span>
+              <v-chip size="x-small" label link @click="applyContextPreset('church')">Apenas ContextData</v-chip>
+              <v-chip size="x-small" label link @click="applyContextPreset('whatsapp')">Ex. WhatsApp</v-chip>
+              <v-chip size="x-small" label link color="primary" @click="applyContextPreset('full_webhook')">Webhook Completo</v-chip>
+              <v-separator vertical class="mx-1"></v-separator>
+              <v-chip size="x-small" label link @click="applyContextPreset('clear')" color="error" variant="text">Limpar</v-chip>
+            </div>
           </div>
           <div class="pa-4">
             <v-textarea
@@ -459,8 +464,33 @@ function applyContextPreset(type) {
     return
   }
   const presets = {
-    church: { nome: "Maria", grupo: "Louvor", id: 123 },
-    whatsapp: { telefone: "551199999999", status: "online" }
+    church: {
+      context_data: { nome: "Maria", grupo: "Louvor", id: 123 }
+    },
+    whatsapp: {
+      client: "whatsapp",
+      number: "551199999999",
+      contact_name: "João da Silva",
+      context_data: { ultima_compra: "2023-10-01" }
+    },
+    full_webhook: {
+      context_data: { 
+        tenant_id: "T-001",
+        user_role: "admin",
+        details: "dados de configuração que o Agente precisa ler livremente"
+      },
+      transition_data: {
+        current_step: "suporte_nivel_2",
+        ticket_id: "TK-908"
+      },
+      callback_url: "https://minha-api.com/webhook/callback",
+      system: {
+        baseUrl: "https://sistema.interno",
+        token: "XYZ123..."
+      },
+      custom_metadata: "informação extra",
+      channel: "web_widget"
+    }
   }
   contextDataJson.value = JSON.stringify(presets[type], null, 2)
 }
@@ -502,12 +532,22 @@ async function sendMessage() {
   scrollToBottom()
   
   try {
-    const payload = {
+    // Base payload
+    let payload = {
       message: text,
       session_id: sessionId.value,
       agent_id: selectedAgentId.value,
-      user_access_level: userAccessLevel.value,
-      context_data: contextDataJson.value ? JSON.parse(contextDataJson.value) : null
+      user_access_level: userAccessLevel.value
+    }
+    
+    // Injetar dados do simulador de webhook na raiz do payload
+    if (contextDataJson.value) {
+      try {
+        const injectedData = JSON.parse(contextDataJson.value);
+        payload = { ...payload, ...injectedData };
+      } catch(e) {
+        console.warn("JSON do simulador inválido", e);
+      }
     }
 
     const res = await axios.post('/webhook/process', payload)
