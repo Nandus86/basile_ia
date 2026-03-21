@@ -710,11 +710,13 @@ async def process_message_task(
             if callback_url and agent:
                 monitor = StatusMonitor(
                     callback_url=callback_url,
-                    agent_name=agent.name,
-                    enabled=agent.status_updates_enabled,
-                    config=agent.status_updates_config
+                    agent_config={
+                        "status_updates_enabled": getattr(agent, "status_updates_enabled", False),
+                        "status_updates_config": getattr(agent, "status_updates_config", {})
+                    },
+                    session_id=session_id
                 )
-                monitor.start()
+                await monitor.start()
 
             if not agent_config:
                 # No specific agent → fallback to Supervisor router
