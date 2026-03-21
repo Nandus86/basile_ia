@@ -31,7 +31,7 @@
               </div>
             </template>
             <template v-else-if="statusChartSeries.length > 0">
-              <apexchart type="donut" width="100%" height="280" :options="statusChartOptions" :series="statusChartSeries"></apexchart>
+              <apexchart type="donut" width="100%" height="280" :options="statusChartOptions" :series="statusChartSeries" id="statusChart"></apexchart>
             </template>
             <template v-else>
               <div class="text-center py-12 text-medium-emphasis">Nenhum dado encontrado</div>
@@ -53,7 +53,7 @@
               </div>
             </template>
             <template v-else-if="pathChartSeries[0].data.length > 0">
-              <apexchart type="bar" height="280" :options="pathChartOptions" :series="pathChartSeries"></apexchart>
+              <apexchart type="bar" height="280" :options="pathChartOptions" :series="pathChartSeries" id="pathChart"></apexchart>
             </template>
             <template v-else>
               <div class="text-center py-12 text-medium-emphasis">Nenhum dado encontrado</div>
@@ -239,6 +239,7 @@
 import { ref, onMounted } from 'vue'
 import axiosInstance from '@/plugins/axios'
 import VueApexCharts from 'vue3-apexcharts'
+import ApexCharts from 'apexcharts'
 
 const apexchart = VueApexCharts
 
@@ -249,26 +250,54 @@ const statsLoading = ref(false)
 // Charts — Dark themed
 const statusChartSeries = ref([])
 const statusChartOptions = ref({
-  chart: { type: 'donut', fontFamily: 'Inter, sans-serif', background: 'transparent' },
+  chart: {
+    type: 'donut',
+    fontFamily: 'Inter, sans-serif',
+    background: 'transparent',
+    events: {
+      legendClick: (chartContext, seriesIndex, config) => {
+        chartContext.hideSeries(config.globals.colors[seriesIndex])
+      }
+    }
+  },
   labels: [],
   colors: ['#00FC8B', '#FF0055', '#FFB800', '#00D1FF'],
   plotOptions: { pie: { donut: { size: '68%', labels: { show: true, total: { show: true, label: 'Total', color: 'rgba(255,255,255,0.6)', formatter: (w) => w.globals.seriesTotals.reduce((a, b) => a + b, 0) } } } } },
   dataLabels: { enabled: false },
   legend: { position: 'bottom', labels: { colors: 'rgba(255,255,255,0.6)' } },
   stroke: { width: 2, colors: ['#070a13'] },
-  tooltip: { theme: 'dark' }
+      tooltip: { theme: 'dark', y: { formatter: (val, opts) => `${val} (${((val / opts.config.series.reduce((a, b) => a + b, 0)) * 100).toFixed(1)}%)` } },
+  responsive: [{
+    breakpoint: 480,
+    options: {
+      chart: { height: 220 },
+      legend: { position: 'right' }
+    }
+  }]
 })
 
 const pathChartSeries = ref([{ name: 'Requisições', data: [] }])
 const pathChartOptions = ref({
-  chart: { type: 'bar', toolbar: { show: false }, fontFamily: 'Inter, sans-serif', background: 'transparent' },
-  plotOptions: { bar: { horizontal: true, borderRadius: 6, barHeight: '60%' } },
-  dataLabels: { enabled: true, style: { colors: ['#fff'] } },
+  chart: {
+    type: 'bar',
+    toolbar: { show: true, tools: { download: true } },
+    fontFamily: 'Inter, sans-serif',
+    background: 'transparent'
+  },
+  plotOptions: { bar: { horizontal: true, borderRadius: 6, barHeight: '60%', dataLabels: { position: 'top' } } },
+  dataLabels: { enabled: true, style: { colors: ['#fff'] }, formatter: (val) => `${val}` },
   xaxis: { categories: [], labels: { style: { colors: 'rgba(255,255,255,0.5)' } } },
   yaxis: { labels: { style: { colors: 'rgba(255,255,255,0.7)' } } },
   grid: { borderColor: 'rgba(255,255,255,0.04)' },
   colors: ['#9D4EDD'],
-  tooltip: { theme: 'dark' }
+  tooltip: { theme: 'dark' },
+  responsive: [{
+    breakpoint: 768,
+    options: {
+      chart: { height: 240 },
+      yaxis: { labels: { rotate: -90 } }
+    }
+  }]
 })
 
 // Data Table
@@ -291,6 +320,19 @@ const headers = [
 const dialog = ref(false)
 const selectedJob = ref(null)
 const snackbar = ref({ show: false, text: '', color: 'success' })
+
+function exportDonut() {
+  const chart = ApexCharts.getChartByID('statusChart')
+  if (chart) {
+    chart.exportToPng().then(url => {
+      const link = document.createElement('a')
+      link.download = 'status-chart.png'
+      link.href = url
+      link.click()
+      showSnackbar('Gráfico exportado!', 'success')
+    }).catch(() => showSnackbar('Erro ao exportar', 'error'))
+  }
+}
 
 // Test mode references
 const testingJob = ref(false)

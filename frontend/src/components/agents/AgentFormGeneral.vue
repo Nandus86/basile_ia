@@ -6,7 +6,7 @@
           v-model="formData.name"
           label="Nome do Agente"
           placeholder="Ex: Assistente de Vendas"
-          :rules="[v => !!v || 'Nome é obrigatório']"
+          :rules="[v => !!v || 'Nome é obrigatório', v => (v && v.length >= 3) || 'Nome deve ter pelo menos 3 caracteres', v => /^[\w\sá-úÁ-ÚüÜ]+$/.test(v) || 'Nome inválido']"
           prepend-inner-icon="mdi-robot"
         ></v-text-field>
       </v-col>
@@ -27,6 +27,7 @@
       label="Descrição"
       placeholder="Descreva brevemente a função deste agente..."
       rows="2"
+      :rules="[v => (!v || v.length <= 500) || 'Descrição muito longa (máximo 500 caracteres)', v => (!v || v.length >= 5) || 'Descrição deve ter pelo menos 5 caracteres']"
       prepend-inner-icon="mdi-text"
     ></v-textarea>
     
@@ -35,7 +36,7 @@
       label="System Prompt"
       placeholder="Instruções de comportamento do agente..."
       rows="5"
-      :rules="[v => !!v || 'System prompt é obrigatório']"
+      :rules="[v => !!v || 'System prompt é obrigatório', v => (v && v.length >= 10) || 'System prompt deve ter pelo menos 10 caracteres', v => (v && v.length <= 10000) || 'System prompt muito longo (máximo 10.000 caracteres)']"
       prepend-inner-icon="mdi-script-text"
     ></v-textarea>
     
@@ -88,6 +89,7 @@
           step="0.1"
           min="0"
           max="2"
+          :rules="[v => (v === '' || v === null || !isNaN(v)) || 'Valor numérico inválido', v => (v === '' || v === null || (v >= 0 && v <= 2)) || 'Temperature deve ser entre 0 e 2']"
           prepend-inner-icon="mdi-thermometer"
         ></v-text-field>
       </v-col>
@@ -96,8 +98,7 @@
           v-model="formData.max_tokens"
           label="Max Tokens"
           type="number"
-          min="100"
-          max="128000"
+          :rules="[v => (v === '' || v === null || !isNaN(v)) || 'Valor numérico inválido', v => (v === '' || v === null || (v >= 100 && v <= 128000)) || 'Max tokens deve ser entre 100 e 128.000']"
           prepend-inner-icon="mdi-counter"
         ></v-text-field>
       </v-col>
@@ -117,16 +118,15 @@
         ></v-select>
       </v-col>
       <v-col cols="12" md="6">
-        <v-text-field
-          v-model="formData.config.max_completion_tokens"
-          label="Max Completion Tokens"
-          type="number"
-          min="1000"
-          max="128000"
-          prepend-inner-icon="mdi-counter"
-          hint="Total tokens saída"
-          persistent-hint
-        ></v-text-field>
+          <v-text-field
+            v-model="formData.config.max_completion_tokens"
+            label="Max Completion Tokens"
+            type="number"
+            :rules="[v => (!v || !isNaN(v)) || 'Valor numérico inválido', v => (!v || (v >= 1000 && v <= 128000)) || 'Max completion tokens deve ser entre 1.000 e 128.000']"
+            prepend-inner-icon="mdi-counter"
+            hint="Total tokens saída"
+            persistent-hint
+          ></v-text-field>
       </v-col>
     </v-row>
 
@@ -247,17 +247,16 @@
             </v-switch>
           </v-col>
           <v-col cols="12" md="6">
-            <v-text-field
-              v-model="formData.config.short_term_memory_ttl_hours"
-              label="Tempo de Retenção (Horas)"
-              type="number"
-              min="1"
-              max="720"
-              prepend-inner-icon="mdi-clock-outline"
-              :disabled="!formData.config.short_term_memory_enabled"
-              hint="Tempo que o agente lembrará da conversa"
-              persistent-hint
-            ></v-text-field>
+          <v-text-field
+            v-model="formData.config.short_term_memory_ttl_hours"
+            label="Tempo de Retenção (Horas)"
+            type="number"
+            :rules="[v => (!v || !isNaN(v)) || 'Valor numérico inválido', v => (!v || (v >= 1 && v <= 720)) || 'Tempo deve ser entre 1 e 720 horas']"
+            prepend-inner-icon="mdi-clock-outline"
+            :disabled="!formData.config.short_term_memory_enabled"
+            hint="Tempo que o agente lembrará da conversa"
+            persistent-hint
+          ></v-text-field>
           </v-col>
         </v-row>
       </v-card-text>

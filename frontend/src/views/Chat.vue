@@ -307,7 +307,7 @@
               variant="outlined"
               rows="10"
               class="font-monospace"
-              hide-details
+              :rules="[validateContextJson]"
               :error-messages="contextDataError"
             ></v-textarea>
           </div>
@@ -353,6 +353,7 @@ const lastAgentUsed = ref(null)
 // Context Data
 const contextDataJson = ref('')
 const contextDataError = ref('')
+let debounceTimer = null
 
 // Constants
 const quickPrompts = [
@@ -431,24 +432,30 @@ function validateContextJson(val) {
     JSON.parse(val)
     return true
   } catch (e) {
-    return false
+    return e instanceof SyntaxError ? `Erro de sintaxe JSON: ${e.message}` : 'JSON inválido'
   }
 }
 
-watch(contextDataJson, (val) => {
-  if (!val.trim()) {
-    contextDataError.value = ''
-    localStorage.removeItem('chat_context_data')
-    return
-  }
-  try {
-    JSON.parse(val)
-    contextDataError.value = ''
-    localStorage.setItem('chat_context_data', val)
-  } catch (e) {
-    contextDataError.value = e.message
-  }
-})
+function debounceValidate() {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    const val = contextDataJson.value
+    if (!val.trim()) {
+      contextDataError.value = ''
+      localStorage.removeItem('chat_context_data')
+      return
+    }
+    try {
+      JSON.parse(val)
+      contextDataError.value = ''
+      localStorage.setItem('chat_context_data', val)
+    } catch (e) {
+      contextDataError.value = e instanceof SyntaxError ? `Sintaxe inválida: ${e.message}` : 'JSON inválido'
+    }
+  }, 300)
+}
+
+watch(contextDataJson, debounceValidate)
 
 onMounted(() => {
   fetchAgents()

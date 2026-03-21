@@ -17,6 +17,8 @@
         {{ saveStatus.text }}
       </v-chip>
       
+
+
       <v-btn color="primary" @click="saveDefinition" :loading="saving" prepend-icon="mdi-content-save">
         Salvar
       </v-btn>
@@ -209,6 +211,8 @@ const elements = ref([])
 const { project, viewport } = useVueFlow()
 const vueFlowInstance = ref(null)
 
+
+
 const workflow = ref({})
 const agentsList = ref([])
 const webhooksList = ref([])
@@ -217,7 +221,9 @@ const selectedNode = ref(null)
 
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
 
-let idCounter = 1
+
+
+
 
 onMounted(async () => {
   await Promise.all([
@@ -247,6 +253,13 @@ async function fetchWebhooks() {
 
 async function loadWorkflow() {
   try {
+    const res = await axios.get(`/workflows/${workflowId}`)
+    workflow.value = res.data.workflow || res.data
+    elements.value = workflow.value.definition?.elements || []
+  } catch (e) {
+    console.error(e)
+  }
+}
     const res = await axios.get(`/workflows/${workflowId}`)
     workflow.value = res.data
     
@@ -303,7 +316,7 @@ const onDrop = (event) => {
   
   const newNode = {
     id: `node-${idCounter++}`,
-    type: 'default', // Using default node style but parameterized logic. Wait till we build custom nodes. For now we use standard boxes
+    type: 'default', // Use default node with styling
     label: type === 'trigger' ? 'Novo Webhook' : (type === 'orchestrator' ? 'Orquestrador' : 'Especialista'),
     position,
     data: {
@@ -312,15 +325,17 @@ const onDrop = (event) => {
       webhookConfigId: null,
       instructionsOverride: ''
     },
-    // Visual styling inside the default node representation:
     style: {
       background: type === 'trigger' ? '#FFCC0020' : (type === 'orchestrator' ? '#9933CC20' : '#3399FF20'),
       border: `2px solid ${type === 'trigger' ? '#FFCC00' : (type === 'orchestrator' ? '#9933CC' : '#3399FF')}`,
-      borderRadius: '8px',
-      padding: '10px',
+      borderRadius: '12px',
+      padding: '12px',
       color: '#ffffff',
-      fontWeight: 'bold'
+      fontWeight: 'bold',
+      minWidth: '150px',
+      minHeight: '70px'
     }
+  }
   }
   
   // Custom Handles rules via style (Pseudo-implementation until CustomNodes.vue)
@@ -372,9 +387,8 @@ function markUnsaved() {
 }
 
 async function saveDefinition() {
-  saving.value = true
-  saveStatus.value = { text: 'Salvando...', color: 'info', icon: 'mdi-loading mdi-spin' }
   try {
+    saving.value = true
     const payload = {
       name: workflow.value.name,
       description: workflow.value.description,
@@ -382,6 +396,19 @@ async function saveDefinition() {
       definition: {
         elements: elements.value
       }
+    }
+    await axios.put(`/workflows/${workflowId}`, payload)
+    saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
+
+  } catch (e) {
+    console.error(e)
+    saveStatus.value = { text: 'Erro ao Salvar', color: 'error', icon: 'mdi-close-circle' }
+  } finally {
+    saving.value = false
+  }
+}
+
+
     }
     await axios.put(`/workflows/${workflowId}`, payload)
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
