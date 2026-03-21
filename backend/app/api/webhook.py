@@ -76,51 +76,11 @@ async def process_message(
     full_payload = {**request.model_dump(), **(request.model_extra or {})}
     print(f"[Webhook] 📥 Received full request context: {list(full_payload.keys())}")
     set_request_context(full_payload)
-    
     try:
-        # Resolve STM configuration
-        stm_enabled = True
-        stm_ttl_seconds = 86400
+        from app.worker.tasks import process_message_task
+        import uuid
+        from app.models.job_log import JobLog
         
-        # We need the DB session to resolve the agent
-        # /process handles mostly standard orchestrator v2, but we can fetch agent to get its config
-        from app.orchestrator.agent_factory import AgentFactory
-        factory = AgentFactory(db)
-        
-        if request.agent_id:
-            agent = await factory.get_agent_by_id(request.agent_id)
-        else:
-            agents = await factory.get_accessible_agents(request.user_access_level)
-            agent = agents[0] if agents else None
-            
-        if agent and agent.config:
-            stm_enabled = agent.config.get("short_term_memory_enabled", True)
-            stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
-            stm_ttl_seconds = int(stm_ttl_hours * 3600)
-            
-        # Get conversation history
-        history = []
-        if stm_enabled:
-            history = await redis.get_conversation(request.session_id)
-            
-            # Store user message in history
-            await redis.add_message(
-                session_id=request.session_id,
-                role="user",
-                content=request.message,
-                ttl_seconds=stm_ttl_seconds
-            )
-        
-        # Extract extra root fields and add to context_data
-        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
-        payload = {**request.model_dump(), **(request.model_extra or {})}
-        c_data = request.context_data or {}
-        for k, v in payload.items():
-            if k not in standard_keys:
-                c_data[k] = v
-        if c_data:
-            request.context_data = c_data
-            
         # Log to DB
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
@@ -132,43 +92,41 @@ async def process_message(
         await db.commit()
         await db.refresh(job_log)
         
-        # Run the supervisor orchestrator (v2)
-        result = await run_orchestrator_v2(
+        # Call the worker's Agent-First task directly
+        # process_message_task returns the full response dictionary, handles MTM history, and executes the agent directly.
+        task_result = await process_message_task(
+            ctx={},  # worker job context not needed for sync run
             message=request.message,
             session_id=request.session_id,
-            history=history,
             agent_id=request.agent_id,
-            db=db,
             user_access_level=request.user_access_level,
-            context_data=request.context_data
+            context_data=request.context_data,
+            transition_data=request.transition_data,
+            callback_url=request.callback_url
         )
-        
-        # Store response in history
-        if stm_enabled:
-            await redis.add_message(
-                session_id=request.session_id,
-                role="assistant",
-                content=result["response"],
-                ttl_seconds=stm_ttl_seconds
-            )
         
         processing_time = (time.time() - start_time) * 1000
         
+        # Update JobLog with success
         job_log.status = "completed"
-        job_log.response_data = {"output": result["response"], "agent_used": result.get("agent_used")}
+        job_log.response_data = {
+            "output": task_result.get("response", ""), 
+            "agent_used": task_result.get("agent_used")
+        }
         job_log.duration_ms = int(processing_time)
+        
         try:
             from datetime import datetime, timezone
             job_log.completed_at = datetime.now(timezone.utc)
             await db.commit()
-        except:
+        except Exception:
             pass
 
         return ProcessResponse(
-            response=result["response"],
-            agent_used=result.get("agent_used"),
+            response=task_result.get("response", ""),
+            agent_used=task_result.get("agent_used"),
             processing_time_ms=processing_time,
-            transition_data=request.transition_data
+            transition_data=task_result.get("transition_data")
         )
         
     except Exception as e:
