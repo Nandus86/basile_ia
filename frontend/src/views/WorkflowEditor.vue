@@ -211,7 +211,7 @@ const elements = ref([])
 const { project, viewport } = useVueFlow()
 const vueFlowInstance = ref(null)
 
-
+let idCounter = 1
 
 const workflow = ref({})
 const agentsList = ref([])
@@ -255,18 +255,11 @@ async function loadWorkflow() {
   try {
     const res = await axios.get(`/workflows/${workflowId}`)
     workflow.value = res.data.workflow || res.data
-    elements.value = workflow.value.definition?.elements || []
-  } catch (e) {
-    console.error(e)
-  }
-}
-    const res = await axios.get(`/workflows/${workflowId}`)
-    workflow.value = res.data
-    
+
     // Attempt to load definition
     if (workflow.value.definition && workflow.value.definition.elements) {
       elements.value = workflow.value.definition.elements
-      
+
       // update idCounter to prevent overlaps
       workflow.value.definition.elements.forEach(el => {
         if (!el.source && !el.target) {
@@ -336,7 +329,6 @@ const onDrop = (event) => {
       minHeight: '70px'
     }
   }
-  }
   
   // Custom Handles rules via style (Pseudo-implementation until CustomNodes.vue)
   if (type === 'orchestrator') {
@@ -405,19 +397,6 @@ async function saveDefinition() {
     saveStatus.value = { text: 'Erro ao Salvar', color: 'error', icon: 'mdi-close-circle' }
   } finally {
     saving.value = false
-  }
-}
-
-
-    }
-    await axios.put(`/workflows/${workflowId}`, payload)
-    saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
-  } catch (e) {
-    console.error(e)
-    saveStatus.value = { text: 'Erro ao Salvar', color: 'error', icon: 'mdi-close-circle' }
-  } finally {
-    saving.value = false
-  }
 }
 
 function goBack() {
