@@ -76,6 +76,17 @@ async def process_message(
     full_payload = {**request.model_dump(), **(request.model_extra or {})}
     print(f"[Webhook] 📥 Received full request context: {list(full_payload.keys())}")
     set_request_context(full_payload)
+    
+    # Extract extra root fields and add to context_data
+    # This ensures that fields like "church", "member", "system" are passed to the agent's context_data
+    standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+    c_data = request.context_data or {}
+    for k, v in full_payload.items():
+        if k not in standard_keys:
+            c_data[k] = v
+    if c_data:
+        request.context_data = c_data
+        
     try:
         from app.worker.tasks import process_message_task
         import uuid
