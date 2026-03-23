@@ -84,6 +84,52 @@ class RedisClient:
         key = f"conversation:{session_id}"
         await client.delete(key)
 
+    async def save_session_context(
+        self,
+        session_id: str,
+        agent_id: str,
+        agent_name: str,
+        ttl_seconds: int = 86400,
+    ):
+        """Save agent session context for continuity across interactions."""
+        from datetime import datetime, timezone
+
+        client = await self.connect()
+        key = f"session_context:{session_id}"
+
+        # Load existing context to accumulate agents_used
+        existing_raw = await client.get(key)
+        agents_used: list = []
+        if existing_raw:
+            try:
+                existing = json.loads(existing_raw)
+                agents_used = existing.get("agents_used", [])
+            except Exception:
+                pass
+
+        if agent_name not in agents_used:
+            agents_used.append(agent_name)
+
+        payload = json.dumps({
+            "last_agent_id": agent_id,
+            "last_agent_name": agent_name,
+            "agents_used": agents_used,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        await client.setex(key, ttl_seconds, payload)
+
+    async def get_session_context(self, session_id: str) -> Optional[dict]:
+        """Get agent session context for continuity. Returns None if not found."""
+        client = await self.connect()
+        key = f"session_context:{session_id}"
+        raw = await client.get(key)
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception:
+                return None
+        return None
+
     async def publish(self, channel: str, message: str):
         """Publish a message to a channel (Pub/Sub)"""
         client = await self.connect()

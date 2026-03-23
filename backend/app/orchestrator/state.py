@@ -49,6 +49,9 @@ class SupervisorState(TypedDict, total=False):
     loop_history: List[Dict[str, str]]          # [{agent, response_summary}]
     orchestrator_loop_config: Dict[str, Any]    # Copy of agent.orchestrator_config
 
+    # Session continuity
+    session_context: Optional[Dict[str, Any]]  # {last_agent_id, last_agent_name, agents_used}
+
 
 # Legacy state for backward compatibility
 class OrchestratorState(TypedDict, total=False):

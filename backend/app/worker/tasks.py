@@ -32,6 +32,7 @@ async def _enrich_agent_prompt(
     history: Optional[List] = None,
     transition_data: Optional[Dict[str, Any]] = None,
     monitor: Optional[StatusMonitor] = None,
+    session_context: Optional[Dict[str, Any]] = None,
 ):
     """
     Enrich an agent's system_prompt with all contextual data:
@@ -89,6 +90,19 @@ async def _enrich_agent_prompt(
         f"- Data/Hora legível: {current_time_str}\n"
         f"- Timestamp ISO: {current_iso}\n"
     )
+
+    # 0. Session Continuity — inject previous agent info
+    if session_context:
+        last_name = session_context.get("last_agent_name", "")
+        agents_used = session_context.get("agents_used", [])
+        if last_name:
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                f"\n\n## Continuidade do Atendimento\n\n"
+                f"Este contato foi atendido anteriormente pelo agente \"{last_name}\".\n"
+                f"Agentes que já participaram desta sessão: {', '.join(agents_used)}.\n"
+                f"Considere este histórico para manter a fluidez do atendimento.\n"
+            )
+            print(f"[Task] 📋 Session continuity injected: last_agent='{last_name}'")
 
     # 1. RAG Context
     try:
@@ -746,6 +760,7 @@ async def process_message_task(
                 )
                 final_result = result["response"]
                 agent_used = result.get("agent_used")
+                last_agent = result.get("last_agent")
 
                 await redis_client.add_message(
                     session_id=session_id, role="assistant",
@@ -761,6 +776,7 @@ async def process_message_task(
                     "response": final_result,
                     "agent_used": agent_used,
                     "processing_time_ms": processing_time,
+                    "last_agent": last_agent,
                 }
                 if transition_data:
                     response_data["transition_data"] = transition_data
@@ -826,9 +842,19 @@ async def process_message_task(
             # Save original system prompt before enrichment (for self-correction analysis)
             agent_config["original_system_prompt"] = agent_config.get("system_prompt", "")
 
-            # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation)
+            # Load session context for continuity
+            session_context = None
+            try:
+                session_context = await redis_client.get_session_context(session_id)
+                if session_context:
+                    print(f"[Task] 📋 Session context loaded: last_agent='{session_context.get('last_agent_name')}', agents_used={session_context.get('agents_used')}")
+            except Exception as e:
+                print(f"[Task] ⚠️ Failed to load session context: {e}")
+
+            # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation, Session Continuity)
             rag_context = await _enrich_agent_prompt(
-                db, agent_config, agent_id, message, session_id, context_data, history, transition_data
+                db, agent_config, agent_id, message, session_id, context_data, history, transition_data,
+                session_context=session_context,
             )
 
             # ── Execute agent ──
@@ -896,6 +922,19 @@ async def process_message_task(
                 response_data["transition_data"] = transition_data
             if callback_url:
                 await _send_callback(callback_url, response_data)
+
+            # Save session context for continuity
+            try:
+                await redis_client.save_session_context(
+                    session_id=session_id,
+                    agent_id=str(agent_id),
+                    agent_name=agent_used,
+                    ttl_seconds=stm_ttl_seconds,
+                )
+                response_data["last_agent"] = agent_used
+                print(f"[Task] 💾 Session context saved: last_agent='{agent_used}'")
+            except Exception as e:
+                print(f"[Task] ⚠️ Failed to save session context: {e}")
 
             # Agent self-correction: detect prompt violations in background
             if vector_memory_enabled and agent_id and final_result:

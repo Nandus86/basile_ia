@@ -137,7 +137,8 @@ async def process_message(
             response=task_result.get("response", ""),
             agent_used=task_result.get("agent_used"),
             processing_time_ms=processing_time,
-            transition_data=task_result.get("transition_data")
+            transition_data=task_result.get("transition_data"),
+            last_agent=task_result.get("last_agent")
         )
         
     except Exception as e:
@@ -505,7 +506,8 @@ async def process_dynamic_webhook(
                 response=result.get("response", ""),
                 agent_used=result.get("agent_used", target_agent_id),
                 processing_time_ms=processing_time,
-                transition_data=result.get("transition_data")
+                transition_data=result.get("transition_data"),
+                last_agent=result.get("last_agent")
             )
         except Exception as e:
             processing_time = (time.time() - start_time) * 1000

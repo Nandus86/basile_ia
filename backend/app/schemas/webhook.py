@@ -44,6 +44,7 @@ class ProcessResponse(BaseModel):
     agent_used: Optional[str] = None
     processing_time_ms: Optional[float] = None
     transition_data: Optional[Dict[str, Any]] = Field(default=None, description="Dados de transição passados no request")
+    last_agent: Optional[str] = Field(default=None, description="Nome do último agente que atendeu esta sessão")
 
 
 class AsyncProcessResponse(BaseModel):

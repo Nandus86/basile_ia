@@ -40,6 +40,7 @@ class Supervisor:
         """
         Router node: Selects the best agent for the message.
         Also loads orchestrator_config for reasoning loop settings.
+        Loads session_context from Redis for continuity hints.
         """
         config = RunnableConfig(
             run_name="Agent Router",
@@ -50,6 +51,18 @@ class Supervisor:
         user_message = state.get("original_message", "")
         requested_agent_id = state.get("requested_agent_id")
         user_access_level = state.get("user_access_level", "normal")
+        
+        # Load session context for continuity
+        session_context = state.get("session_context")
+        if not session_context:
+            try:
+                from app.redis_client import redis_client
+                session_context = await redis_client.get_session_context(state.get("session_id", ""))
+                if session_context:
+                    state["session_context"] = session_context
+                    print(f"[Supervisor] 📋 Session context loaded: last_agent='{session_context.get('last_agent_name')}', agents_used={session_context.get('agents_used')}")
+            except Exception as e:
+                print(f"[Supervisor] ⚠️ Failed to load session context: {e}")
         
         # If specific agent requested
         if requested_agent_id:
@@ -120,13 +133,26 @@ DESCRIÇÃO: {agent.description or 'Sem descrição'}
         
         agents_str = "\n---\n".join(agent_descriptions)
         
+        # Build continuity hint if session context exists
+        continuity_hint = ""
+        if session_context:
+            last_name = session_context.get("last_agent_name", "")
+            agents_used = session_context.get("agents_used", [])
+            if last_name:
+                continuity_hint = (
+                    f"\nNOTA DE CONTINUIDADE: Este contato foi atendido anteriormente pelo agente \"{last_name}\".\n"
+                    f"Agentes que já participaram desta sessão: {', '.join(agents_used)}.\n"
+                    f"Considere manter a continuidade com o mesmo agente, a menos que a mensagem claramente demande outro especialista.\n"
+                )
+        
         selector_prompt = f"""Você é um roteador especializado. Sua tarefa é escolher o agente mais adequado para a mensagem.
         
 REGRAS DE ESCOLHA:
 1. Analise as CAPACIDADES e FERRAMENTAS listadas para cada agente.
 2. Certifique-se de que o agente selecionado tem o escopo necessário para resolver a solicitação.
 3. Se a mensagem do usuário envolver uma ação específica (ex: agendar, buscar no banco), prefira agentes que tenham ferramentas (MCPs) para isso.
-
+4. Se houver nota de continuidade, prefira manter o mesmo agente, salvo se a mensagem claramente exigir outro.
+{continuity_hint}
 MENSAGEM DO USUÁRIO: "{user_message}"
 
 AGENTES DISPONÍVEIS:
@@ -842,6 +868,8 @@ async def run_supervisor(
         "evaluation_reasoning": "",
         "loop_history": [],
         "orchestrator_loop_config": {},
+        # Session continuity
+        "session_context": None,
     }
     
     # Run graph with LangSmith tracing
@@ -856,8 +884,25 @@ async def run_supervisor(
     
     result = await graph.ainvoke(initial_state, config=config)
     
+    # Save session context for continuity
+    agents_used = result.get("agents_used", [])
+    if agents_used:
+        try:
+            from app.redis_client import redis_client
+            last_agent_name = agents_used[-1]
+            last_agent_id = result.get("current_agent_id", "")
+            await redis_client.save_session_context(
+                session_id=session_id,
+                agent_id=str(last_agent_id) if last_agent_id else "",
+                agent_name=last_agent_name,
+            )
+            print(f"[Supervisor] 💾 Session context saved: last_agent='{last_agent_name}'")
+        except Exception as e:
+            print(f"[Supervisor] ⚠️ Failed to save session context: {e}")
+    
     return {
         "response": result.get("final_response", "Erro ao processar mensagem"),
         "agent_used": ", ".join(result.get("agents_used", ["default"])),
-        "agents_used": result.get("agents_used", [])
+        "agents_used": result.get("agents_used", []),
+        "last_agent": agents_used[-1] if agents_used else None,
     }
