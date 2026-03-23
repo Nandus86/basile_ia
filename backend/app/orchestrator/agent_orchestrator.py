@@ -297,6 +297,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         history: Optional[list] = None,
         session_id: Optional[str] = None,
         monitor: Optional[Any] = None,
+        user_access_level: str = "normal",
     ) -> str:
         """Consult subordinate agents BEFORE the primary orchestrator responds."""
         agent_with_settings = await self.get_agent_with_collaborators(primary_agent.id)
@@ -310,6 +311,19 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 enabled.append(setting.collaborator)
             elif setting.status == CollaborationStatus.NEUTRAL:
                 neutral.append(setting.collaborator)
+        
+        # [VERTICAL HIERARCHY] Filter collaborators by user access level
+        from app.models.agent import AccessLevel
+        try:
+            user_level = AccessLevel(user_access_level)
+        except ValueError:
+            user_level = AccessLevel.NORMAL
+            
+        enabled = [c for c in enabled if user_level.can_access(c.access_level)]
+        neutral = [c for c in neutral if user_level.can_access(c.access_level)]
+        
+        if not enabled and not neutral:
+            return ""
         
         # Use LLM decision to select subset of agents to consult
         decision = await self.should_collaborate(message, primary_agent, enabled, neutral, history)

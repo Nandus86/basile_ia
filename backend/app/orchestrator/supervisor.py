@@ -68,6 +68,19 @@ class Supervisor:
         if requested_agent_id:
             agent = await self.factory.get_agent_by_id(requested_agent_id)
             if agent:
+                # [VERTICAL HIERARCHY] Enforce access level check even for requested ID
+                from app.models.agent import AccessLevel
+                try:
+                    user_level = AccessLevel(user_access_level)
+                except ValueError:
+                    user_level = AccessLevel.NORMAL
+                
+                if not user_level.can_access(agent.access_level):
+                    print(f"[Supervisor] 🚫 Access Denied: User level '{user_access_level}' cannot access requested agent '{agent.name}' (level '{agent.access_level.value}')")
+                    state["next_action"] = "end"
+                    state["final_response"] = "Desculpe, você não tem permissão para acessar o agente solicitado."
+                    return state
+
                 agent_config = await self.factory.get_agent_config(agent, context_data=state.get("context_data"))
                 state["current_agent_id"] = agent_config["id"]
                 state["current_agent_name"] = agent_config["name"]
@@ -561,7 +574,7 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             available = []
             for a in all_collaborators:
                 if a.name not in agents_used:
-                    priority = "PRIORITÁRIO" if a in enabled else "DISPONÍVEL"
+                    priority = "PRIORITÁRIO (RECOMENDADO)" if a in enabled else "DISPONÍVEL (SECUNDÁRIO)"
                     
                     details = []
                     # Capability Map (Skills + Intents)
@@ -581,7 +594,7 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
                             details.append(f"FERRAMENTAS: {', '.join(tool_names)}")
                     
                     details_str = "\n    - " + "\n    - ".join(details) if details else ""
-                    available.append(f"- {a.name} ({priority}): {a.description or 'Especialista'}{details_str}")
+                    available.append(f"- {a.name} [{priority}]: {a.description or 'Especialista'}{details_str}")
             
             if not available:
                 print("[Supervisor] All collaborators already consulted, completing")

@@ -33,6 +33,7 @@ async def _enrich_agent_prompt(
     transition_data: Optional[Dict[str, Any]] = None,
     monitor: Optional[StatusMonitor] = None,
     session_context: Optional[Dict[str, Any]] = None,
+    user_access_level: str = "normal",
 ):
     """
     Enrich an agent's system_prompt with all contextual data:
@@ -316,7 +317,9 @@ async def _enrich_agent_prompt(
         # The ReAct agent naturally decides when to call each one
         print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — loading collaborator tools")
         try:
-            collab_tools = await _build_collaborator_tools(db, agent_model, message, context_data)
+            collab_tools = await _build_collaborator_tools(
+                db, agent_model, message, context_data, user_access_level=user_access_level
+            )
             if collab_tools:
                 existing_tools = agent_config.get("tools", []) or []
                 agent_config["tools"] = existing_tools + collab_tools
@@ -358,6 +361,7 @@ async def _enrich_agent_prompt(
                 history=history,
                 session_id=session_id,
                 monitor=monitor,
+                user_access_level=user_access_level,
             )
             if subordinate_context:
                 print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
@@ -567,6 +571,7 @@ async def _build_collaborator_tools(
     agent_model,
     message: str,
     context_data: Optional[Dict[str, Any]] = None,
+    user_access_level: str = "normal",
 ) -> list:
     """
     Build LangChain tools from an orchestrator's collaborators.
@@ -595,6 +600,21 @@ async def _build_collaborator_tools(
         elif setting.status == CollaborationStatus.NEUTRAL:
             neutral.append(setting.collaborator)
     all_collaborators = enabled + neutral
+    if not all_collaborators:
+        return []
+
+    # [VERTICAL HIERARCHY] Filter collaborators by user access level
+    from app.models.agent import AccessLevel
+    try:
+        user_level = AccessLevel(user_access_level)
+    except ValueError:
+        user_level = AccessLevel.NORMAL
+
+    all_collaborators = [
+        c for c in all_collaborators
+        if user_level.can_access(c.access_level)
+    ]
+
     if not all_collaborators:
         return []
 
@@ -627,9 +647,9 @@ async def _build_collaborator_tools(
             if tool_names:
                 details.append(f"FERRAMENTAS: {', '.join(tool_names)}")
         
-        priority = "PRIORITÁRIO" if collab in enabled else "disponível"
+        priority = "PRIORITÁRIO (RECOMENDADO)" if collab in enabled else "disponível (secundário)"
         details_str = " | ".join(details) if details else ""
-        tool_desc = f"Consulta o agente '{collab.name}' ({priority}). {base_desc}. {details_str}. Envie uma instrução clara do que este agente deve fazer."
+        tool_desc = f"Consulta o agente especialista '{collab.name}' [{priority}]. {base_desc}. {details_str}. Envie uma instrução clara e técnica do que este agente deve fazer especificamente."
         
         # Keep a reasonable limit but much larger than 200 to allow the contract to be seen
         if len(tool_desc) > 1000:
@@ -855,6 +875,7 @@ async def process_message_task(
             rag_context = await _enrich_agent_prompt(
                 db, agent_config, agent_id, message, session_id, context_data, history, transition_data,
                 session_context=session_context,
+                user_access_level=user_access_level,
             )
 
             # ── Execute agent ──
