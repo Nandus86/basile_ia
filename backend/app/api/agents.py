@@ -1315,12 +1315,13 @@ async def get_prompt_preview(
     Dynamic sections (RAG, vector memory) show placeholder descriptions.
     """
     from app.models.vfs_knowledge_base import VFSKnowledgeBase
+    from app.models.mcp_group import MCPGroup
     
     result = await db.execute(
         select(Agent)
         .options(
             selectinload(Agent.mcps),
-            selectinload(Agent.mcp_groups),
+            selectinload(Agent.mcp_groups).selectinload(MCPGroup.mcps),
             selectinload(Agent.skills),
             selectinload(Agent.information_bases),
             selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator),
