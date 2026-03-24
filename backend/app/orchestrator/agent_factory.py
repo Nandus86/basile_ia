@@ -324,6 +324,9 @@ Cite a fonte quando usar informações do contexto acima.
                     f"Se uma skill define um passo-a-passo, siga-o na ORDEM EXATA.\n"
                 )
 
+            resilience_cfg = agent_config.get("resilience", {})
+            max_retries = resilience_cfg.get("max_retries", 3)
+
             tool_instructions = f"""
 {skills_reminder}
 ## Árvore de Ferramentas / MCPs Disponíveis
@@ -334,10 +337,11 @@ Você tem acesso às seguintes ferramentas (MCPs). Relacione os passos solicitad
 
 Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que necessário para completar suas tarefas ou consultar o banco.
  REGRA CRÍTICA DE RETENTATIVA: Se a execução de uma ferramenta retornar explicitamente um campo "error" ou status de falha, você **NÃO DEVE DESISTIR** imediatamente.
-- Você DEVE TENTAR EXECUTAR A FERRAMENTA NOVAMENTE AO MENOS MAIS UMA VEZ (totalizando 2 tentativas), corrigindo os parâmetros com base na mensagem de erro.
+- Você DEVE TENTAR EXECUTAR A FERRAMENTA NOVAMENTE, corrigindo os parâmetros com base na mensagem de erro.
+- O limite máximo de tentativas para uma mesma ferramenta é de {max_retries} tentativas.
 - Se uma ferramenta retornar dados válidos (lista, objeto, mensagem de sucesso), NÃO repita a chamada. Avance para o próximo passo.
-- Somente se falhar definitivamente após 2 tentativas, explique ao usuário o motivo da falha.
-- **NUNCA chame a mesma ferramenta com os mesmos argumentos mais de 2 vezes.**
+- Somente se falhar definitivamente após {max_retries} tentativas, explique ao usuário o motivo da falha.
+- **NUNCA chame a mesma ferramenta com os mesmos argumentos repetidamente.**
 """
             full_prompt = system_prompt + tool_instructions
             
@@ -352,11 +356,12 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 f"[AgentFactory] 🤖 Invocando ReAct agent='{agent_config['name']}'  "
                 f"model='{agent_config['model']}'  tools={[t.name for t in agent_config['tools']]}"
             )
+            recursion_limit = max(12, max_retries * 4 + 4)
             result = await react_agent.ainvoke(
                 {"messages": agent_messages},
                 config={
                     **run_config,
-                    "recursion_limit": 12  # Prevent infinite tool loops (6 iterations * 2 steps each)
+                    "recursion_limit": recursion_limit  # Prevent infinite tool loops dynamically based on max_retries
                 }
             )
 
