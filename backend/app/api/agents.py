@@ -78,6 +78,7 @@ async def list_agents(
             collaboration_enabled=agent.collaboration_enabled,
             is_orchestrator=agent.is_orchestrator,
             emotional_profile_id=agent.emotional_profile_id,
+            vector_memory_enabled=agent.vector_memory_enabled,
             mcp_count=len(agent.mcps) if agent.mcps else 0,
             collaborator_count=len(agent.collaborator_settings) if agent.collaborator_settings else 0,
             created_at=agent.created_at
@@ -153,6 +154,7 @@ async def get_agent(
         input_schema=agent.input_schema,
         transition_input_schema=agent.transition_input_schema,
         transition_output_schema=agent.transition_output_schema,
+        vector_memory_enabled=agent.vector_memory_enabled,
         status_updates_enabled=agent.status_updates_enabled,
         status_updates_config=agent.status_updates_config,
         created_at=agent.created_at,
