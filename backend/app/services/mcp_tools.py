@@ -905,17 +905,21 @@ async def get_agent_mcp_metadata(db: AsyncSession, agent_id: str) -> Dict[str, A
     from sqlalchemy import select
     from app.models.agent import Agent, AgentCollaborator, CollaborationStatus
     
-    if agent:
-        # Check if agent has collaborator_settings (orchestrator check)
-        from sqlalchemy.orm import selectinload
-        result = await db.execute(
-            select(Agent)
-            .options(selectinload(Agent.collaborator_settings))
-            .where(Agent.id == uuid.UUID(agent_id))
-        )
-        agent = result.scalar_one_or_none()
+    import uuid
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        return metadata
         
-        if agent and getattr(agent, "is_orchestrator", False):
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.collaborator_settings))
+        .where(Agent.id == agent_uuid)
+    )
+    agent = result.scalar_one_or_none()
+    
+    if agent and getattr(agent, "is_orchestrator", False):
             for collab_rel in agent.collaborator_settings:
                 if collab_rel.status != CollaborationStatus.BLOCKED:
                     sub_executor = MCPToolExecutor(db)
