@@ -782,13 +782,18 @@ async def process_message_task(
                 agent_used = result.get("agent_used")
                 last_agent = result.get("last_agent")
 
-                await redis_client.add_message(
-                    session_id=session_id, role="assistant",
-                    content=str(final_result), ttl_seconds=86400
-                )
-                
-                # MTM: save assistant response
-                await _save_mtm_message(db, fallback_agent_id, session_id, "assistant", str(final_result))
+                if "[FIM_DE_INTERACAO]" in str(final_result):
+                    final_result = ""
+                    print(f"[Task] 🛑 Interação finalizada silenciosamente pelo supervisor")
+
+                if str(final_result).strip():
+                    await redis_client.add_message(
+                        session_id=session_id, role="assistant",
+                        content=str(final_result), ttl_seconds=86400
+                    )
+                    
+                    # MTM: save assistant response
+                    await _save_mtm_message(db, fallback_agent_id, session_id, "assistant", str(final_result))
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
@@ -859,6 +864,13 @@ async def process_message_task(
             if mtm_context_note:
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + mtm_context_note
 
+            # Adicionar regra de encerramento de interação
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                "\n\n## Regra de Encerramento Subentendido\n"
+                "Caso a mensagem atual do usuário seja EXCLUSIVAMENTE um agradecimento final, despedida ou negação de mais ajuda (ex: 'não, era só isso, obrigado', 'tchau', 'valeu'), "
+                "e NÃO contenha nenhuma nova solicitação, você DEVE responder EXATAMENTE E APENAS com o código: `[FIM_DE_INTERACAO]`."
+            )
+
             # Save original system prompt before enrichment (for self-correction analysis)
             agent_config["original_system_prompt"] = agent_config.get("system_prompt", "")
 
@@ -891,16 +903,23 @@ async def process_message_task(
                 final_result = result_dict if isinstance(result_dict, dict) else {"output": str(result_dict)}
                 agent_used = agent_config["name"]
 
-                # Store response
+                # Interceptar FIM DE INTERACAO
                 output_text = final_result.get("output", str(final_result))
-                if stm_enabled:
-                    await redis_client.add_message(
-                        session_id=session_id, role="assistant",
-                        content=output_text, ttl_seconds=stm_ttl_seconds
-                    )
-                # MTM: save assistant response
-                if agent_id and session_id:
-                    await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
+                if "[FIM_DE_INTERACAO]" in output_text:
+                    output_text = ""
+                    final_result["output"] = ""
+                    print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
+
+                # Store response
+                if output_text.strip():
+                    if stm_enabled:
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant",
+                            content=output_text, ttl_seconds=stm_ttl_seconds
+                        )
+                    # MTM: save assistant response
+                    if agent_id and session_id:
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
@@ -921,15 +940,20 @@ async def process_message_task(
                 final_result = response
                 agent_used = agent_config["name"]
 
+                # Interceptar FIM DE INTERACAO
+                if "[FIM_DE_INTERACAO]" in str(final_result):
+                    final_result = ""
+                    print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
 
-                if stm_enabled:
-                    await redis_client.add_message(
-                        session_id=session_id, role="assistant",
-                        content=str(final_result), ttl_seconds=stm_ttl_seconds
-                    )
-                # MTM: save assistant response
-                if agent_id and session_id:
-                    await _save_mtm_message(db, agent_id, session_id, "assistant", str(final_result))
+                if str(final_result).strip():
+                    if stm_enabled:
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant",
+                            content=str(final_result), ttl_seconds=stm_ttl_seconds
+                        )
+                    # MTM: save assistant response
+                    if agent_id and session_id:
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", str(final_result))
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
