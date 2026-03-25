@@ -89,6 +89,19 @@ Apenas UMA correção por vez, a mais importante."""
             return
         
         weaviate_client = get_weaviate()
+        
+        # Semantic deduplication
+        existing = await weaviate_client.search_contact_memories(
+            agent_id=str(agent_id),
+            contact_id=str(contact_id),
+            query=extracted,
+            limit=1,
+            memory_type="correction"
+        )
+        if existing and existing[0].get("distance") is not None and existing[0]["distance"] < 0.12:
+            logger.info(f"[VectorMemory] ⏭️ Skipped duplicate correction for {contact_id} (distance {existing[0]['distance']:.3f})")
+            return
+
         await weaviate_client.save_contact_memory(
             agent_id=agent_id,
             contact_id=contact_id,
@@ -127,6 +140,19 @@ Apenas UMA preferência por vez, a mais relevante."""
             return
         
         weaviate_client = get_weaviate()
+        
+        # Semantic deduplication
+        existing = await weaviate_client.search_contact_memories(
+            agent_id=str(agent_id),
+            contact_id=str(contact_id),
+            query=extracted,
+            limit=1,
+            memory_type="preference"
+        )
+        if existing and existing[0].get("distance") is not None and existing[0]["distance"] < 0.12:
+            logger.info(f"[VectorMemory] ⏭️ Skipped duplicate preference for {contact_id} (distance {existing[0]['distance']:.3f})")
+            return
+
         await weaviate_client.save_contact_memory(
             agent_id=agent_id,
             contact_id=contact_id,
@@ -172,6 +198,18 @@ Se houver fatos novos, liste-os como frases curtas e objetivas, uma por linha, s
         if facts:
             weaviate_client = get_weaviate()
             for fact in facts:
+                # Semantic deduplication
+                existing = await weaviate_client.search_contact_memories(
+                    agent_id=str(agent_id),
+                    contact_id=str(contact_id),
+                    query=fact,
+                    limit=1,
+                    memory_type="fact"
+                )
+                if existing and existing[0].get("distance") is not None and existing[0]["distance"] < 0.12:
+                    logger.info(f"[VectorMemory] ⏭️ Skipped duplicate fact for {contact_id}: {fact[:50]}... (distance {existing[0]['distance']:.3f})")
+                    continue
+
                 success = await weaviate_client.save_contact_memory(
                     agent_id=agent_id,
                     contact_id=contact_id,
@@ -357,6 +395,17 @@ RESPOSTA DO AGENTE:
         # Salva a regra extraída na coleção Weaviate (AgentSelfMemory, usando memory_type = 'training_rule')
         weaviate_client = get_weaviate()
         
+        # Semantic deduplication
+        existing = await weaviate_client.search_agent_self_memories(
+            agent_id=str(agent_id),
+            query=extracted,
+            limit=1,
+            memory_type="training_rule"
+        )
+        if existing and existing[0].get("distance") is not None and existing[0]["distance"] < 0.12:
+            logger.info(f"[VectorMemory] ⏭️ Skipped duplicate training rule for {agent_id} (distance {existing[0]['distance']:.3f})")
+            return f"🎯 {extracted} (já existente)"
+
         prefix = "🎯 REGRA POSITIVA:" if feedback_type == "positive" else "🚫 REGRA RESTRITIVA:"
         final_rule = f"{prefix} {extracted}"
         
