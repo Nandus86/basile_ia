@@ -1046,7 +1046,6 @@ async def process_message_task(
         
         # Guardar na memória de curto prazo (STM) se ativado
         try:
-            from app.redis_client import redis_client
             await redis_client.add_message(
                 session_id=session_id, role="assistant",
                 content=friendly_message, ttl_seconds=86400
