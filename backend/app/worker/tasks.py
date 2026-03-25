@@ -1006,12 +1006,70 @@ async def process_message_task(
         import traceback
         traceback.print_exc()
         processing_time = (time.time() - start_time) * 1000
-        return {
-            "status": "failed",
-            "response": f"Error processing message: {str(e)}",
-            "error": str(e),
-            "processing_time_ms": processing_time,
-        }
+        
+        friendly_message = await _invoke_recovery_agent(message, str(e))
+        
+        # Guardar na memória de curto prazo (STM) se ativado
+        try:
+            from app.redis_client import redis_client
+            await redis_client.add_message(
+                session_id=session_id, role="assistant",
+                content=friendly_message, ttl_seconds=86400
+            )
+        except Exception:
+            pass
+            
+        # Para saídas que esperavam schema estruturado
+        is_structured = agent_config and agent_config.get("output_schema") if 'agent_config' in locals() and agent_config else False
+        
+        if is_structured:
+            return {
+                "status": "completed",
+                "output": friendly_message,
+                "error": str(e),
+                "agent_used": "Agente de Recuperação",
+                "processing_time_ms": processing_time,
+            }
+        else:
+            return {
+                "status": "completed",
+                "response": friendly_message,
+                "error": str(e),
+                "agent_used": "Agente de Recuperação",
+                "processing_time_ms": processing_time,
+            }
+
+async def _invoke_recovery_agent(message: str, error_msg: str) -> str:
+    """Invokes a recovery agent to provide a friendly response after a timeout/error."""
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from app.config import settings
+        
+        error_llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            api_key=settings.OPENAI_API_KEY
+        )
+        
+        error_prompt = (
+            "Você é um agente de contingência e recuperação. "
+            "Ocorreu um erro técnico (como timeout ou falha de comunicação) "
+            "ao tentar processar a solicitação do usuário. "
+            "Sua tarefa é criar uma resposta amigável e empática, pedindo desculpas pela interrupção "
+            "e sugerindo que o usuário tente novamente, pergunte de outra forma ou continue a conversa. "
+            "NUNCA exiba detalhes técnicos do erro ao usuário."
+        )
+        
+        response = await error_llm.ainvoke([
+            SystemMessage(content=error_prompt),
+            HumanMessage(content=f"A mensagem do usuário foi: '{message}'\n\nPor favor, gere a resposta amigável de recuperação.")
+        ])
+        
+        return response.content
+    except Exception as e:
+        print(f"[Recovery Agent] Failed: {e}")
+        return "Desculpe, tivemos uma instabilidade de conexão inesperada. Você poderia tentar novamente em instantes?"
 
 
 # ─────────────────────────────────────────────────────────────

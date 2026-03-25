@@ -297,9 +297,21 @@ async def process_message_structured(
         
     except Exception as e:
         processing_time = (time.time() - start_time) * 1000
+        from app.worker.tasks import _invoke_recovery_agent
+        friendly_message = await _invoke_recovery_agent(request.message, str(e))
+        
+        try:
+            await redis.add_message(
+                session_id=request.session_id, role="assistant",
+                content=friendly_message, ttl_seconds=86400
+            )
+        except Exception:
+            pass
+            
         return {
-            "output": f"Erro: {str(e)}",
+            "output": friendly_message,
             "error": str(e),
+            "agent_used": "Agente de Recuperação",
             "processing_time_ms": processing_time
         }
 
@@ -555,7 +567,17 @@ async def process_dynamic_webhook(
             from datetime import datetime, timezone
             job_log.completed_at = datetime.now(timezone.utc)
             await db.commit()
-            raise HTTPException(status_code=500, detail=str(e))
+            
+            from app.worker.tasks import _invoke_recovery_agent
+            friendly_message = await _invoke_recovery_agent(request.message, str(e))
+            
+            return ProcessResponse(
+                response=friendly_message,
+                agent_used="Agente de Recuperação",
+                processing_time_ms=processing_time,
+                transition_data=None,
+                last_agent="Agente de Recuperação"
+            )
     
     else:
         # ASYNCHRONOUS MODE (RabbitMQ/Queue)
