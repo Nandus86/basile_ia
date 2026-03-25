@@ -212,6 +212,20 @@
               </template>
             </v-switch>
           </v-col>
+          <v-col cols="12" sm="6">
+            <v-switch
+              v-model="formData.is_planner"
+              label="Planejador Mestre"
+              color="indigo"
+              hide-details
+              density="comfortable"
+              :disabled="!formData.is_orchestrator"
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.is_planner ? 'indigo' : 'grey'">mdi-clipboard-list-outline</v-icon>
+              </template>
+            </v-switch>
+          </v-col>
         </v-row>
         
         <v-expand-transition>
@@ -220,6 +234,14 @@
               <v-icon>mdi-information</v-icon>
             </template>
             Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
+          </v-alert>
+        </v-expand-transition>
+        <v-expand-transition>
+          <v-alert v-if="formData.is_planner" type="indigo" variant="tonal" density="compact" class="mt-3 mb-0">
+            <template v-slot:prepend>
+              <v-icon>mdi-clipboard-list-outline</v-icon>
+            </template>
+            O Planejador enviará primeiro a solicitação a um LLM rápido para estruturar um checklist de tarefas granulares que o colaborador deverá cumprir.
           </v-alert>
         </v-expand-transition>
       </v-card-text>

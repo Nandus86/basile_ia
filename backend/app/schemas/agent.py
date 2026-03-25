@@ -84,6 +84,7 @@ class AgentCreate(AgentBase):
     mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
     skill_ids: Optional[List[UUID]] = Field(default=[], description="IDs das Skills com acesso")
     is_orchestrator: bool = False
+    is_planner: bool = False
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: str = "medium"
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON personalizado para saída estruturada")
@@ -108,6 +109,7 @@ class AgentUpdate(BaseModel):
     mcp_group_ids: Optional[List[UUID]] = None
     skill_ids: Optional[List[UUID]] = None
     is_orchestrator: Optional[bool] = None
+    is_planner: Optional[bool] = None
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
@@ -134,6 +136,7 @@ class AgentResponse(BaseModel):
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
     is_orchestrator: bool = False
+    is_planner: bool = False
     emotional_profile: Optional[EmotionalProfileSummary] = None
     emotional_intensity: str = "medium"
     output_schema: Optional[Dict[str, Any]] = None
@@ -163,6 +166,7 @@ class AgentListItem(BaseModel):
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
     is_orchestrator: bool = False
+    is_planner: bool = False
     emotional_profile_id: Optional[UUID] = None
     vector_memory_enabled: bool = False
     training_memory_enabled: bool = False

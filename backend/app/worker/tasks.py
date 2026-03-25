@@ -659,8 +659,9 @@ async def _build_collaborator_tools(
         _collab = collab
         _db = db
         _context_data = context_data
+        _is_planner = getattr(agent_model, "is_planner", False)
 
-        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data) -> str:
+        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner) -> str:
             """
             Invoke a collaborator agent with the given instruction.
             Args:
@@ -668,13 +669,47 @@ async def _build_collaborator_tools(
             """
             try:
                 orch = AgentOrchestrator(_database)
+                
+                final_instruction = instrucao
+                
+                if _planner_enabled:
+                    try:
+                        from langchain_openai import ChatOpenAI
+                        from langchain_core.messages import SystemMessage, HumanMessage
+                        from app.config import settings
+                        import json
+                        
+                        planner_llm = ChatOpenAI(
+                            model="gpt-4o-mini",
+                            temperature=0.7,
+                            api_key=settings.OPENAI_API_KEY
+                        )
+                        
+                        planner_prompt = (
+                            "Você é o Planejador Mestre do Orquestrador. "
+                            "Sua função é pegar uma instrução e quebrá-la em um checklist de passos granulares (Tasks) "
+                            "para outro agente técnico executar. O agente que receberá isto só terminará o trabalho quando finalizar todas as tarefas. "
+                            "Responda APENAS com o texto a ser enviado, incluindo o checklist em formato Markdown '- [ ] Nome da tarefa'."
+                        )
+                        
+                        planner_resp = await planner_llm.ainvoke([
+                            SystemMessage(content=planner_prompt),
+                            HumanMessage(content=f"Crie as tasks para a seguinte instrução:\n{instrucao}")
+                        ])
+                        
+                        tasks_str = planner_resp.content
+                        final_instruction = f"INSTRUÇÃO ORIGINAL:\n{instrucao}\n\nO ORQUESTRADOR DEFINIU AS SEGUINTES TAREFAS (RESOLVA-AS E RESPONDA COM O RESULTADO):\n{tasks_str}"
+                        print(f"[CollabTool] 📋 Planner gerou tasks para '{_agent.name}'")
+                    except Exception as planner_err:
+                        print(f"[CollabTool] ⚠️ Erro no Planner LLM, enviando instrução original. Erro: {planner_err}")
+
                 name, response = await orch._invoke_collaborator(
                     agent=_agent,
-                    message=instrucao,
+                    message=final_instruction,
                     history=[],
                     context="",
                     context_data=_ctx,
-                    orientation=instrucao,
+                    orientation=final_instruction,
                 )
                 print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
                 return response or f"Agente {name} não retornou resposta."
