@@ -1153,3 +1153,55 @@ async def _send_callback(callback_url: str, data: dict):
             await client.post(callback_url, json=data, timeout=10.0)
     except Exception as cb_err:
         print(f"Failed to send callback to {callback_url}: {cb_err}")
+
+async def _validate_response(system_prompt: str, agent_response: str) -> str:
+    """
+    Analyzes if the agent's response violates its system prompt or basic constraints.
+    Returns "VALID" if everything is okay, or a description of the violation.
+    """
+    if not system_prompt or not agent_response:
+        return "VALID"
+
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import SystemMessage, HumanMessage
+    from app.config import settings
+
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.0,
+        api_key=settings.OPENAI_API_KEY
+    )
+
+    check_prompt = """Você é um sistema validador de IA (Guardrail).
+Sua função é garantir que a RESPOSTA DO AGENTE não viole as regras estabelecidas no PROMPT DO SISTEMA.
+
+Verifique estritamente:
+1. O agente respondeu algo claramente proibido pelo prompt?
+2. O agente ignorou uma restrição explícita (ex: "Não cumprimentar", "Apenas formatar JSON", "Não dar conselhos médicos")?
+
+Se a resposta estiver de acordo com as regras ou não contiver erro crítico, responda EXATAMENTE: VALID
+Se houver uma violação clara, responda descrevendo o erro e instruindo a correção de forma imperativa.
+
+Seja rigoroso, mas justo. Só invalide se houver QUEBRA DE REGRA CLARA."""
+
+    analysis_input = f"""PROMPT DO SISTEMA (Regras):
+---
+{system_prompt[:3000]}
+---
+
+RESPOSTA GERADA PELO AGENTE:
+{agent_response[:2000]}"""
+
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content=check_prompt),
+            HumanMessage(content=analysis_input)
+        ])
+        
+        extracted = response.content.strip()
+        if extracted.upper() == "VALID":
+            return "VALID"
+        return extracted
+    except Exception as e:
+        print(f"[Validator] Error during validation: {e}")
+        return "VALID"
