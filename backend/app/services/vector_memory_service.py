@@ -264,8 +264,21 @@ RESPOSTA DO AGENTE:
             return
         
         weaviate_client = get_weaviate()
+        
+        # Semantic deduplication: verify if a highly similar rule already exists
+        existing = await weaviate_client.search_agent_self_memories(
+            agent_id=str(agent_id),
+            query=extracted,
+            limit=1,
+            memory_type="self_correction"
+        )
+        
+        if existing and existing[0].get("distance") is not None and existing[0]["distance"] < 0.12:
+            logger.info(f"[VectorMemory] ⏭️ Skipped duplicate self-correction for {agent_id} (distance {existing[0]['distance']:.3f})")
+            return
+
         await weaviate_client.save_agent_self_memory(
-            agent_id=agent_id,
+            agent_id=str(agent_id),
             content=f"🔧 AUTO-CORREÇÃO: {extracted}",
             memory_type="self_correction",
             metadata={"trigger_message": user_message[:200]}
