@@ -926,26 +926,57 @@ async def process_message_task(
             )
 
             # ── Execute agent ──
-            if agent_config.get("output_schema"):
-                # Structured output
-                result_dict = await factory.invoke_agent_structured(
-                    agent_config=agent_config,
-                    messages=messages,
-                    rag_context=rag_context,
-                    context_data=context_data,
-                )
-                print(f"[Task] Structured result: {result_dict}")
-                final_result = result_dict if isinstance(result_dict, dict) else {"output": str(result_dict)}
-                agent_used = agent_config["name"]
+            max_retries = 2
+            retry_count = 0
+            
+            while retry_count <= max_retries:
+                if agent_config.get("output_schema"):
+                    # Structured output
+                    result_dict = await factory.invoke_agent_structured(
+                        agent_config=agent_config,
+                        messages=messages,
+                        rag_context=rag_context,
+                        context_data=context_data,
+                    )
+                    print(f"[Task] Structured result: {result_dict}")
+                    final_result = result_dict if isinstance(result_dict, dict) else {"output": str(result_dict)}
+                    agent_used = agent_config["name"]
+                    output_text = final_result.get("output", str(final_result))
+                else:
+                    # Standard text output
+                    response = await factory.invoke_agent(
+                        agent_config=agent_config,
+                        messages=messages,
+                        rag_context=rag_context,
+                        context_data=context_data,
+                    )
+                    final_result = response
+                    agent_used = agent_config["name"]
+                    output_text = str(final_result)
 
                 # Interceptar FIM DE INTERACAO
-                output_text = final_result.get("output", str(final_result))
                 if "[FIM_DE_INTERACAO]" in output_text:
                     output_text = ""
-                    final_result["output"] = ""
+                    if isinstance(final_result, dict):
+                        final_result["output"] = ""
+                    else:
+                        final_result = ""
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
 
-                # Store response
+                # Validação (Guardrail)
+                if output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text):
+                    validation_msg = await _validate_response(agent_config.get("system_prompt", ""), output_text)
+                    if validation_msg != "VALID" and retry_count < max_retries:
+                        print(f"[Task] ⚠️ Validação falhou (tentativa {retry_count+1}/{max_retries}). Motivo: {validation_msg}")
+                        messages.append(AIMessage(content=output_text))
+                        messages.append(HumanMessage(content=f"ATENÇÃO - REJEITADO PELO VALIDADOR INTERNO: A sua última resposta violou suas regras fundamentais.\nMotivo: {validation_msg}\nPor favor, refaça a resposta corrigindo este erro. Responda apenas com a versão corrigida."))
+                        retry_count += 1
+                        continue  # Tenta novamente
+                    elif validation_msg != "VALID":
+                        print(f"[Task] ❌ Limite de tentativas de validação atingido. A resposta defeituosa será enviada assim mesmo.")
+
+                # Se chegou aqui, a resposta é válida, o limite foi atingido ou é fim de interação
+                print(f"[Task] ✅ {agent_used} responded on try {retry_count+1}")
                 if output_text.strip():
                     if stm_enabled:
                         await redis_client.add_message(
@@ -959,44 +990,16 @@ async def process_message_task(
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
                     "status": "completed",
-                    **final_result,
                     "agent_used": agent_used,
                     "processing_time_ms": processing_time,
                 }
-            else:
-                # Standard text output
-                response = await factory.invoke_agent(
-                    agent_config=agent_config,
-                    messages=messages,
-                    rag_context=rag_context,
-                    context_data=context_data,
-                )
-                print(f"[Task] ✅ {agent_config['name']} responded directly")
-                final_result = response
-                agent_used = agent_config["name"]
-
-                # Interceptar FIM DE INTERACAO
-                if "[FIM_DE_INTERACAO]" in str(final_result):
-                    final_result = ""
-                    print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
-
-                if str(final_result).strip():
-                    if stm_enabled:
-                        await redis_client.add_message(
-                            session_id=session_id, role="assistant",
-                            content=str(final_result), ttl_seconds=stm_ttl_seconds
-                        )
-                    # MTM: save assistant response
-                    if agent_id and session_id:
-                        await _save_mtm_message(db, agent_id, session_id, "assistant", str(final_result))
-
-                processing_time = (time.time() - start_time) * 1000
-                response_data = {
-                    "status": "completed",
-                    "response": final_result,
-                    "agent_used": agent_used,
-                    "processing_time_ms": processing_time,
-                }
+                
+                if isinstance(final_result, dict):
+                    response_data.update(final_result)
+                else:
+                    response_data["response"] = final_result
+                    
+                break  # Sai do loop while
 
             if transition_data:
                 response_data["transition_data"] = transition_data
