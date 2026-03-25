@@ -448,6 +448,7 @@
                           </template>
                         </v-switch>
                       </v-col>
+                    </v-row>
                       <v-expand-transition>
                         <v-alert v-if="formData.is_orchestrator" type="info" variant="tonal" density="compact" class="mt-3 mb-0">
                           <template v-slot:prepend>
