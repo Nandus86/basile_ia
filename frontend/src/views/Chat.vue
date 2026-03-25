@@ -202,7 +202,6 @@
                      <div v-if="msg.role === 'assistant'" v-html="formatMessage(msg.content)" class="markdown-content"></div>
                      <div v-else>{{ msg.content }}</div>
                    </v-sheet>
-                   </v-sheet>
                    
                    <!-- Metadata Footer and Thumbs -->
                    <div class="d-flex align-center justify-space-between mt-1 mr-1" v-if="msg.role === 'assistant'">
