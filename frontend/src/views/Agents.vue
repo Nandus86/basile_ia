@@ -105,7 +105,20 @@
               <v-icon color="white" size="20">mdi-robot</v-icon>
             </v-avatar>
             <div>
-              <span class="font-weight-medium">{{ item.name }}</span>
+              <div class="d-flex align-center">
+                <span class="font-weight-medium mr-2">{{ item.name }}</span>
+                <v-chip
+                  size="x-small"
+                  variant="outlined"
+                  color="grey-lighten-1"
+                  style="cursor: pointer; opacity: 0.8;"
+                  @click.stop="copyAgentId(item.id)"
+                >
+                  <v-icon start size="10">mdi-content-copy</v-icon>
+                  {{ item.id?.split('-')[0] }}
+                  <v-tooltip activator="parent" location="top">Copiar ID: {{ item.id }}</v-tooltip>
+                </v-chip>
+              </div>
               <p class="text-caption text-medium-emphasis mb-0" v-if="item.description">
                 {{ item.description?.substring(0, 50) }}{{ item.description?.length > 50 ? '...' : '' }}
               </p>
@@ -3050,6 +3063,16 @@ async function saveCollaborators() {
     showSnackbar('Erro ao salvar colaboradores', 'error')
   } finally {
     savingCollab.value = false
+  }
+}
+
+async function copyAgentId(id) {
+  try {
+    await navigator.clipboard.writeText(id)
+    showSnackbar('ID do Agente copiado para a área de transferência!')
+  } catch (err) {
+    console.error('Failed to copy: ', err)
+    showSnackbar('Erro ao copiar ID', 'error')
   }
 }
 
