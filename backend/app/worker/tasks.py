@@ -858,6 +858,10 @@ async def process_message_task(
                     content=message, ttl_seconds=stm_ttl_seconds
                 )
 
+            # Build context notes based on STM/MTM history
+            mtm_context_note = ""
+            is_first_interaction = False
+
             # MTM fallback: if no STM history, check PostgreSQL
             if not history and agent_id and session_id:
                 mtm_history = await _load_mtm_fallback(db, agent_id, session_id, limit=5)
@@ -873,6 +877,7 @@ async def process_message_task(
                 else:
                     has_any = await _check_mtm_has_history(db, agent_id, session_id)
                     if not has_any:
+                        is_first_interaction = True
                         mtm_context_note = (
                             "\n\n## Primeiro Contato\n\n"
                             "Este é o primeiro contato deste usuário. Não há histórico de conversas anteriores.\n"
@@ -964,7 +969,7 @@ async def process_message_task(
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
 
                 # Validação (Guardrail)
-                if output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text):
+                if output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text) and not is_first_interaction:
                     validation_msg = await _validate_response(agent_config.get("system_prompt", ""), output_text)
                     if validation_msg != "VALID" and retry_count < max_retries:
                         print(f"[Task] ⚠️ Validação falhou (tentativa {retry_count+1}/{max_retries}). Motivo: {validation_msg}")
@@ -975,7 +980,7 @@ async def process_message_task(
                     elif validation_msg != "VALID":
                         print(f"[Task] ❌ Limite de tentativas de validação atingido. A resposta defeituosa será enviada assim mesmo.")
 
-                # Se chegou aqui, a resposta é válida, o limite foi atingido ou é fim de interação
+                # Se chegou aqui, a resposta é válida, o limite foi atingido, é o primeiro contato, ou é fim de interação
                 print(f"[Task] ✅ {agent_used} responded on try {retry_count+1}")
                 if output_text.strip():
                     if stm_enabled:
