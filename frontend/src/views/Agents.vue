@@ -225,6 +225,8 @@
           <v-tab value="information_bases" :disabled="!editing"><v-icon start>mdi-database-search</v-icon>Bases de Infor.</v-tab>
           <v-tab value="vfs_knowledge" :disabled="!editing"><v-icon start>mdi-file-document-multiple-outline</v-icon>VFS RAG 3.0</v-tab>
           <v-tab value="interactivity" :disabled="!editing"><v-icon start>mdi-message-flash</v-icon>Interatividade</v-tab>
+          <v-tab value="planner" :disabled="!editing"><v-icon start>mdi-strategy</v-icon>Planejador</v-tab>
+          <v-tab value="guardrail" :disabled="!editing"><v-icon start>mdi-shield-alert</v-icon>Guardrail</v-tab>
           <v-tab value="prompt_preview" :disabled="!editing"><v-icon start>mdi-eye</v-icon>Prompt Geral</v-tab>
         </v-tabs>
 
@@ -446,38 +448,14 @@
                           </template>
                         </v-switch>
                       </v-col>
-                      <v-col cols="12" sm="6">
-                        <v-switch
-                          v-model="formData.is_planner"
-                          label="Planejador Mestre"
-                          color="indigo"
-                          hide-details
-                          density="comfortable"
-                          :disabled="!formData.is_orchestrator"
-                        >
+                      <v-expand-transition>
+                        <v-alert v-if="formData.is_orchestrator" type="info" variant="tonal" density="compact" class="mt-3 mb-0">
                           <template v-slot:prepend>
-                            <v-icon :color="formData.is_planner ? 'indigo' : 'grey'">mdi-clipboard-list-outline</v-icon>
+                            <v-icon>mdi-information</v-icon>
                           </template>
-                        </v-switch>
-                      </v-col>
-                    </v-row>
-                    
-                    <v-expand-transition>
-                      <v-alert v-if="formData.is_orchestrator" type="info" variant="tonal" density="compact" class="mt-3 mb-0">
-                        <template v-slot:prepend>
-                          <v-icon>mdi-information</v-icon>
-                        </template>
-                        Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
-                      </v-alert>
-                    </v-expand-transition>
-                    <v-expand-transition>
-                      <v-alert v-if="formData.is_planner" type="indigo" variant="tonal" density="compact" class="mt-3 mb-0">
-                        <template v-slot:prepend>
-                          <v-icon>mdi-clipboard-list-outline</v-icon>
-                        </template>
-                        O Planejador enviará primeiro a solicitação a um LLM rápido para estruturar um checklist de tarefas granulares que o colaborador deverá cumprir.
-                      </v-alert>
-                    </v-expand-transition>
+                          Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
+                        </v-alert>
+                      </v-expand-transition>
                   </v-card-text>
                 </v-card>
 
@@ -1158,6 +1136,121 @@
                     </v-expand-transition>
                   </v-window-item>
                 </v-window>
+              </div>
+            <!-- Tab: Planner -->
+            <v-window-item value="planner">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para configurar o Planejador.
+              </v-alert>
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">Planejador Dinâmico</h3>
+                  <v-switch
+                    v-model="formData.is_planner"
+                    label="Ativar Planejador"
+                    color="indigo"
+                    density="compact"
+                    hide-details
+                    :disabled="!formData.is_orchestrator"
+                  ></v-switch>
+                </div>
+                
+                <v-alert v-if="!formData.is_orchestrator" type="warning" variant="tonal" density="compact" class="mb-4">
+                  O Planejador só pode ser ativado se o agente estiver em <strong>Modo Orquestrador</strong> (Aba Geral).
+                </v-alert>
+                
+                <p class="text-body-2 text-medium-emphasis mb-4">
+                  Quando ativo, o Planejador processa a instrução de delegação do orquestrador antes de enviá-la ao colaborador. Ele utiliza um modelo menor e mais focado para gerar um checklist tático (em Markdown) tornando a instrução mais granular e direcionada.
+                </p>
+
+                <div v-if="formData.is_planner">
+                  <v-textarea
+                    v-model="formData.planner_prompt"
+                    label="Prompt / Diretriz do Planejador"
+                    placeholder="Ex: Você é o Planejador Mestre do Orquestrador. Quebre a instrução em formato Markdown list '-' e não responda mais nada."
+                    rows="5"
+                    variant="outlined"
+                    persistent-hint
+                    hint="Deixe em branco para usar o prompt padrão do sistema."
+                  ></v-textarea>
+
+                  <v-autocomplete
+                    v-model="formData.planner_model"
+                    label="Modelo do Planejador"
+                    :items="modelOptions"
+                    item-title="title"
+                    item-value="value"
+                    :loading="loadingModels"
+                    placeholder="Selecione um modelo (ex: gpt-4o-mini)"
+                    class="mt-4"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon :color="item.raw.provider === 'openai' ? '#10a37f' : '#6366f1'" size="18">
+                            {{ item.raw.provider === 'openai' ? 'mdi-creation' : 'mdi-router-wireless' }}
+                          </v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                </div>
+              </div>
+            </v-window-item>
+
+            <!-- Tab: Guardrail -->
+            <v-window-item value="guardrail">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para configurar o Guardrail.
+              </v-alert>
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">Guardrail Interno (Validador)</h3>
+                  <v-switch
+                    v-model="formData.is_guardrail_active"
+                    label="Ativar Guardrail"
+                    color="red"
+                    density="compact"
+                    hide-details
+                  ></v-switch>
+                </div>
+                
+                <p class="text-body-2 text-medium-emphasis mb-4">
+                  O sistema de Guardrail atua como um inspetor final da resposta gerada por este agente. Se ele identificar que a resposta violou diretrizes éticas ou regras fundamentais do System Prompt original, ele injetará uma nota de erro (invisível ao usuário) exigindo que o próprio agente corrija a resposta através de um "retry".
+                </p>
+
+                <div v-if="formData.is_guardrail_active">
+                  <v-textarea
+                    v-model="formData.guardrail_prompt"
+                    label="Prompt Especialista do Validador"
+                    placeholder="Ex: Você é um auditor de qualidade rígido. Verifique se o agente quebrou a regra principal de não repassar senhas. Responda VALID em caso afirmativo, se não explique o crime."
+                    rows="6"
+                    variant="outlined"
+                    persistent-hint
+                    hint="Deixe em branco para usar a verificação rigorosa padrão."
+                  ></v-textarea>
+
+                  <v-autocomplete
+                    v-model="formData.guardrail_model"
+                    label="Modelo do Guardrail"
+                    :items="modelOptions"
+                    item-title="title"
+                    item-value="value"
+                    :loading="loadingModels"
+                    placeholder="Selecione um modelo (ex: gpt-4o-mini)"
+                    class="mt-4"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon :color="item.raw.provider === 'openai' ? '#10a37f' : '#6366f1'" size="18">
+                            {{ item.raw.provider === 'openai' ? 'mdi-creation' : 'mdi-router-wireless' }}
+                          </v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                </div>
               </div>
             </v-window-item>
 
@@ -1861,6 +1954,11 @@ const formData = reactive({
   vector_memory_enabled: false,
   is_orchestrator: false,
   is_planner: false,
+  planner_prompt: '',
+  planner_model: 'gpt-4o-mini',
+  is_guardrail_active: false,
+  guardrail_prompt: '',
+  guardrail_model: 'gpt-4o-mini',
   emotional_profile_id: null,
   emotional_intensity: 'medium',
   emotional_intensity: 'medium',
@@ -2268,6 +2366,11 @@ function resetForm() {
     vector_memory_enabled: false,
     is_orchestrator: false,
     is_planner: false,
+    planner_prompt: '',
+    planner_model: 'gpt-4o-mini',
+    is_guardrail_active: false,
+    guardrail_prompt: '',
+    guardrail_model: 'gpt-4o-mini',
     emotional_profile_id: null,
     emotional_intensity: 'medium',
     output_schema: null,
@@ -2537,6 +2640,11 @@ async function openDialog(agent = null) {
         vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
         is_orchestrator: fullAgent.is_orchestrator ?? false,
         is_planner: fullAgent.is_planner ?? false,
+        planner_prompt: fullAgent.planner_prompt || '',
+        planner_model: fullAgent.planner_model || 'gpt-4o-mini',
+        is_guardrail_active: fullAgent.is_guardrail_active ?? false,
+        guardrail_prompt: fullAgent.guardrail_prompt || '',
+        guardrail_model: fullAgent.guardrail_model || 'gpt-4o-mini',
         emotional_profile_id: fullAgent.emotional_profile?.id || null,
         emotional_intensity: fullAgent.emotional_intensity || 'medium',
         output_schema: fullAgent.output_schema || null,

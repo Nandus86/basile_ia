@@ -74,6 +74,11 @@ class AgentBase(BaseModel):
     training_memory_enabled: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = Field(default=None)
+    planner_prompt: Optional[str] = None
+    planner_model: Optional[str] = None
+    is_guardrail_active: bool = False
+    guardrail_prompt: Optional[str] = None
+    guardrail_model: Optional[str] = None
 
 
 class AgentCreate(AgentBase):
@@ -120,6 +125,11 @@ class AgentUpdate(BaseModel):
     training_memory_enabled: Optional[bool] = None
     status_updates_enabled: Optional[bool] = None
     status_updates_config: Optional[Dict[str, Any]] = None
+    planner_prompt: Optional[str] = None
+    planner_model: Optional[str] = None
+    is_guardrail_active: Optional[bool] = None
+    guardrail_prompt: Optional[str] = None
+    guardrail_model: Optional[str] = None
 
 
 class AgentResponse(BaseModel):
@@ -147,6 +157,11 @@ class AgentResponse(BaseModel):
     training_memory_enabled: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = None
+    planner_prompt: Optional[str] = None
+    planner_model: Optional[str] = None
+    is_guardrail_active: bool = False
+    guardrail_prompt: Optional[str] = None
+    guardrail_model: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []

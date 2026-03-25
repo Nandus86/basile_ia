@@ -101,6 +101,13 @@ class Agent(Base):
     
     # Planner mode
     is_planner = Column(Boolean, default=False, nullable=False)
+    planner_prompt = Column(Text, nullable=True)
+    planner_model = Column(String(100), nullable=True)
+    
+    # Guardrail Validator mode
+    is_guardrail_active = Column(Boolean, default=False, nullable=False)
+    guardrail_prompt = Column(Text, nullable=True)
+    guardrail_model = Column(String(100), nullable=True)
     
     # New status configuration for long-running jobs
     status_updates_enabled = Column(Boolean, default=False)

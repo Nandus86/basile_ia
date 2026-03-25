@@ -1,56 +1,64 @@
 """
-# Implementação do Treinamento Duplo Direcionado (Dual Training)
+# Módulos Planejador e Guardrail Dinâmicos
 
-Este plano descreve como adicionaremos botões de treinamento manual duplo nas telas de histórico (Curto e Médio Praz# Dual Training na Memória
-
-**Task Status:** Planning Dual Training Interface
-
-- [ ] Modificar `backend/app/api/memory.py` para criar rota `/train-dual`.
-- [ ] Modificar `frontend/src/views/MemoryManager.vue` para inserir botões nas mensagens (`👍👎`).
-- [ ] Adicionar modal dinâmico no Frontend com duas TextAreas (Regra Agente, Regra Contato).
-- [ ] Conectar o envio ao endpoint `/train-dual`.
-- [ ] Enviar notificação de revisão do plano para o usuário.
-- [ ] Aguardar aprovação para implementação (`notify_user`).a.
+Este plano descreve como removeremos o *hardcode* atual do Planejador e Guardrail (`tasks.py`) e daremos ao usuário controle total sobre suas ativações, prompts e modelos LLM na própria interface de cada Agente.
 
 ## Proposed Changes
 
-### Frontend (UI)
+### Banco de Dados & Schemas
 
-#### [MODIFY] [MemoryManager.vue](file:///d:/projetos/Basile_IA_Orch/frontend/src/views/MemoryManager.vue)
-- Na aba de visualização detalhada (`detailDialog`) de uma conversa STM ou MTM, adicionar botões de ação ("polegar para cima" e "polegar para baixo") visíveis em cada balão de mensagem do Agente (`msg.role === 'assistant'`).
-- Criar um novo `<v-dialog v-model="dualTrainDialog">` que abre ao clicar nesses botões. O painel conterá:
-  - O trecho da mensagem selecionada para contexto.
-  - `<v-textarea>` 1: **Orientação para o usuário (Contato)** - Regra específica para o relacionamento deste Contato com a IA.
-  - `<v-textarea>` 2: **Orientação para o Agente** - Regra para o agente aprender (Auto-Correção / Diretriz de Comportamento).
-- Adicionar a função `submitDualTraining()` que enviará um POST para a API com as regras preenchidas no painel.
-- Opcionalmente exibir identificador do `agent_id` e `session_id/contact_id` no cabeçalho do diálogo de treinamento para referência visual de quem receberá o treinamento.
+#### [MODIFY] [agent.py (models)](file:///d:/projetos/Basile_IA_Orch/backend/app/models/agent.py)
+- Adicionar colunas `planner_prompt` (Text) e `planner_model` (String) na classe `Agent`.
+- Adicionar colunas `is_guardrail_active` (Boolean), `guardrail_prompt` (Text) e `guardrail_model` (String) na classe `Agent`.
 
-### Backend (APIs)
+#### [MODIFY] [agent.py (schemas)](file:///d:/projetos/Basile_IA_Orch/backend/app/schemas/agent.py)
+- Atualizar os schemas Pydantic (`AgentCreate`, `AgentUpdate`, `AgentResponse`, etc) para refletir os 5 novos atributos descritos acima.
 
-#### [MODIFY] [memory.py](file:///d:/projetos/Basile_IA_Orch/backend/app/api/memory.py)
-- Adicionar o novo endpoint `POST /memory/train-dual`.
-- Endpoint aceitará um payload contendo:
-  - `agent_id`
-  - `contact_id`
-  - `contact_rule` (opcional)
-  - `agent_rule` (opcional)
-  - `message_context` (opcional, um trecho da mensagem que iniciou o treinamento).
-- Lógica:
-  - Se `contact_rule` for recebido: Injeta no Weaviate usando `save_contact_memory(agent_id, contact_id, content="⚠️ REGRA ESPECÍFICA: " + contact_rule, memory_type="preference")`.
-  - Se `agent_rule` for recebido: Injeta no Weaviate usando `save_agent_self_memory(agent_id, content="🔧 DIRETRIZ MANUAL: " + agent_rule, memory_type="self_correction")`.
-- Retorna `{ "status": "success", "saved_contact": bool, "saved_agent": bool }`.
+### Frontend (Interface)
+
+#### [MODIFY] [Agents.vue](file:///d:/projetos/Basile_IA_Orch/frontend/src/views/Agents.vue)
+- Na estrutura vertical de Abas (`<v-tabs>`) no modal # Componentes Dinâmicos de Agent (Planner & Guardrail)
+
+**Task Status:** Awaiting User Approval
+
+- [ ] Atualizar o modelo ORM do SQLAlchemy (`models/agent.py`) com: `is_guardrail_active`, `guardrail_prompt`, `guardrail_model`, `planner_prompt`, `planner_model`.
+- [ ] Atualizar esquemas do Pydantic (`schemas/agent.py`).
+- [ ] Remover ou deslocar `is_planner` da aba "General" e embutí-lo na sua própria aba.
+- [ ] Criar nova Aba "Planejador" (`Agents.vue`) com Textarea para template e seletor de LLMs.
+- [ ] Criar nova Aba "Guardrail" (`Agents.vue`) com Textarea para template e seletor de LLMs.
+- [ ] Extrair/Alterar lógica no `tasks.py` para injetar variáveis do agent.planner_model e planner_prompt.
+- [ ] Extrair/Alterar lógica no `tasks.py` (`_validate_response`) para injetar variáveis do agent.guardrail_model e guardrail_prompt, além de check de atividade.
+- [ ] Prover comandos SQL.s abas: `Guardrail` e `Planejador`.
+- Abas ficarão disponíveis se `!editing` for falso.
+- **Aba Planejador (`<v-window-item value="planner">`)**:
+  - `<v-switch>` refletindo o `is_planner`. (E vou transferir aquele que estava na aba `general` para cá ou deixá-lo espelhado).
+  - `<v-textarea>` refletindo `planner_prompt`. Incluir placeholders amigáveis para orientar o comportamento.
+  - `<v-select>` para o `planner_model` escolhendo modelos da lista global (`models`).
+- **Aba Guardrail (`<v-window-item value="guardrail">`)**:
+  - `<v-switch>` refletindo o `is_guardrail_active`.
+  - `<v-textarea>` refletindo `guardrail_prompt` de verificação/regras.
+  - `<v-select>` para o `guardrail_model` (usualmente `gpt-4o-mini`).
+
+### Backend (Orquestrador)
+
+#### [MODIFY] [tasks.py](file:///d:/projetos/Basile_IA_Orch/backend/app/worker/tasks.py)
+- Modificar o Planner (linha ~820): Ao invés de usar `gpt-4o-mini` chumbado, usará `agent.planner_model or 'gpt-4o-mini'`. O texto do prompt será composto a partir do `agent.planner_prompt` caso não seja vazio (concatenado à demanda do usuário).
+- Modificar `_validate_response` (localizado em `tasks.py` por enquanto ou realocado pra um service separado):
+  - Verifica se `agent.is_guardrail_active` é True. Se for **False**, pular validação inteira!
+  - Embutir o `agent.guardrail_prompt` como system prompt do validador.
+  - Utilizar `agent.guardrail_model or 'gpt-4o-mini'`.
+
+## User Review Required
+- IMPORTANTE: Vamos necessitar rodar os SQLs de `ALTER TABLE` das 5 novas colunas (is_guardrail_active, guardrail_prompt, guardrail_model, planner_prompt, planner_model). Enviarei para ser executado.
 
 ## Verification Plan
 
 ### Automated Tests
-- Verificar na rede (Developer Tools) se o POST para `/memory/train-dual` transporta as chaves corretamente.
+- Criar mocks visuais validando se pular o Guardrail salva tempo de inferência nos Webhooks.
 
 ### Manual Verification
-- Acessar "Meus Agentes" -> "Gerenciador de Memória".
-- Abrir um histórico na aba MTM ou STM (clicando no ícone do olhinho).
-- Na mensagem gerada pelo sistema, clicar no botão de Treinar (👍 / 👎).
-- Preencher "Regra para o Contato" e "Regra para o Agente". Salvar e confirmar mensagem de Snackbar.
-- Navegar para a aba "Memória Vetorial" e verificar se as duas inserções apareceram nas subguias "Contatos" e "Auto-Agente" respectivamente.
+- Acessar interface de Agentes. Aba "Planejador" e "Guardrail". Preencher templates explícitos ("Eu sou um validador raivoso.").
+- Ligar um webhook passando pelo agente configurado e atarrachar no log se o model escolhido está sendo invocado nestes submódulos.
 """
 from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel
