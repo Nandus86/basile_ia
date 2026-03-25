@@ -1137,6 +1137,8 @@
                   </v-window-item>
                 </v-window>
               </div>
+            </v-window-item>
+  
             <!-- Tab: Planner -->
             <v-window-item value="planner">
               <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
