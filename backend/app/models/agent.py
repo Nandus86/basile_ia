@@ -106,6 +106,9 @@ class Agent(Base):
     # Intelligent Vector Memory - for storing temporal/qualitative data about contacts
     vector_memory_enabled = Column(Boolean, default=False, nullable=False)
     
+    # RLHF Training Memory - for storing behavioral rules based on chat feedback (thumbs up/down)
+    training_memory_enabled = Column(Boolean, default=False, nullable=False)
+    
     # Structured Output - custom JSON schema per agent (LLM Context)
     output_schema = Column(JSON, nullable=True, default=None)
     # Example: {"output": {"type": "string"}, "tag": {"type": "string", "enum": [...]}}

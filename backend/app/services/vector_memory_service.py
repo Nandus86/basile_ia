@@ -274,3 +274,92 @@ RESPOSTA DO AGENTE:
         
     except Exception as e:
         logger.error(f"[VectorMemory] Error extracting agent self-corrections: {e}")
+
+# ─────────────────────────────────────────────────────────────
+# 3. Agent Training Memory (RLHF - Thumbs Up/Down)
+# ─────────────────────────────────────────────────────────────
+
+async def extract_training_feedback(
+    agent_id: str,
+    feedback_type: str,
+    user_message: str,
+    agent_response: str,
+    correction_note: Optional[str] = None
+) -> Optional[str]:
+    """
+    Sintetiza uma Regra (positiva ou negativa) com base no feedback humano do chat (👍/👎).
+    
+    Args:
+        feedback_type: "positive" ou "negative"
+    
+    Returns:
+        A string da memória extraída, ou None.
+    """
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.0,
+        api_key=settings.OPENAI_API_KEY
+    )
+    
+    if feedback_type == "positive":
+        system_prompt = """Você é um analista de treinamento de IA.
+O administrador deu um feedback POSITIVO (👍) para a resposta do agente.
+Sua tarefa é extrair a ESSÊNCIA do motivo pelo qual essa resposta foi boa, criando uma Regra de Treinamento Positiva.
+
+Exemplo de saída:
+"Regra Positiva: Quando o usuário perguntar X, responder com estrutura Y, no tom Z."
+
+Seja conciso, direto e instrucional (focando no comportamento do agente)."""
+    else:
+        system_prompt = """Você é um analista de treinamento de IA.
+O administrador deu um feedback NEGATIVO (👎) para a resposta do agente.
+Sua tarefa é inferir qual foi o provável erro ou comportamento indesejado gerando uma Regra Restritiva.
+Se houver uma "Nota de Correção" fornecida, use-a como guia principal.
+
+Exemplo de saída:
+"Regra Restritiva: NUNCA assuma X quando perguntado sobre Y. Sempre adote a postura Z."
+
+Seja conciso, direto e restritivo."""
+
+    analysis_input = f"""
+MENSAGEM DO USUÁRIO:
+{user_message[:1000]}
+
+RESPOSTA DO AGENTE:
+{agent_response[:2000]}
+"""
+    if correction_note:
+        analysis_input += f"\nNOTA/DICA DO ADMINISTRADOR SOBRE O ERRO/ACERTO:\n{correction_note[:500]}\n"
+
+    try:
+        response = await llm.ainvoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=analysis_input)
+        ])
+        
+        extracted = response.content.strip()
+        if not extracted or extracted.upper() == "NENHUM":
+            return None
+            
+        # Salva a regra extraída na coleção Weaviate (AgentSelfMemory, usando memory_type = 'training_rule')
+        weaviate_client = get_weaviate()
+        
+        prefix = "🎯 REGRA POSITIVA:" if feedback_type == "positive" else "🚫 REGRA RESTRITIVA:"
+        final_rule = f"{prefix} {extracted}"
+        
+        # A trigger_message ajudará a resgatar regras contextualmente relevantes
+        await weaviate_client.save_agent_self_memory(
+            agent_id=agent_id,
+            content=final_rule,
+            memory_type="training_rule",
+            metadata={
+                "feedback_type": feedback_type,
+                "trigger_message": user_message[:200]
+            }
+        )
+        logger.info(f"[VectorMemory] 🧠 Training Rule saved for agent {agent_id}: {final_rule[:60]}...")
+        return final_rule
+        
+    except Exception as e:
+        logger.error(f"[VectorMemory] Error extracting training feedback: {e}")
+        return None

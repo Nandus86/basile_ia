@@ -14,7 +14,8 @@ from app.models.webhook_config import WebhookConfig
 from app.schemas.webhook import (
     WebhookRequest, WebhookResponse,
     ProcessRequest, ProcessResponse,
-    AsyncProcessResponse, JobStatusResponse
+    AsyncProcessResponse, JobStatusResponse,
+    ChatFeedbackRequest, ChatFeedbackResponse
 )
 from app.orchestrator import run_orchestrator_v2
 from app.models.job_log import JobLog
@@ -417,6 +418,43 @@ async def get_job_status_endpoint(job_id: str):
     
     result = await get_job_status(job_id)
     return JobStatusResponse(**result)
+
+
+@router.post("/feedback", response_model=ChatFeedbackResponse)
+async def submit_chat_feedback(
+    request: ChatFeedbackRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submete um feedback (RLHF) de uma resposta do agente.
+    Usa LLM para sintetizar uma regra e a salva no Weaviate.
+    """
+    from app.services.vector_memory_service import extract_training_feedback
+    
+    try:
+        rule_extracted = await extract_training_feedback(
+            agent_id=request.agent_id,
+            feedback_type=request.feedback_type,
+            user_message=request.user_message,
+            agent_response=request.agent_response,
+            correction_note=request.correction_note
+        )
+        
+        if rule_extracted:
+            return ChatFeedbackResponse(
+                success=True,
+                message="Feedback recebido e regra de treinamento gravada com sucesso.",
+                rule_extracted=rule_extracted
+            )
+        else:
+            return ChatFeedbackResponse(
+                success=True,
+                message="Feedback recebido, mas nenhuma regra específica pôde ser extraída.",
+                rule_extracted=None
+            )
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao processar feedback: {str(e)}")
 
 
 from typing import Union

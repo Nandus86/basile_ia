@@ -63,3 +63,18 @@ class JobStatusResponse(BaseModel):
     transition_data: Optional[Dict[str, Any]] = Field(default=None, description="Dados de transição passados no request")
 
     model_config = {"extra": "allow"}
+
+class ChatFeedbackRequest(BaseModel):
+    """Payload para envio de feedback (RLHF - polegar cima/baixo)"""
+    agent_id: str = Field(..., description="ID do Agente que gerou a resposta")
+    session_id: str = Field(..., description="Sessão do chat")
+    feedback_type: str = Field(..., description="'positive' ou 'negative'")
+    user_message: str = Field(..., description="Mensagem do usuário que gerou a resposta")
+    agent_response: str = Field(..., description="Resposta do agente que está recebendo feedback")
+    correction_note: Optional[str] = Field(None, description="Opcional: Nota do humano explicando o erro ou acerto")
+
+class ChatFeedbackResponse(BaseModel):
+    """Resposta ao salvar feedback"""
+    success: bool
+    message: str
+    rule_extracted: Optional[str] = None

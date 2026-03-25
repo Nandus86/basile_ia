@@ -214,6 +214,38 @@ class AgentFactory:
             tags=[f"agent:{agent_config['name']}", agent_config["access_level"]]
         )
     
+    async def _inject_training_rules(self, agent_config: Dict[str, Any], messages: List[Any], system_prompt: str) -> str:
+        """Fetch RLHF training rules for the current agent and inject them into the system prompt."""
+        if not agent_config.get("training_memory_enabled") or not messages:
+            return system_prompt
+            
+        try:
+            from langchain_core.messages import HumanMessage
+            last_user_content = ""
+            for msg in reversed(messages):
+                if isinstance(msg, HumanMessage) and msg.content:
+                    last_user_content = str(msg.content)
+                    break
+            
+            if last_user_content:
+                from app.weaviate_client import get_weaviate
+                weaviate_client = get_weaviate()
+                rules = await weaviate_client.search_agent_self_memories(
+                    agent_id=str(agent_config["id"]),
+                    query=last_user_content,
+                    limit=3,
+                    memory_type="training_rule"
+                )
+                
+                if rules:
+                    rules_text = "\n".join([f"- {r['content']}" for r in rules])
+                    system_prompt += f"\n\n## 🧠 MODO DE TREINAMENTO (RLHF) ATIVO\nO administrador definiu as seguintes regras de comportamento baseadas em feedbacks de interações recentes similares. Siga-as RIGOROSAMENTE:\n{rules_text}\n"
+                    logger.info(f"[AgentFactory] 🧠 Injetou {len(rules)} regra(s) de treinamento para '{agent_config['name']}'")
+        except Exception as e:
+            logger.error(f"[AgentFactory] Error fetching training memory rules: {e}")
+            
+        return system_prompt
+    
     async def invoke_agent(
         self,
         agent_config: Dict[str, Any],
@@ -294,6 +326,9 @@ class AgentFactory:
             
             if context_section:
                 system_prompt += context_section
+        
+        # Inject RLHF Training Rules
+        system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
         
         # Add RAG context if available
         if rag_context:
@@ -464,6 +499,8 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             if context_section:
                 system_prompt += context_section
                 
+        # Inject RLHF Training Rules
+        system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
         
         # Add RAG context if available
         if rag_context:

@@ -202,10 +202,41 @@
                      <div v-if="msg.role === 'assistant'" v-html="formatMessage(msg.content)" class="markdown-content"></div>
                      <div v-else>{{ msg.content }}</div>
                    </v-sheet>
+                   </v-sheet>
                    
-                   <!-- Metadata Footer -->
-                   <div class="text-right mt-1 mr-1" v-if="msg.role === 'assistant' && msg.processingTime">
-                     <span class="text-xs text-disabled d-flex align-center justify-end">
+                   <!-- Metadata Footer and Thumbs -->
+                   <div class="d-flex align-center justify-space-between mt-1 mr-1" v-if="msg.role === 'assistant'">
+                     <div>
+                       <!-- Thumbs Buttons -->
+                       <v-btn
+                         v-if="!msg.feedback"
+                         icon="mdi-thumb-up-outline"
+                         size="x-small"
+                         variant="text"
+                         color="success"
+                         class="mr-1"
+                         @click="submitFeedback(msg, 'positive')"
+                         :loading="msg.feedbackLoading === 'positive'"
+                         :disabled="!!msg.feedbackLoading"
+                         title="Resposta excelente. O agente deve aprender este padrão."
+                       ></v-btn>
+                       <v-btn
+                         v-if="!msg.feedback"
+                         icon="mdi-thumb-down-outline"
+                         size="x-small"
+                         variant="text"
+                         color="error"
+                         @click="submitFeedback(msg, 'negative')"
+                         :loading="msg.feedbackLoading === 'negative'"
+                         :disabled="!!msg.feedbackLoading"
+                         title="Resposta ruim. O agente deve evitar este padrão."
+                       ></v-btn>
+                       <!-- Feedback registered indicator -->
+                       <span v-if="msg.feedback === 'positive'" class="text-caption text-success ml-1"><v-icon size="small" class="mr-1">mdi-check-circle</v-icon> Aprendizado salvo</span>
+                       <span v-if="msg.feedback === 'negative'" class="text-caption text-error ml-1"><v-icon size="small" class="mr-1">mdi-alert-circle</v-icon> Correção salva</span>
+                     </div>
+                     
+                     <span v-if="msg.processingTime" class="text-xs text-disabled d-flex align-center justify-end">
                        <v-icon size="10" class="mr-1">mdi-timer-outline</v-icon>
                        {{ (msg.processingTime / 1000).toFixed(2) }}s
                      </span>
@@ -563,8 +594,12 @@ async function sendMessage() {
       role: 'assistant',
       content: res.data.response,
       agent: res.data.agent_used,
+      agent_id: payload.agent_id,
       processingTime: res.data.processing_time_ms,
-      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      // Feedback UI internal states
+      feedback: null,
+      feedbackLoading: null
     })
     
     lastProcessingTime.value = res.data.processing_time_ms
@@ -578,6 +613,57 @@ async function sendMessage() {
   } finally {
     loading.value = false
     scrollToBottom()
+  }
+}
+
+async function submitFeedback(msg, type) {
+  const msgIndex = messages.value.indexOf(msg)
+  if (msgIndex <= 0) return
+  
+  let userMessage = ''
+  for (let i = msgIndex - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') {
+      userMessage = messages.value[i].content
+      break
+    }
+  }
+  
+  msg.feedbackLoading = type
+  let correctionNote = null
+  
+  if (type === 'negative') {
+    correctionNote = window.prompt("Opcional: Descreva rapidamente o que o agente errou ou como deveria ter respondido.")
+  }
+
+  try {
+    const payload = {
+      agent_id: msg.agent_id || selectedAgentId.value,
+      session_id: sessionId.value,
+      feedback_type: type,
+      user_message: userMessage,
+      agent_response: msg.content,
+      correction_note: correctionNote
+    }
+
+    const res = await axios.post('/webhook/feedback', payload)
+    if (res.data.success) {
+      msg.feedback = type
+      showNotification(res.data.message || 'Feedback salvo na memória vetorial do agente!', 'success')
+      
+      if (type === 'negative') {
+        const wantsRetry = window.confirm("Feedback registrado com nota de correção! Deseja que o agente tente responder novamente usando a nova restrição?")
+        if (wantsRetry) {
+            inputMessage.value = "Responda a minha pergunta inicial novamente, aplicando esta correção e evitando o erro anterior: " + (correctionNote || "resposta anterior inadequada.");
+            sendMessage();
+        }
+      }
+    } else {
+      showNotification('Erro ao salvar feedback.', 'error')
+    }
+  } catch (error) {
+    showNotification('Falha ao processar feedback: ' + (error.response?.data?.detail || error.message), 'error')
+  } finally {
+    msg.feedbackLoading = null
   }
 }
 
