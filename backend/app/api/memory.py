@@ -1,7 +1,59 @@
 """
-Memory Management API — View and delete STM (Redis) and Vector Memory (Weaviate) entries
+# Implementação do Treinamento Duplo Direcionado (Dual Training)
+
+Este plano descreve como adicionaremos botões de treinamento manual duplo nas telas de histórico (Curto e Médio Praz# Dual Training na Memória
+
+**Task Status:** Planning Dual Training Interface
+
+- [ ] Modificar `backend/app/api/memory.py` para criar rota `/train-dual`.
+- [ ] Modificar `frontend/src/views/MemoryManager.vue` para inserir botões nas mensagens (`👍👎`).
+- [ ] Adicionar modal dinâmico no Frontend com duas TextAreas (Regra Agente, Regra Contato).
+- [ ] Conectar o envio ao endpoint `/train-dual`.
+- [ ] Enviar notificação de revisão do plano para o usuário.
+- [ ] Aguardar aprovação para implementação (`notify_user`).a.
+
+## Proposed Changes
+
+### Frontend (UI)
+
+#### [MODIFY] [MemoryManager.vue](file:///d:/projetos/Basile_IA_Orch/frontend/src/views/MemoryManager.vue)
+- Na aba de visualização detalhada (`detailDialog`) de uma conversa STM ou MTM, adicionar botões de ação ("polegar para cima" e "polegar para baixo") visíveis em cada balão de mensagem do Agente (`msg.role === 'assistant'`).
+- Criar um novo `<v-dialog v-model="dualTrainDialog">` que abre ao clicar nesses botões. O painel conterá:
+  - O trecho da mensagem selecionada para contexto.
+  - `<v-textarea>` 1: **Orientação para o usuário (Contato)** - Regra específica para o relacionamento deste Contato com a IA.
+  - `<v-textarea>` 2: **Orientação para o Agente** - Regra para o agente aprender (Auto-Correção / Diretriz de Comportamento).
+- Adicionar a função `submitDualTraining()` que enviará um POST para a API com as regras preenchidas no painel.
+- Opcionalmente exibir identificador do `agent_id` e `session_id/contact_id` no cabeçalho do diálogo de treinamento para referência visual de quem receberá o treinamento.
+
+### Backend (APIs)
+
+#### [MODIFY] [memory.py](file:///d:/projetos/Basile_IA_Orch/backend/app/api/memory.py)
+- Adicionar o novo endpoint `POST /memory/train-dual`.
+- Endpoint aceitará um payload contendo:
+  - `agent_id`
+  - `contact_id`
+  - `contact_rule` (opcional)
+  - `agent_rule` (opcional)
+  - `message_context` (opcional, um trecho da mensagem que iniciou o treinamento).
+- Lógica:
+  - Se `contact_rule` for recebido: Injeta no Weaviate usando `save_contact_memory(agent_id, contact_id, content="⚠️ REGRA ESPECÍFICA: " + contact_rule, memory_type="preference")`.
+  - Se `agent_rule` for recebido: Injeta no Weaviate usando `save_agent_self_memory(agent_id, content="🔧 DIRETRIZ MANUAL: " + agent_rule, memory_type="self_correction")`.
+- Retorna `{ "status": "success", "saved_contact": bool, "saved_agent": bool }`.
+
+## Verification Plan
+
+### Automated Tests
+- Verificar na rede (Developer Tools) se o POST para `/memory/train-dual` transporta as chaves corretamente.
+
+### Manual Verification
+- Acessar "Meus Agentes" -> "Gerenciador de Memória".
+- Abrir um histórico na aba MTM ou STM (clicando no ícone do olhinho).
+- Na mensagem gerada pelo sistema, clicar no botão de Treinar (👍 / 👎).
+- Preencher "Regra para o Contato" e "Regra para o Agente". Salvar e confirmar mensagem de Snackbar.
+- Navegar para a aba "Memória Vetorial" e verificar se as duas inserções apareceram nas subguias "Contatos" e "Auto-Agente" respectivamente.
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
+from pydantic import BaseModel
 from typing import Optional, List
 import json
 
@@ -9,6 +61,59 @@ from app.redis_client import redis_client
 from app.weaviate_client import weaviate_client
 
 router = APIRouter()
+
+class DualTrainRequest(BaseModel):
+    agent_id: str
+    contact_id: Optional[str] = None
+    session_id: Optional[str] = None
+    contact_rule: Optional[str] = None
+    agent_rule: Optional[str] = None
+    message_context: Optional[str] = None
+
+# ─────────────────────────────────────────────────
+# Dual Training (Manual RLHF)
+# ─────────────────────────────────────────────────
+@router.post("/train-dual")
+async def train_dual_memory(payload: DualTrainRequest):
+    """
+    Saves specific manual rules for the Agent (Self-Correction/Instruction) 
+    and/or for the Contact (User Preference/Fact).
+    """
+    if not payload.agent_rule and not payload.contact_rule:
+        raise HTTPException(status_code=400, detail="Pelo menos uma regra (agente ou contato) deve ser fornecida.")
+        
+    saved_contact = False
+    saved_agent = False
+    
+    # Identify contact reference
+    contact_ref = payload.contact_id or payload.session_id
+    
+    metadata = {}
+    if payload.message_context:
+        metadata["trigger_message"] = payload.message_context[:500]
+        
+    if payload.contact_rule and contact_ref:
+        saved_contact = await weaviate_client.save_contact_memory(
+            agent_id=payload.agent_id,
+            contact_id=contact_ref,
+            content=f"⚠️ REGRA/PREFERÊNCIA MANUAL: {payload.contact_rule.strip()}",
+            metadata=metadata,
+            memory_type="preference"
+        )
+        
+    if payload.agent_rule:
+        saved_agent = await weaviate_client.save_agent_self_memory(
+            agent_id=payload.agent_id,
+            content=f"🔧 DIRETRIZ MANUAL: {payload.agent_rule.strip()}",
+            metadata=metadata,
+            memory_type="manual_rule"
+        )
+        
+    return {
+        "status": "success",
+        "saved_contact": saved_contact,
+        "saved_agent": saved_agent
+    }
 
 
 # ─────────────────────────────────────────────────

@@ -452,6 +452,15 @@
                 <span v-if="msg.created_at || msg.timestamp" class="text-caption ml-2" style="opacity: 0.4">
                   {{ formatDate(msg.created_at || msg.timestamp) }}
                 </span>
+                <v-spacer></v-spacer>
+                <v-btn v-if="msg.role === 'assistant'" icon variant="text" size="x-small" color="success" class="ml-1" @click="openDualTrain(msg, detailData, 'positive')">
+                  <v-icon size="16">mdi-thumb-up-outline</v-icon>
+                  <v-tooltip activator="parent" location="top">Treinar (Positivo)</v-tooltip>
+                </v-btn>
+                <v-btn v-if="msg.role === 'assistant'" icon variant="text" size="x-small" color="error" class="ml-1" @click="openDualTrain(msg, detailData, 'negative')">
+                  <v-icon size="16">mdi-thumb-down-outline</v-icon>
+                  <v-tooltip activator="parent" location="top">Treinar (Negativo)</v-tooltip>
+                </v-btn>
               </div>
               <div class="text-body-2 text-white" style="white-space: pre-wrap; word-break: break-word;">{{ msg.content }}</div>
             </div>
@@ -480,6 +489,65 @@
           <v-spacer />
           <v-btn variant="text" @click="confirmDialog = false">Cancelar</v-btn>
           <v-btn color="error" variant="flat" @click="confirmAction" :loading="deleting">Apagar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Dual Train Dialog -->
+    <v-dialog v-model="dualTrainDialog" max-width="600" persistent>
+      <v-card class="glass-card" style="background: #0D1117 !important">
+        <v-card-title class="d-flex align-center pa-5">
+          <v-icon class="mr-2" color="primary" size="22">mdi-school-outline</v-icon>
+          <span class="text-subtitle-1 font-weight-bold text-white">Treinamento Direcionado (RLHF)</span>
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" size="small" @click="dualTrainDialog = false" :disabled="dualTrainSubmitting">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider style="border-color: rgba(255,255,255,0.05)"></v-divider>
+        <v-card-text class="pa-5">
+          <div class="mb-4 pa-3 rounded bg-grey-darken-4 text-body-2" style="max-height: 100px; overflow-y: auto; opacity: 0.8; font-style: italic; border-left: 3px solid #9D4EDD;">
+            "{{ dualTrainPayload.message_context }}"
+          </div>
+
+          <v-row dense class="mb-2">
+             <v-col cols="6">
+               <v-text-field v-model="dualTrainPayload.agent_id" label="ID do Agente" variant="underlined" density="compact" hint="ID do agente (obrigatório)"></v-text-field>
+             </v-col>
+             <v-col cols="6">
+               <v-text-field v-model="dualTrainPayload.contact_id" label="ID do Contato/Sessão" variant="underlined" density="compact" hint="Opcional"></v-text-field>
+             </v-col>
+          </v-row>
+
+          <p class="text-body-2 mb-2 mt-4 text-info font-weight-medium">
+            <v-icon size="16" class="mr-1">mdi-account-details</v-icon> Regra para o Contato (User ID)
+          </p>
+          <v-textarea
+            v-model="dualTrainPayload.contact_rule"
+            placeholder="Ex: O usuário mora com 4 pessoas. / Não gosta de ser chamado pelo sobrenome..."
+            variant="outlined"
+            density="compact"
+            rows="2"
+            hide-details
+            class="mb-4"
+          ></v-textarea>
+
+          <p class="text-body-2 mb-2 text-purple font-weight-medium">
+            <v-icon size="16" class="mr-1">mdi-robot-outline</v-icon> Orientação para o Agente
+          </p>
+          <v-textarea
+            v-model="dualTrainPayload.agent_rule"
+            placeholder="Ex: NUNCA sugira opções de cartão de crédito. / SEMPRE seja mais conciso nas respostas."
+            variant="outlined"
+            density="compact"
+            rows="2"
+            hide-details
+          ></v-textarea>
+        </v-card-text>
+        <v-card-actions class="pa-5 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="dualTrainDialog = false" :disabled="dualTrainSubmitting">Cancelar</v-btn>
+          <v-btn color="primary" variant="flat" @click="submitDualTrain" :loading="dualTrainSubmitting" :disabled="!dualTrainPayload.agent_id || (!dualTrainPayload.agent_rule && !dualTrainPayload.contact_rule)">Salvar Treinamento</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -534,6 +602,17 @@ const vectorContactFilter = ref('')
 const detailDialog = ref(false)
 const detailKey = ref('')
 const detailData = ref(null)
+
+const dualTrainDialog = ref(false)
+const dualTrainSubmitting = ref(false)
+const dualTrainPayload = ref({
+  agent_id: '',
+  contact_id: '',
+  session_id: '',
+  message_context: '',
+  contact_rule: '',
+  agent_rule: ''
+})
 
 const confirmDialog = ref(false)
 const confirmMessage = ref('')
@@ -799,12 +878,56 @@ async function viewStmKey(item) {
   detailData.value = null
   detailDialog.value = true
   try {
-    const res = await axios.get(`/memory/stm/keys/${item.key}`)
+    const res = await axios.get(`/memory/stm/keys/${encodeURIComponent(item.key)}`)
     detailData.value = res.data
   } catch (e) {
     detailData.value = { data: 'Erro ao carregar dados' }
   }
 }
+
+// ── Dual Train (Manual RLHF) ──
+function openDualTrain(msg, dData, type) {
+  dualTrainPayload.value = {
+    agent_id: msg.agent_id || '',
+    contact_id: dData.session_id || (dData.key ? dData.key.replace('conversation:', '') : ''),
+    session_id: dData.session_id || (dData.key ? dData.key.replace('conversation:', '') : ''),
+    message_context: msg.content.substring(0, 300),
+    contact_rule: '',
+    agent_rule: ''
+  }
+  
+  if (!dualTrainPayload.value.agent_id && selectedMtmSessions.value.length === 1 && selectedMtmSessions.value[0].agent_id) {
+     // fallback to list agent_id if viewing that session
+     dualTrainPayload.value.agent_id = selectedMtmSessions.value[0].agent_id
+  }
+  
+  dualTrainDialog.value = true
+}
+
+async function submitDualTrain() {
+  if (!dualTrainPayload.value.agent_id) {
+    showSnack('ID do Agente é obrigatório', 'warning')
+    return
+  }
+  if (!dualTrainPayload.value.agent_rule && !dualTrainPayload.value.contact_rule) {
+    showSnack('Preencha ao menos uma das regras', 'warning')
+    return
+  }
+  
+  dualTrainSubmitting.value = true
+  try {
+    await axios.post('/memory/train-dual', dualTrainPayload.value)
+    showSnack('Treinamento salvo com sucesso no Weaviate!', 'success')
+    dualTrainDialog.value = false
+    fetchActiveVectorTab() // Refresh the vector tables just in case
+  } catch (e) {
+    showSnack(e.response?.data?.detail || 'Erro ao salvar treinamento', 'error')
+  } finally {
+    dualTrainSubmitting.value = false
+  }
+}
+
+
 
 // ── Delete ──
 function deleteStmKey(item) {
