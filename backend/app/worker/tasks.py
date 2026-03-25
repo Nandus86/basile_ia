@@ -660,8 +660,10 @@ async def _build_collaborator_tools(
         _db = db
         _context_data = context_data
         _is_planner = getattr(agent_model, "is_planner", False)
+        _planner_prompt = getattr(agent_model, "planner_prompt", None)
+        _planner_model = getattr(agent_model, "planner_model", None)
 
-        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner) -> str:
+        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner, _p_prompt=_planner_prompt, _p_model=_planner_model) -> str:
             """
             Invoke a collaborator agent with the given instruction.
             Args:
@@ -680,12 +682,12 @@ async def _build_collaborator_tools(
                         import json
                         
                         planner_llm = ChatOpenAI(
-                            model="gpt-4o-mini",
+                            model=_p_model or "gpt-4o-mini",
                             temperature=0.7,
                             api_key=settings.OPENAI_API_KEY
                         )
                         
-                        planner_prompt = (
+                        planner_prompt = _p_prompt or (
                             "Você é o Planejador Mestre do Orquestrador. "
                             "Sua função é pegar uma instrução e quebrá-la em um checklist de passos granulares (Tasks) "
                             "para outro agente técnico executar. O agente que receberá isto só terminará o trabalho quando finalizar todas as tarefas. "
@@ -969,8 +971,14 @@ async def process_message_task(
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
 
                 # Validação (Guardrail)
-                if output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text) and not is_first_interaction:
-                    validation_msg = await _validate_response(agent_config.get("system_prompt", ""), output_text)
+                is_guardrail_active = agent_config.get("is_guardrail_active", False)
+                if is_guardrail_active and output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text) and not is_first_interaction:
+                    validation_msg = await _validate_response(
+                        agent_config.get("system_prompt", ""), 
+                        output_text,
+                        agent_config.get("guardrail_prompt"),
+                        agent_config.get("guardrail_model")
+                    )
                     if validation_msg != "VALID" and retry_count < max_retries:
                         print(f"[Task] ⚠️ Validação falhou (tentativa {retry_count+1}/{max_retries}). Motivo: {validation_msg}")
                         messages.append(AIMessage(content=output_text))
@@ -1158,7 +1166,7 @@ async def _send_callback(callback_url: str, data: dict):
     except Exception as cb_err:
         print(f"Failed to send callback to {callback_url}: {cb_err}")
 
-async def _validate_response(system_prompt: str, agent_response: str) -> str:
+async def _validate_response(system_prompt: str, agent_response: str, guardrail_prompt: Optional[str] = None, guardrail_model: Optional[str] = None) -> str:
     """
     Analyzes if the agent's response violates its system prompt or basic constraints.
     Returns "VALID" if everything is okay, or a description of the violation.
@@ -1171,12 +1179,12 @@ async def _validate_response(system_prompt: str, agent_response: str) -> str:
     from app.config import settings
 
     llm = ChatOpenAI(
-        model="gpt-4o-mini",
+        model=guardrail_model or "gpt-4o-mini",
         temperature=0.0,
         api_key=settings.OPENAI_API_KEY
     )
 
-    check_prompt = """Você é um sistema validador de IA (Guardrail).
+    check_prompt = guardrail_prompt or """Você é um sistema validador de IA (Guardrail).
 Sua função é garantir que a RESPOSTA DO AGENTE não viole as regras estabelecidas no PROMPT DO SISTEMA.
 
 Verifique estritamente:
