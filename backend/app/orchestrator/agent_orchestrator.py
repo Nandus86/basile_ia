@@ -238,6 +238,44 @@ Responda APENAS em JSON válido com este formato exato:
             elif msg.get("role") == "assistant":
                 messages.append(AIMessage(content=f"{prefix}{msg['content']}"))
 
+        # [NESTED ORCHESTRATION] Load collaborator tools for nested orchestrators
+        if getattr(agent, "is_orchestrator", False) and getattr(agent, "collaboration_enabled", False):
+            try:
+                # Local import to avoid circular dependency
+                from app.worker.tasks import _build_collaborator_tools
+                
+                # Fetch fresh agent model with its own collaborators loaded
+                nested_agent_with_settings = await self.get_agent_with_collaborators(agent.id)
+                if nested_agent_with_settings:
+                    collab_tools, mandatory_instructions = await _build_collaborator_tools(
+                        self.db, nested_agent_with_settings, orientation or message, context_data, user_access_level="normal"
+                    )
+                    if collab_tools:
+                        existing_tools = agent_config.get("tools", []) or []
+                        agent_config["tools"] = existing_tools + collab_tools
+                        agent_config["has_tools"] = True
+                        
+                        collab_names = [t.name for t in collab_tools]
+                        mandatory_str = ""
+                        if mandatory_instructions:
+                            mandatory_str = "\n\n⚠️ ROTEAMENTO OBRIGATÓRIO POR PALAVRA-CHAVE:\n" + "\n".join(mandatory_instructions)
+                        
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                            f"\n\n## Agentes Especialistas Subordinados\n\n"
+                            f"Você tem acesso aos seguintes agentes especialistas que atuam como ferramentas suas:\n"
+                            f"{', '.join(collab_names)}\n\n"
+                            f"DIRETRIZ DE ORQUESTRAÇÃO ANINHADA:\n"
+                            f"1. Você DEVE acionar o agente especialista correspondente para buscar os dados solicitados.\n"
+                            f"2. Envie uma instrução técnica clara ao especialista.\n"
+                            f"3. Aguarde o retorno e utilize-o para construir sua resposta final estruturada.\n"
+                            f"{mandatory_str}"
+                        )
+                        print(f"[Orchestrator] 🔄 Nested orchestrator '{agent.name}' loaded {len(collab_tools)} collaborator tools")
+            except Exception as e:
+                import traceback
+                print(f"[Orchestrator] ❌ Error loading nested collaborator tools for '{agent.name}': {e}")
+                traceback.print_exc()
+
         # Include collaborator's own skills in the delegation message
         skills_section = ""
         if hasattr(agent, 'skills') and agent.skills:
