@@ -284,11 +284,12 @@ class AgentFactory:
                 request_only_paths.update(global_safe_prune - from_ai_names)
                 
                 # 1. Enrichment: Ensure $fromAI fields are in the context prompt if they exist in source
-                # even if not explicitly in input_schema.
+                # Only inject if the user hasn't explicitly defined a strict input_schema
                 effective_input_schema = input_schema.copy() if isinstance(input_schema, dict) else {}
-                for name in from_ai_names:
-                    if name not in effective_input_schema:
-                        effective_input_schema[name] = {"type": "string", "description": "Campo dinâmico para ferramenta"}
+                if not input_schema:
+                    for name in from_ai_names:
+                        if name not in effective_input_schema:
+                            effective_input_schema[name] = {"type": "string", "description": "Campo dinâmico para ferramenta"}
                 
                 # Update input_schema reference for format_context_data_for_prompt
                 input_schema = effective_input_schema
@@ -309,11 +310,32 @@ class AgentFactory:
                         else:
                             if key in data and isinstance(data[key], dict):
                                 prune_path(data[key], parts[1:])
+
+                    def is_path_in_schema(schema, path_str):
+                        if not schema or not isinstance(schema, dict):
+                            return False
+                        current = schema
+                        if current.get("type") == "object" and "properties" in current:
+                            current = current.get("properties", {})
+                        parts = path_str.split('.')
+                        for part in parts:
+                            if not isinstance(current, dict):
+                                return False
+                            if part not in current:
+                                return False
+                            current = current[part]
+                            if isinstance(current, dict) and current.get("type") == "object" and "properties" in current:
+                                current = current.get("properties", {})
+                        return True
                     
+                    paths_pruned_count = 0
                     for path in request_only_paths:
-                        prune_path(context_data_for_prompt, path.split('.'))
+                        # Skip pruning if the user explicitly requested this field in their input schema
+                        if not is_path_in_schema(input_schema, path):
+                            prune_path(context_data_for_prompt, path.split('.'))
+                            paths_pruned_count += 1
                     
-                    logger.info(f"[AgentFactory] 🛡️ Pruned {len(request_only_paths)} request-only field(s) from prompt context: {list(request_only_paths)}")
+                    logger.info(f"[AgentFactory] 🛡️ Pruned {paths_pruned_count} request-only field(s) from prompt context.")
                     
                     # Use the pruned copy for formatting
                     context_section = format_context_data_for_prompt(context_data_for_prompt, input_schema)
