@@ -11,9 +11,19 @@
           <p>Monitore requisições, status dos jobs e webhooks processados</p>
         </div>
       </div>
-      <v-btn color="primary" @click="fetchData" :loading="loading" prepend-icon="mdi-refresh" elevation="3">
-        Atualizar
-      </v-btn>
+      <div class="d-flex align-center ga-3">
+        <div class="d-flex align-center ga-1" v-if="sseConnected">
+          <span class="sse-dot"></span>
+          <span class="text-caption text-success">Tempo real ativo</span>
+        </div>
+        <div class="d-flex align-center ga-1" v-else>
+          <span class="sse-dot sse-offline"></span>
+          <span class="text-caption text-medium-emphasis">Desconectado</span>
+        </div>
+        <v-btn color="primary" @click="fetchData" :loading="loading" prepend-icon="mdi-refresh" elevation="3">
+          Atualizar
+        </v-btn>
+      </div>
     </div>
 
     <!-- Charts Section -->
@@ -126,9 +136,33 @@
         </template>
         
         <template v-slot:item.actions="{ item }">
-          <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-eye" @click="openJobDetails(item)">
-            Abrir Job
-          </v-btn>
+          <div class="d-flex ga-1 justify-center">
+            <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-eye" @click="openJobDetails(item)">
+              Abrir Job
+            </v-btn>
+            <v-btn
+              v-if="getSessionId(item)"
+              icon
+              variant="text"
+              size="small"
+              color="info"
+              @click="viewStmFromJob(item)"
+            >
+              <v-icon size="18">mdi-message-text-clock-outline</v-icon>
+              <v-tooltip activator="parent" location="top">Ver STM (Conversa)</v-tooltip>
+            </v-btn>
+            <v-btn
+              v-if="getSessionId(item)"
+              icon
+              variant="text"
+              size="small"
+              color="warning"
+              @click="viewMtmFromJob(item)"
+            >
+              <v-icon size="18">mdi-database-clock-outline</v-icon>
+              <v-tooltip activator="parent" location="top">Ver MTM (Histórico)</v-tooltip>
+            </v-btn>
+          </div>
         </template>
       </v-data-table>
     </v-card>
@@ -277,6 +311,50 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- STM/MTM Messages Dialog -->
+    <v-dialog v-model="memoryDialog" max-width="750" scrollable>
+      <v-card class="glass-card" style="background: #0D1117 !important">
+        <v-card-title class="d-flex align-center pa-5">
+          <v-icon class="mr-2" size="20" :color="memoryDialogType === 'stm' ? '#00D1FF' : '#FBBF24'">
+            {{ memoryDialogType === 'stm' ? 'mdi-message-text-clock-outline' : 'mdi-database-clock-outline' }}
+          </v-icon>
+          <span class="text-subtitle-1 font-weight-bold text-white">{{ memoryDialogTitle }}</span>
+          <v-spacer />
+          <v-btn icon variant="text" size="small" @click="memoryDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider style="border-color: rgba(255,255,255,0.05)"></v-divider>
+        <v-card-text class="pa-5" style="max-height: 550px; overflow-y: auto;">
+          <div v-if="memoryDialogLoading" class="d-flex justify-center py-12">
+            <v-progress-circular indeterminate color="primary" size="32"></v-progress-circular>
+          </div>
+          <div v-else-if="memoryMessages.length > 0" class="d-flex flex-column ga-3">
+            <div
+              v-for="(msg, idx) in memoryMessages"
+              :key="idx"
+              class="memory-bubble pa-3 rounded-lg"
+              :class="msg.role === 'user' ? 'mem-user-msg' : 'mem-assistant-msg'"
+            >
+              <div class="d-flex align-center mb-1">
+                <v-icon size="14" class="mr-1" :color="msg.role === 'user' ? '#00D1FF' : '#9D4EDD'">
+                  {{ msg.role === 'user' ? 'mdi-account' : 'mdi-robot' }}
+                </v-icon>
+                <span class="text-caption font-weight-bold text-uppercase" style="opacity: 0.7">{{ msg.role }}</span>
+                <span v-if="msg.created_at || msg.timestamp" class="text-caption ml-2" style="opacity: 0.4">
+                  {{ formatDate(msg.created_at || msg.timestamp) }}
+                </span>
+              </div>
+              <div class="text-body-2 text-white" style="white-space: pre-wrap; word-break: break-word;">{{ msg.content }}</div>
+            </div>
+          </div>
+          <div v-else class="text-center pa-8 text-medium-emphasis">
+            Nenhuma mensagem encontrada para esta sessão.
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
     
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.text }}
@@ -285,7 +363,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import axiosInstance from '@/plugins/axios'
 import VueApexCharts from 'vue3-apexcharts'
 import ApexCharts from 'apexcharts'
@@ -295,6 +373,9 @@ const apexchart = VueApexCharts
 // Loading
 const loading = ref(false)
 const statsLoading = ref(false)
+
+// SSE
+const sseConnected = ref(false)
 
 // Charts — Dark themed
 const statusChartSeries = ref([])
@@ -370,19 +451,6 @@ const dialog = ref(false)
 const selectedJob = ref(null)
 const snackbar = ref({ show: false, text: '', color: 'success' })
 
-function exportDonut() {
-  const chart = ApexCharts.getChartByID('statusChart')
-  if (chart) {
-    chart.exportToPng().then(url => {
-      const link = document.createElement('a')
-      link.download = 'status-chart.png'
-      link.href = url
-      link.click()
-      showSnackbar('Gráfico exportado!', 'success')
-    }).catch(() => showSnackbar('Erro ao exportar', 'error'))
-  }
-}
-
 // Test mode references
 const testingJob = ref(false)
 const testResult = ref(null)
@@ -397,6 +465,119 @@ const resendingJob = ref(false)
 const showHumanInput = ref(false)
 const humanText = ref('')
 const sendingHuman = ref(false)
+
+// STM/MTM Memory Dialog
+const memoryDialog = ref(false)
+const memoryDialogType = ref('stm')
+const memoryDialogTitle = ref('')
+const memoryDialogLoading = ref(false)
+const memoryMessages = ref([])
+
+// ── SSE Connection (fetch-based for auth header support) ──
+let sseAbortController = null
+
+function connectSSE() {
+  disconnectSSE()
+  sseAbortController = new AbortController()
+
+  const baseUrl = axiosInstance.defaults?.baseURL || '/api'
+  const token = localStorage.getItem('accessToken')
+  const headers = { 'Accept': 'text/event-stream' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  const doConnect = async () => {
+    try {
+      const res = await fetch(`${baseUrl}/tracking/stream`, {
+        headers,
+        signal: sseAbortController.signal,
+      })
+
+      if (!res.ok) {
+        sseConnected.value = false
+        scheduleReconnect()
+        return
+      }
+
+      sseConnected.value = true
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop()
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const raw = line.slice(6)
+          try {
+            const payload = JSON.parse(raw)
+            handleSSEEvent(payload)
+          } catch { /* ignore parse errors */ }
+        }
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        sseConnected.value = false
+        scheduleReconnect()
+      }
+    }
+  }
+
+  doConnect()
+}
+
+function scheduleReconnect() {
+  setTimeout(() => {
+    if (!sseAbortController?.signal.aborted) {
+      connectSSE()
+    }
+  }, 5000)
+}
+
+function handleSSEEvent(payload) {
+  const { event, data: jobData } = payload
+  if (!jobData) return
+
+  if (event === 'new_job') {
+    const idx = logs.value.findIndex(j => j.job_id === jobData.job_id)
+    if (idx !== -1) {
+      logs.value[idx] = { ...logs.value[idx], ...jobData }
+    } else {
+      logs.value.unshift(jobData)
+      totalItems.value += 1
+    }
+  } else if (event === 'job_updated') {
+    const idx = logs.value.findIndex(j => j.job_id === jobData.job_id)
+    if (idx !== -1) {
+      logs.value[idx] = { ...logs.value[idx], ...jobData }
+    } else {
+      logs.value.unshift(jobData)
+      totalItems.value += 1
+    }
+  }
+
+  // Refresh stats occasionally
+  if (Math.random() < 0.2) {
+    fetchStats()
+  }
+}
+
+function disconnectSSE() {
+  if (sseAbortController) {
+    sseAbortController.abort()
+    sseAbortController = null
+  }
+  sseConnected.value = false
+}
+
+// ── Helpers ──
+function getSessionId(item) {
+  return item.request_data?.session_id || item.session_id || null
+}
 
 const fetchStats = async () => {
   statsLoading.value = true
@@ -435,10 +616,54 @@ const fetchData = () => { fetchStats(); fetchLogs() }
 const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => { page.value = np; itemsPerPage.value = nip; fetchLogs() }
 const openJobDetails = (job) => { 
   selectedJob.value = job; 
-  testResult.value = null; // reset specific dialog tests 
+  testResult.value = null;
   showHumanInput.value = false;
   humanText.value = '';
   dialog.value = true 
+}
+
+// ── STM/MTM from Job ──
+async function viewStmFromJob(item) {
+  const sessionId = getSessionId(item)
+  if (!sessionId) return
+  
+  memoryDialogType.value = 'stm'
+  memoryDialogTitle.value = `STM - Conversa: ${sessionId}`
+  memoryMessages.value = []
+  memoryDialogLoading.value = true
+  memoryDialog.value = true
+
+  try {
+    const key = `conversation:${sessionId}`
+    const { data } = await axiosInstance.get(`/memory/stm/keys/${encodeURIComponent(key)}`)
+    memoryMessages.value = data.messages || []
+  } catch (e) {
+    memoryMessages.value = []
+    showSnackbar('Erro ao carregar conversa STM', 'error')
+  } finally {
+    memoryDialogLoading.value = false
+  }
+}
+
+async function viewMtmFromJob(item) {
+  const sessionId = getSessionId(item)
+  if (!sessionId) return
+
+  memoryDialogType.value = 'mtm'
+  memoryDialogTitle.value = `MTM - Histórico: ${sessionId}`
+  memoryMessages.value = []
+  memoryDialogLoading.value = true
+  memoryDialog.value = true
+
+  try {
+    const { data } = await axiosInstance.get(`/memory/mtm/sessions/${encodeURIComponent(sessionId)}`)
+    memoryMessages.value = data.messages || []
+  } catch (e) {
+    memoryMessages.value = []
+    showSnackbar('Erro ao carregar histórico MTM', 'error')
+  } finally {
+    memoryDialogLoading.value = false
+  }
 }
 
 const testCurrentJob = async () => {
@@ -466,7 +691,6 @@ const abortCurrentJob = async () => {
   try {
     const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/abort`);
     showSnackbar(data.message || 'Sinal de cancelamento enviado!', 'warning');
-    // We optionally update local state to reflect it's aborted somewhat immediately
     selectedJob.value.status = 'failed';
     selectedJob.value.error_message = 'Aguardando cancelamento / Aborted by user';
   } catch (error) {
@@ -498,7 +722,6 @@ const sendHumanResponse = async () => {
     const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/human-response`, { human_text: humanText.value });
     showSnackbar(data.message || 'Human response enviada com sucesso!', 'success');
     showHumanInput.value = false;
-    // Update local response_data to reflect the change
     if (selectedJob.value.response_data && 'result' in selectedJob.value.response_data) {
       selectedJob.value.response_data.result = humanText.value;
     }
@@ -523,7 +746,14 @@ const copyToClipboard = (data) => {
 
 const showSnackbar = (text, color = 'success') => { snackbar.value = { show: true, text, color } }
 
-onMounted(() => { fetchData() })
+onMounted(() => { 
+  fetchData()
+  connectSSE()
+})
+
+onUnmounted(() => {
+  disconnectSSE()
+})
 </script>
 
 <style scoped>
@@ -542,5 +772,41 @@ onMounted(() => { fetchData() })
   word-wrap: break-word;
   margin: 0;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* SSE indicator */
+.sse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #00FC8B;
+  box-shadow: 0 0 6px rgba(0, 252, 139, 0.6);
+  animation: sse-pulse 2s ease-in-out infinite;
+}
+
+.sse-offline {
+  background: #FF0055;
+  box-shadow: 0 0 6px rgba(255, 0, 85, 0.4);
+  animation: none;
+}
+
+@keyframes sse-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Memory message bubbles */
+.memory-bubble {
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.mem-user-msg {
+  background: rgba(0, 163, 255, 0.06);
+  border-left: 3px solid rgba(0, 209, 255, 0.5);
+}
+
+.mem-assistant-msg {
+  background: rgba(157, 78, 221, 0.06);
+  border-left: 3px solid rgba(157, 78, 221, 0.5);
 }
 </style>

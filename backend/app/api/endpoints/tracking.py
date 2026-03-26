@@ -1,14 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, desc
 from typing import List, Optional
+import json
+import asyncio
+import logging
 
 from app.database import get_db
 from app.models.job_log import JobLog
 from app.schemas.job_log import JobLogSchema
 from app.redis_client import redis_client
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/logs")
@@ -217,3 +222,47 @@ async def human_response_job(
         return {"success": True, "message": f"Human response enviada para {job_log.callback_url}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send human response: {str(e)}")
+
+
+# ─────────────────────────────────────────────────
+# SSE (Server-Sent Events) - Real-time job updates
+# ─────────────────────────────────────────────────
+
+@router.get("/stream")
+async def stream_job_updates(request: Request):
+    """SSE endpoint that streams real-time job status updates via Redis PubSub"""
+    async def event_generator():
+        client = await redis_client.connect()
+        pubsub = client.pubsub()
+        await pubsub.subscribe("job_updates")
+        logger.info("SSE client connected on /tracking/stream")
+        try:
+            async for message in pubsub.listen():
+                if await request.is_disconnected():
+                    logger.info("SSE client disconnected from /tracking/stream")
+                    break
+                if message["type"] == "message":
+                    data = message["data"]
+                    if isinstance(data, bytes):
+                        data = data.decode()
+                    yield f"data: {data}\n\n"
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"SSE stream error: {e}")
+        finally:
+            try:
+                await pubsub.unsubscribe("job_updates")
+                await pubsub.close()
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )

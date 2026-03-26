@@ -22,7 +22,16 @@ export default defineConfig({
             '/api': {
                 target: process.env.VITE_API_URL || 'http://localhost:8009',
                 changeOrigin: true,
-                rewrite: (path) => path.replace(/^\/api/, '')
+                rewrite: (path) => path.replace(/^\/api/, ''),
+                configure: (proxy) => {
+                    proxy.on('proxyRes', (proxyRes) => {
+                        if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
+                            proxyRes.headers['cache-control'] = 'no-cache'
+                            proxyRes.headers['connection'] = 'keep-alive'
+                            delete proxyRes.headers['content-length']
+                        }
+                    })
+                }
             }
         }
     },

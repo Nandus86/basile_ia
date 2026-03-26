@@ -16,6 +16,30 @@ logger = logging.getLogger(__name__)
 # Controla as tasks rodando por job para podermos interceder via sinal de abort
 active_jobs = {}
 
+
+async def _publish_job_update(job_id, status, webhook_path=None, request_data=None, response_data=None, error_message=None, duration_ms=None, created_at=None):
+    """Publish a job status update to the SSE Redis channel for real-time frontend updates."""
+    try:
+        session_id = None
+        if request_data and isinstance(request_data, dict):
+            session_id = request_data.get("session_id")
+        await redis_client.publish("job_updates", json.dumps({
+            "event": "job_updated",
+            "data": {
+                "job_id": job_id,
+                "webhook_path": webhook_path or "",
+                "status": status,
+                "request_data": request_data,
+                "response_data": response_data,
+                "error_message": error_message,
+                "duration_ms": duration_ms,
+                "created_at": created_at,
+                "completed_at": None,
+            }
+        }))
+    except Exception:
+        pass
+
 async def _listen_for_aborts():
     """Background task to listen for abort signals via Redis PubSub."""
     import asyncio
@@ -90,6 +114,13 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     if job_log:
                         job_log.status = "in_progress"
                         await db_session.commit()
+                        # SSE: publish job update
+                        await _publish_job_update(
+                            job_id=job_id, status="in_progress",
+                            webhook_path=job_log.webhook_path,
+                            request_data=payload,
+                            created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                        )
             except Exception as e:
                 logger.error(f"Failed to update JobLog in_progress: {e}")
 
@@ -233,6 +264,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         if job_log.created_at:
                             job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
                         await db_session.commit()
+                        # SSE: publish job completed
+                        await _publish_job_update(
+                            job_id=job_id, status="completed",
+                            webhook_path=job_log.webhook_path,
+                            request_data=payload,
+                            response_data=full_response_data,
+                            duration_ms=job_log.duration_ms,
+                            created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                        )
             except Exception as e:
                 logger.error(f"Failed to update JobLog completed: {e}")
 
@@ -285,6 +325,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             if job_log.created_at:
                                 job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
                             await db_session.commit()
+                            # SSE: publish job failed
+                            await _publish_job_update(
+                                job_id=job_id, status="failed",
+                                webhook_path=job_log.webhook_path,
+                                request_data=body.get("payload", {}),
+                                error_message=str(e),
+                                duration_ms=job_log.duration_ms,
+                                created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                            )
                 except Exception:
                     pass
 
@@ -316,6 +365,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             if job_log.created_at:
                                 job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
                             await db_session.commit()
+                            # SSE: publish job aborted
+                            await _publish_job_update(
+                                job_id=job_id, status="failed",
+                                webhook_path=job_log.webhook_path,
+                                request_data=body.get("payload", {}),
+                                error_message="Aborted by user",
+                                duration_ms=job_log.duration_ms,
+                                created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                            )
                 except Exception:
                     pass
             # Devemos retornar normalmente para que aio_pika considere a msg processada e nao entre em loop

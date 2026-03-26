@@ -622,7 +622,24 @@ async def process_dynamic_webhook(
         )
         db.add(job_log)
         await db.commit()
-        
+
+        # Publish new job event to SSE channel
+        try:
+            from app.redis_client import redis_client as _redis
+            await _redis.publish("job_updates", json.dumps({
+                "event": "new_job",
+                "data": {
+                    "job_id": job_id,
+                    "webhook_path": path,
+                    "status": "queued",
+                    "request_data": payload,
+                    "callback_url": request.callback_url,
+                    "created_at": job_log.created_at.isoformat() if job_log.created_at else None,
+                }
+            }))
+        except Exception:
+            pass
+
         # Publish to RabbitMQ
         success = await rabbitmq_client.publish_webhook_job(
             payload=payload,
