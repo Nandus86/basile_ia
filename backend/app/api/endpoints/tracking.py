@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from app.database import get_db
 from app.models.job_log import JobLog
+from app.schemas.job_log import JobLogSchema
 from app.redis_client import redis_client
 
 router = APIRouter()
@@ -37,7 +38,7 @@ async def get_tracking_logs(
     logs = result.scalars().all()
     
     return {
-        "items": logs,
+        "items": [JobLogSchema.model_validate(log) for log in logs],
         "total": total,
         "skip": skip,
         "limit": limit
