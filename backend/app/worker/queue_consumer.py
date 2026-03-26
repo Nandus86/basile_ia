@@ -175,6 +175,20 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 attempts = 0
                 last_exception = None
                 
+                # Start StatusMonitor for interim progress messages
+                monitor = None
+                if callback_url and agent:
+                    from app.worker.status_monitor import StatusMonitor
+                    monitor = StatusMonitor(
+                        callback_url=callback_url,
+                        agent_config={
+                            "status_updates_enabled": getattr(agent, "status_updates_enabled", False),
+                            "status_updates_config": getattr(agent, "status_updates_config", {}) or {}
+                        },
+                        session_id=session_id
+                    )
+                    await monitor.start()
+                
                 while attempts <= max_retries:
                     attempts += 1
                     try:
@@ -223,6 +237,10 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         else:
                             logger.error(f"[Consumer] All {max_retries+1} attempts failed for job {job_id}.")
                             raise last_exception
+                
+                # Stop StatusMonitor — processing complete
+                if monitor:
+                    await monitor.stop()
                 
             # Set to completed
             job_data = {
@@ -299,6 +317,12 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
 
         except Exception as e:
             logger.error(f"Error processing webhook job from RabbitMQ: {str(e)}")
+            # Stop monitor on error
+            if 'monitor' in locals() and monitor:
+                try:
+                    await monitor.stop()
+                except Exception:
+                    pass
             job_id = body.get("job_id") if 'body' in locals() else None
             if job_id:
                 try:
@@ -339,6 +363,12 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
 
         except asyncio.CancelledError:
             logger.warning(f"Job {job_id} task was CANCELLED/ABORTED")
+            # Stop monitor on cancel
+            if 'monitor' in locals() and monitor:
+                try:
+                    await monitor.stop()
+                except Exception:
+                    pass
             job_id = body.get("job_id") if 'body' in locals() else None
             if job_id:
                 try:

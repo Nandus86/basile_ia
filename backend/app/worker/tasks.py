@@ -1162,6 +1162,13 @@ async def process_message_task(
                 "agent_used": "Agente de Recuperação",
                 "processing_time_ms": processing_time,
             }
+    finally:
+        # Stop StatusMonitor to prevent resource leaks
+        if monitor is not None:
+            try:
+                await monitor.stop()
+            except Exception:
+                pass
 
 async def _invoke_recovery_agent(message: str, error_msg: str) -> str:
     """Invokes a recovery agent to provide a friendly response after a timeout/error."""
