@@ -98,7 +98,8 @@ async def process_message(
             job_id=f"sync_{uuid.uuid4().hex}",
             webhook_path="/process",
             status="in_progress",
-            request_data=request.model_dump()
+            request_data=request.model_dump(),
+            callback_url=request.callback_url
         )
         db.add(job_log)
         await db.commit()
@@ -604,7 +605,8 @@ async def process_dynamic_webhook(
             job_id=job_id,
             webhook_path=path,
             status="queued",
-            request_data=payload
+            request_data=payload,
+            callback_url=request.callback_url
         )
         db.add(job_log)
         await db.commit()

@@ -135,3 +135,77 @@ async def abort_job(job_id: str):
         return {"success": True, "message": f"Sinal de abort enviado para o job {job_id}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to abort job: {str(e)}")
+
+
+@router.post("/jobs/{job_id}/resend")
+async def resend_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Resend the job's response_data to its callback_url"""
+    query = select(JobLog).where(JobLog.job_id == job_id)
+    result = await db.execute(query)
+    job_log = result.scalar_one_or_none()
+    
+    if not job_log:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if not job_log.callback_url:
+        raise HTTPException(status_code=400, detail="Job has no callback_url to resend to")
+    
+    if not job_log.response_data:
+        raise HTTPException(status_code=400, detail="Job has no response_data to resend")
+    
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(job_log.callback_url, json=job_log.response_data, timeout=10.0)
+        return {"success": True, "message": f"Response reenviado para {job_log.callback_url}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resend callback: {str(e)}")
+
+
+@router.post("/jobs/{job_id}/human-response")
+async def human_response_job(
+    job_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """Send a human-written response replacing the output field, sending to callback_url"""
+    human_text = body.get("human_text")
+    if not human_text:
+        raise HTTPException(status_code=400, detail="human_text is required")
+    
+    query = select(JobLog).where(JobLog.job_id == job_id)
+    result = await db.execute(query)
+    job_log = result.scalar_one_or_none()
+    
+    if not job_log:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if not job_log.callback_url:
+        raise HTTPException(status_code=400, detail="Job has no callback_url to send to")
+    
+    if not job_log.response_data:
+        raise HTTPException(status_code=400, detail="Job has no response_data to modify")
+    
+    # Replicate response_data and replace output/response field
+    import copy
+    modified_response = copy.deepcopy(job_log.response_data)
+    
+    if "output" in modified_response:
+        modified_response["output"] = human_text
+    elif "response" in modified_response:
+        modified_response["response"] = human_text
+    else:
+        modified_response["output"] = human_text
+    
+    # Update job_log.response_data in DB
+    job_log.response_data = modified_response
+    await db.commit()
+    
+    # Send to callback_url
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(job_log.callback_url, json=modified_response, timeout=10.0)
+        return {"success": True, "message": f"Human response enviada para {job_log.callback_url}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send human response: {str(e)}")

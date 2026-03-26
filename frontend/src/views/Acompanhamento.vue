@@ -199,6 +199,36 @@
               <pre class="text-caption" style="color: #00D1FF;">{{ formatJSON(testResult) }}</pre>
             </v-sheet>
           </div>
+          <!-- Human Response Input -->
+          <div v-if="showHumanInput" class="mt-4">
+            <v-divider class="mb-4"></v-divider>
+            <h3 class="text-subtitle-2 font-weight-bold text-warning mb-2">
+              <v-icon size="small" class="mr-1">mdi-account-voice</v-icon>
+              Human Response
+            </h3>
+            <v-textarea
+              v-model="humanText"
+              variant="outlined"
+              placeholder="Digite a mensagem que será enviada como resposta..."
+              rows="3"
+              auto-grow
+              hide-details
+            ></v-textarea>
+            <div class="d-flex justify-end mt-2 gap-2">
+              <v-btn size="small" variant="text" @click="showHumanInput = false; humanText = ''">Cancelar</v-btn>
+              <v-btn
+                size="small"
+                color="warning"
+                variant="flat"
+                prepend-icon="mdi-send"
+                :loading="sendingHuman"
+                :disabled="!humanText.trim()"
+                @click="sendHumanResponse"
+              >
+                Enviar Resposta
+              </v-btn>
+            </div>
+          </div>
         </v-card-text>
         
         <v-card-actions class="pa-4 border-t d-flex flex-wrap gap-2">
@@ -210,6 +240,25 @@
             @click="testCurrentJob"
           >
             Testar Job
+          </v-btn>
+          <v-btn
+            v-if="selectedJob.callback_url && selectedJob.response_data"
+            color="success"
+            variant="tonal"
+            prepend-icon="mdi-send-variant"
+            :loading="resendingJob"
+            @click="resendCurrentJob"
+          >
+            Reenviar
+          </v-btn>
+          <v-btn
+            v-if="selectedJob.callback_url"
+            color="warning"
+            variant="tonal"
+            prepend-icon="mdi-account-voice"
+            @click="showHumanInput = !showHumanInput"
+          >
+            Human Response
           </v-btn>
           <div class="text-caption text-medium-emphasis ms-2 me-auto align-self-center">
             (Roda internamente, não aciona webhook de saída)
@@ -224,7 +273,7 @@
           >
             Abortar Job
           </v-btn>
-          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob || abortingJob">Fechar</v-btn>
+          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob || abortingJob || resendingJob || sendingHuman">Fechar</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -341,6 +390,14 @@ const testResult = ref(null)
 // Abort state
 const abortingJob = ref(false)
 
+// Resend state
+const resendingJob = ref(false)
+
+// Human Response state
+const showHumanInput = ref(false)
+const humanText = ref('')
+const sendingHuman = ref(false)
+
 const fetchStats = async () => {
   statsLoading.value = true
   try {
@@ -379,6 +436,8 @@ const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => { page.value = 
 const openJobDetails = (job) => { 
   selectedJob.value = job; 
   testResult.value = null; // reset specific dialog tests 
+  showHumanInput.value = false;
+  humanText.value = '';
   dialog.value = true 
 }
 
@@ -415,6 +474,44 @@ const abortCurrentJob = async () => {
     showSnackbar(error.response?.data?.detail || 'Falha ao abortar job', 'error');
   } finally {
     abortingJob.value = false;
+  }
+}
+
+const resendCurrentJob = async () => {
+  if (!selectedJob.value) return;
+  resendingJob.value = true;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/resend`);
+    showSnackbar(data.message || 'Response reenviado com sucesso!', 'success');
+  } catch (error) {
+    console.error("Erro ao reenviar:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao reenviar response', 'error');
+  } finally {
+    resendingJob.value = false;
+  }
+}
+
+const sendHumanResponse = async () => {
+  if (!selectedJob.value || !humanText.value.trim()) return;
+  sendingHuman.value = true;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/human-response`, { human_text: humanText.value });
+    showSnackbar(data.message || 'Human response enviada com sucesso!', 'success');
+    showHumanInput.value = false;
+    humanText.value = '';
+    // Update local response_data to reflect the change
+    if (selectedJob.value.response_data) {
+      if ('output' in selectedJob.value.response_data) {
+        selectedJob.value.response_data.output = humanText.value;
+      } else if ('response' in selectedJob.value.response_data) {
+        selectedJob.value.response_data.response = humanText.value;
+      }
+    }
+  } catch (error) {
+    console.error("Erro ao enviar human response:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao enviar human response', 'error');
+  } finally {
+    sendingHuman.value = false;
   }
 }
 

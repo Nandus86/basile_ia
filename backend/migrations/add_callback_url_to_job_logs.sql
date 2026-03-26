@@ -1,0 +1,1 @@
+ALTER TABLE job_logs ADD COLUMN IF NOT EXISTS callback_url VARCHAR;
