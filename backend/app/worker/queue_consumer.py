@@ -223,7 +223,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         full_response_data = {
                             "status": "completed",
                             "job_id": job_id,
-                            "result": final_result if isinstance(final_result, dict) else {"output": final_result},
+                            "result": final_result if not isinstance(final_result, dict) else final_result.get("output", final_result.get("response", str(final_result))),
                             "agent_used": agent_used
                         }
                         if transition_data:

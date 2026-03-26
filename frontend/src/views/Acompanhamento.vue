@@ -498,15 +498,11 @@ const sendHumanResponse = async () => {
     const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/human-response`, { human_text: humanText.value });
     showSnackbar(data.message || 'Human response enviada com sucesso!', 'success');
     showHumanInput.value = false;
-    humanText.value = '';
     // Update local response_data to reflect the change
-    if (selectedJob.value.response_data) {
-      if ('output' in selectedJob.value.response_data) {
-        selectedJob.value.response_data.output = humanText.value;
-      } else if ('response' in selectedJob.value.response_data) {
-        selectedJob.value.response_data.response = humanText.value;
-      }
+    if (selectedJob.value.response_data && 'result' in selectedJob.value.response_data) {
+      selectedJob.value.response_data.result = humanText.value;
     }
+    humanText.value = '';
   } catch (error) {
     console.error("Erro ao enviar human response:", error);
     showSnackbar(error.response?.data?.detail || 'Falha ao enviar human response', 'error');

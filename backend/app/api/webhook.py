@@ -122,10 +122,16 @@ async def process_message(
         
         # Update JobLog with success - salvar payload completo (mesmo que vai para o callback)
         job_log.status = "completed"
+        task_response = task_result.get("response", "")
+        # Se response for dict, extrair output ou response; senão usar como string
+        if isinstance(task_response, dict):
+            result_str = task_response.get("output", task_response.get("response", str(task_response)))
+        else:
+            result_str = task_response
         full_response_data = {
             "status": "completed",
             "job_id": job_log.job_id,
-            "result": task_result.get("response", "") if not isinstance(task_result.get("response"), dict) else task_result.get("response"),
+            "result": result_str,
             "agent_used": task_result.get("agent_used")
         }
         transition_data = task_result.get("transition_data")
