@@ -317,7 +317,7 @@ async def _enrich_agent_prompt(
         # The ReAct agent naturally decides when to call each one
         print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — loading collaborator tools")
         try:
-            collab_tools = await _build_collaborator_tools(
+            collab_tools, mandatory_instructions = await _build_collaborator_tools(
                 db, agent_model, message, context_data, user_access_level=user_access_level
             )
             if collab_tools:
@@ -328,6 +328,12 @@ async def _enrich_agent_prompt(
                 
                 # Add orchestration instructions to system prompt
                 collab_names = [t.name for t in collab_tools]
+                
+                mandatory_str = ""
+                if mandatory_instructions:
+                    mandatory_str = "\n\n⚠️ ROTEAMENTO OBRIGATÓRIO POR PALAVRA-CHAVE:\n" + "\n".join(mandatory_instructions)
+                    print(f"[Task] 🚨 Injected {len(mandatory_instructions)} mandatory routing instructions for keywords")
+                
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                     f"\n\n## Agentes Especialistas Disponíveis\n\n"
                     f"Você tem acesso a agentes especialistas que podem ser acionados como ferramentas. "
@@ -340,6 +346,7 @@ async def _enrich_agent_prompt(
                     f"4. RESPOSTA FINAL: Se sua instrução principal exige um especialista de 'Resposta Final', você DEVE chamá-lo para formatar o texto final antes de encerrar.\n"
                     f"5. HIERARQUIA: Você é o COORDENADOR. Os especialistas reportam a VOCÊ, não ao usuário final. Você é responsável pela qualidade da resposta final.\n"
                     f"6. NÃO REDUNDÂNCIA: Se você já possui informação suficiente na conversa ou no contexto, NÃO acione especialistas desnecessariamente.\n"
+                    f"{mandatory_str}"
                 )
 
         except Exception as e:
