@@ -110,8 +110,10 @@
         :items="logs"
         :loading="loading"
         :items-per-page="itemsPerPage"
+        :items-per-page-options="itemsPerPageOptions"
         :server-items-length="totalItems"
         v-model:page="page"
+        show-current-page
         @update:options="handleOptionsUpdate"
         hover
         class="bg-transparent"
@@ -434,7 +436,13 @@ const pathChartOptions = ref({
 const logs = ref([])
 const totalItems = ref(0)
 const page = ref(1)
-const itemsPerPage = ref(20)
+const itemsPerPage = ref(50)
+const itemsPerPageOptions = [
+  { value: 20, title: '20' },
+  { value: 50, title: '50' },
+  { value: 100, title: '100' },
+  { value: 200, title: '200' },
+]
 const searchPath = ref('')
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress']
@@ -808,5 +816,36 @@ onUnmounted(() => {
 .mem-assistant-msg {
   background: rgba(157, 78, 221, 0.06);
   border-left: 3px solid rgba(157, 78, 221, 0.5);
+}
+
+/* Data table pagination footer */
+:deep(.v-data-table-footer) {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.05) !important;
+  padding: 8px 16px !important;
+}
+
+:deep(.v-data-table-footer__info) {
+  color: rgba(255, 255, 255, 0.6) !important;
+  font-size: 13px;
+}
+
+:deep(.v-data-table-footer__items-per-page .v-field) {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+:deep(.v-data-table-footer__pagination .v-btn) {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+:deep(.v-data-table-footer__pagination .v-btn:hover) {
+  background: rgba(157, 78, 221, 0.15) !important;
+  color: white !important;
+}
+
+:deep(.v-data-table-footer__pagination .v-btn--disabled) {
+  color: rgba(255, 255, 255, 0.15) !important;
 }
 </style>
