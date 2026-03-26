@@ -81,6 +81,7 @@ class AgentBase(BaseModel):
     guardrail_model: Optional[str] = None
     trigger_keywords: List[str] = Field(default_factory=list)
     entity_memory_path: Optional[str] = None
+    group_id: Optional[UUID] = None
 
 
 class AgentCreate(AgentBase):
@@ -134,6 +135,7 @@ class AgentUpdate(BaseModel):
     guardrail_model: Optional[str] = None
     trigger_keywords: Optional[List[str]] = None
     entity_memory_path: Optional[str] = None
+    group_id: Optional[UUID] = None
 
 
 class AgentResponse(BaseModel):
@@ -168,6 +170,7 @@ class AgentResponse(BaseModel):
     guardrail_model: Optional[str] = None
     trigger_keywords: List[str] = []
     entity_memory_path: Optional[str] = None
+    group_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []
@@ -193,6 +196,7 @@ class AgentListItem(BaseModel):
     training_memory_enabled: bool = False
     mcp_count: int = 0
     collaborator_count: int = 0
+    group_id: Optional[UUID] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

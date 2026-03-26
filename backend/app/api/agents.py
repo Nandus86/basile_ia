@@ -32,6 +32,7 @@ async def list_agents(
         None, 
         description="Filter agents by maximum access level (for user filtering)"
     ),
+    group_id: Optional[UUID] = Query(None, description="Filter agents by folder group"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -39,6 +40,7 @@ async def list_agents(
     
     - **access_level**: Filter by exact access level
     - **max_access_level**: Filter agents with level <= specified (for user permission filtering)
+    - **group_id**: Filter agents by folder group. Pass empty/null to get ungrouped agents.
     """
     query = select(Agent).options(
         selectinload(Agent.mcps),
@@ -53,6 +55,9 @@ async def list_agents(
     
     if access_level is not None:
         query = query.where(Agent.access_level == AccessLevel(access_level.value))
+    
+    if group_id is not None:
+        query = query.where(Agent.group_id == group_id)
     
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
@@ -83,6 +88,7 @@ async def list_agents(
             training_memory_enabled=agent.training_memory_enabled,
             mcp_count=len(agent.mcps) if agent.mcps else 0,
             collaborator_count=len(agent.collaborator_settings) if agent.collaborator_settings else 0,
+            group_id=agent.group_id,
             created_at=agent.created_at
         ))
     

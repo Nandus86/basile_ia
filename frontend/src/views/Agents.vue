@@ -72,11 +72,68 @@
       </v-col>
     </v-row>
 
+    <!-- Breadcrumb Navigation -->
+    <div v-if="breadcrumb.length > 0" class="d-flex align-center mb-4 ga-1">
+      <v-btn variant="text" size="small" @click="backToFolders()" class="text-capitalize">
+        <v-icon start>mdi-home</v-icon> Raiz
+      </v-btn>
+      <template v-for="(crumb, idx) in breadcrumb" :key="crumb.id">
+        <v-icon size="16">mdi-chevron-right</v-icon>
+        <v-btn variant="text" size="small" @click="navigateToBreadcrumb(idx)" class="text-capitalize" :disabled="idx === breadcrumb.length - 1">
+          {{ crumb.name }}
+        </v-btn>
+      </template>
+    </div>
+
+    <!-- Sub-folders -->
+    <v-row v-if="agentGroups.length > 0" class="mb-6">
+      <v-col cols="12">
+        <div class="d-flex align-center justify-space-between mb-2">
+          <h2 class="text-h6">{{ currentFolder ? 'Sub-pastas' : 'Pastas de Agentes' }}</h2>
+          <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-folder-plus" @click="openGroupDialog()">
+            {{ currentFolder ? 'Nova Sub-pasta' : 'Nova Pasta' }}
+          </v-btn>
+        </div>
+      </v-col>
+      <v-col cols="12" sm="6" md="4" lg="3" v-for="group in agentGroups" :key="group.id">
+        <v-card class="glass-card h-100 d-flex flex-column" hover>
+          <div class="d-flex justify-end pa-2 pb-0">
+            <v-menu position="bottom end">
+              <template v-slot:activator="{ props }">
+                <v-btn icon="mdi-dots-vertical" variant="text" size="small" v-bind="props"></v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item @click="openGroupDialog(group)">
+                  <template v-slot:prepend><v-icon size="small">mdi-pencil</v-icon></template>
+                  <v-list-item-title>Editar</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="deleteGroup(group.id)" class="text-error">
+                  <template v-slot:prepend><v-icon color="error" size="small">mdi-delete</v-icon></template>
+                  <v-list-item-title>Excluir</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+          </div>
+          <v-card-text class="flex-grow-1 d-flex flex-column align-center justify-center pt-0 pb-6 px-6 text-center cursor-pointer" @click="openFolder(group)">
+            <v-icon size="56" :color="group.children_count > 0 ? 'warning' : 'secondary'" class="mb-3">
+              {{ group.children_count > 0 ? 'mdi-folder-multiple' : 'mdi-folder' }}
+            </v-icon>
+            <h3 class="text-subtitle-1 font-weight-bold mb-1">{{ group.name }}</h3>
+            <p class="text-caption text-medium-emphasis mb-2" v-if="group.description">{{ group.description }}</p>
+            <div class="d-flex ga-2">
+              <v-chip size="x-small" color="primary" variant="tonal">{{ group.agent_count }} agentes</v-chip>
+              <v-chip v-if="group.children_count > 0" size="x-small" color="warning" variant="tonal">{{ group.children_count }} sub-pastas</v-chip>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- Agents Grid -->
     <v-card class="agents-card glass-card">
       <v-card-title class="d-flex align-center px-6 py-4">
         <v-icon class="mr-2" color="primary">mdi-view-list</v-icon>
-        <span class="text-white">Lista de Agentes</span>
+        <span class="text-white">{{ currentFolder ? currentFolder.name : 'Agentes sem pasta' }}</span>
         <v-spacer></v-spacer>
         <v-text-field
           v-model="search"
@@ -1863,7 +1920,22 @@
               <v-chip color="error" size="small"><v-icon start size="14">mdi-close</v-icon>Bloqueado</v-chip>
             </div>
           </v-alert>
-          
+
+          <div class="d-flex ga-2 mb-4">
+            <v-btn size="small" variant="tonal" color="success" @click="setAllCollaborators('enabled')">
+              <v-icon start size="16">mdi-check-all</v-icon>
+              Priorizar Todos
+            </v-btn>
+            <v-btn size="small" variant="tonal" @click="setAllCollaborators('neutral')">
+              <v-icon start size="16">mdi-minus-box-multiple</v-icon>
+              Neutralizar Todos
+            </v-btn>
+            <v-btn size="small" variant="tonal" color="error" @click="setAllCollaborators('blocked')">
+              <v-icon start size="16">mdi-close-box-multiple</v-icon>
+              Bloquear Todos
+            </v-btn>
+          </div>
+
           <div v-if="otherAgents.length === 0" class="text-center py-8">
             <v-icon size="48" color="grey-lighten-1" class="mb-2">mdi-account-off</v-icon>
             <p class="text-medium-emphasis">Nenhum outro agente disponível</p>
@@ -1916,6 +1988,25 @@
       </v-card>
     </v-dialog>
 
+    <!-- Agent Group Dialog -->
+    <v-dialog v-model="groupDialog" max-width="500">
+      <v-card>
+        <v-card-title class="d-flex align-center pa-5">
+          <v-icon class="mr-2" color="secondary">mdi-folder</v-icon>
+          <span>{{ groupForm.id ? 'Editar Pasta' : (groupForm.parent_id ? 'Nova Sub-pasta' : 'Nova Pasta') }}</span>
+        </v-card-title>
+        <v-card-text class="pa-5">
+          <v-text-field v-model="groupForm.name" label="Nome da Pasta" variant="outlined" class="mb-4" required></v-text-field>
+          <v-textarea v-model="groupForm.description" label="Descrição" variant="outlined" rows="2" class="mb-4" hide-details></v-textarea>
+        </v-card-text>
+        <v-card-actions class="pa-4">
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" @click="groupDialog = false">Cancelar</v-btn>
+          <v-btn color="primary" @click="saveGroup" :loading="savingGroup" :disabled="!groupForm.name.trim()">Salvar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Delete Confirmation Dialog -->
     <v-dialog v-model="deleteDialog" max-width="400">
       <v-card>
@@ -1959,6 +2050,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import axios from '@/plugins/axios'
+import { agentGroupService } from '@/services/agentGroupService'
 
 // State
 const agents = ref([])
@@ -2172,6 +2264,14 @@ const collabDialog = ref(false)
 const selectedAgent = ref(null)
 const collaboratorStatuses = ref({})
 const savingCollab = ref(false)
+
+// Agent Groups / Folders
+const agentGroups = ref([])
+const currentFolder = ref(null)
+const breadcrumb = ref([])
+const groupDialog = ref(false)
+const groupForm = ref({ id: null, name: '', description: '', parent_id: null })
+const savingGroup = ref(false)
 
 // Emotional Profiles
 const allEmotionalProfiles = ref([])
@@ -2533,7 +2633,7 @@ async function fetchModels() {
 async function fetchAgents() {
   loading.value = true
   try {
-    const response = await axios.get('/agents')
+    const response = await axios.get('/agents', { params: { group_id: currentFolder.value?.id || undefined } })
     agents.value = response.data.agents || []
   } catch (error) {
     console.error('Error fetching agents:', error)
@@ -3214,6 +3314,79 @@ async function saveCollaborators() {
   }
 }
 
+async function fetchGroups(parentId = null) {
+  try {
+    const { data } = await agentGroupService.list(parentId)
+    agentGroups.value = data
+  } catch (e) { console.error('Failed to fetch agent groups', e) }
+}
+
+function openGroupDialog(group = null) {
+  if (group) {
+    groupForm.value = { id: group.id, name: group.name, description: group.description || '', parent_id: group.parent_id }
+  } else {
+    groupForm.value = { id: null, name: '', description: '', parent_id: currentFolder.value?.id || null }
+  }
+  groupDialog.value = true
+}
+
+async function saveGroup() {
+  savingGroup.value = true
+  try {
+    const payload = { name: groupForm.value.name, description: groupForm.value.description, parent_id: groupForm.value.parent_id }
+    if (groupForm.value.id) {
+      await agentGroupService.update(groupForm.value.id, payload)
+    } else {
+      await agentGroupService.create(payload)
+    }
+    groupDialog.value = false
+    await fetchGroups(currentFolder.value?.id || null)
+    await fetchGroups()
+  } catch (e) { console.error('Failed to save group', e) }
+  finally { savingGroup.value = false }
+}
+
+async function deleteGroup(id) {
+  if (!confirm('Excluir pasta? Sub-pastas serão removidas e agentes desagrupados.')) return
+  try {
+    await agentGroupService.delete(id)
+    if (currentFolder.value?.id === id) backToFolders()
+    else fetchGroups(currentFolder.value?.id || null)
+  } catch (e) { console.error('Failed to delete group', e) }
+}
+
+function openFolder(group) {
+  currentFolder.value = group
+  breadcrumb.value.push({ id: group.id, name: group.name })
+  fetchGroups(group.id)
+  fetchAgents()
+}
+
+function navigateToBreadcrumb(idx) {
+  if (idx < 0) {
+    backToFolders()
+  } else {
+    const target = breadcrumb.value[idx]
+    breadcrumb.value = breadcrumb.value.slice(0, idx + 1)
+    currentFolder.value = target
+    fetchGroups(target.id)
+    fetchAgents()
+  }
+}
+
+function backToFolders() {
+  currentFolder.value = null
+  breadcrumb.value = []
+  fetchGroups(null)
+  fetchAgents()
+}
+
+function setAllCollaborators(status) {
+  for (const agent of otherAgents.value) {
+    collaboratorStatuses.value[agent.id] = status
+  }
+}
+
 async function copyAgentId(id) {
   try {
     await navigator.clipboard.writeText(id)
@@ -3228,6 +3401,7 @@ onMounted(() => {
   fetchAgents()
   fetchModels()
   fetchAllMcpGroups()
+  fetchGroups()
 })
 </script>
 

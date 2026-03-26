@@ -17,7 +17,7 @@ class SkillBase(BaseModel):
 
 class SkillCreate(SkillBase):
     """Schema for creating a new skill"""
-    pass
+    group_id: Optional[UUID] = None
 
 
 class SkillUpdate(BaseModel):
@@ -26,6 +26,7 @@ class SkillUpdate(BaseModel):
     intent: Optional[str] = None
     content_md: Optional[str] = None
     is_active: Optional[bool] = None
+    group_id: Optional[UUID] = None
 
 
 class SkillResponse(BaseModel):
@@ -35,6 +36,7 @@ class SkillResponse(BaseModel):
     intent: Optional[str] = None
     content_md: str
     is_active: bool
+    group_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
 

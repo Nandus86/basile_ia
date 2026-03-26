@@ -144,7 +144,10 @@ class Agent(Base):
     # Emotional profile - pre-defined communication style
     emotional_profile_id = Column(UUID(as_uuid=True), ForeignKey("emotional_profiles.id", ondelete="SET NULL"), nullable=True)
     emotional_intensity = Column(String(20), default="medium")  # low, medium, high
-    
+
+    # Folder group (hierarchical)
+    group_id = Column(UUID(as_uuid=True), ForeignKey("agent_groups.id", ondelete="SET NULL"), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -212,6 +215,9 @@ class Agent(Base):
         cascade="all, delete-orphan",
         lazy="selectin"
     )
+
+    # Folder group relationship
+    group = relationship("AgentGroup", back_populates="agents")
     
     # Emotional profile relationship
     emotional_profile = relationship(

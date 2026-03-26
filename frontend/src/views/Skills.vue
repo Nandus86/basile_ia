@@ -46,11 +46,55 @@
       </v-col>
     </v-row>
 
+    <!-- Folder Cards (shown at root level) -->
+    <v-row v-if="!currentFolder && skillGroups.length > 0" class="mb-6">
+      <v-col cols="12">
+        <div class="d-flex align-center justify-space-between mb-2">
+          <h2 class="text-h6">Pastas de Skills</h2>
+          <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-folder-plus" @click="openGroupDialog()">
+            Nova Pasta
+          </v-btn>
+        </div>
+      </v-col>
+      <v-col cols="12" sm="6" md="4" lg="3" v-for="group in skillGroups" :key="group.id">
+        <v-card class="glass-card h-100 d-flex flex-column" hover>
+          <div class="d-flex justify-end pa-2 pb-0">
+            <v-menu position="bottom end">
+              <template v-slot:activator="{ props }">
+                <v-btn icon="mdi-dots-vertical" variant="text" size="small" v-bind="props"></v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item @click="openGroupDialog(group)">
+                  <template v-slot:prepend><v-icon size="small">mdi-pencil</v-icon></template>
+                  <v-list-item-title>Editar</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="deleteGroup(group.id)" class="text-error">
+                  <template v-slot:prepend><v-icon color="error" size="small">mdi-delete</v-icon></template>
+                  <v-list-item-title>Excluir</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+          </div>
+          <v-card-text class="flex-grow-1 d-flex flex-column align-center justify-center pt-0 pb-6 px-6 text-center cursor-pointer" @click="openFolder(group)">
+            <v-icon size="64" color="secondary" class="mb-4">mdi-folder</v-icon>
+            <h3 class="text-h6 mb-2">{{ group.name }}</h3>
+            <p class="text-body-2 text-medium-emphasis mb-3" style="min-height: 20px">
+              {{ group.description || '' }}
+            </p>
+            <v-chip size="small" color="primary" variant="tonal">
+              {{ group.skill_count }} skills
+            </v-chip>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <!-- Skills Table -->
     <v-card class="skills-card glass-card">
       <v-card-title class="d-flex align-center px-6 py-4">
+        <v-btn v-if="currentFolder" icon="mdi-arrow-left" variant="text" size="small" class="mr-2" @click="backToFolders()"></v-btn>
         <v-icon class="mr-2" color="primary">mdi-view-list</v-icon>
-        <span class="text-white">Lista de Skills</span>
+        <span class="text-white">{{ currentFolder ? `Skills em: ${currentFolder.name}` : 'Skills sem pasta' }}</span>
         <v-spacer></v-spacer>
         <v-text-field
           v-model="search"
@@ -61,6 +105,7 @@
           hide-details
           style="max-width: 300px"
         ></v-text-field>
+        <v-btn v-if="!currentFolder" size="small" variant="tonal" color="secondary" icon="mdi-folder-plus" class="ml-2" @click="openGroupDialog()"></v-btn>
       </v-card-title>
       
       <v-divider></v-divider>
@@ -170,6 +215,18 @@
                     ></v-switch>
                   </v-col>
                 </v-row>
+
+                <v-select
+                  v-model="formData.group_id"
+                  :items="skillGroups"
+                  item-title="name"
+                  item-value="id"
+                  label="Pasta / Grupo"
+                  prepend-inner-icon="mdi-folder"
+                  clearable
+                  variant="outlined"
+                  class="mb-4"
+                ></v-select>
                 
                 <v-textarea
                   v-model="formData.intent"
@@ -285,6 +342,25 @@ description: Descrição...
       </v-card>
     </v-dialog>
 
+    <!-- Group Dialog -->
+    <v-dialog v-model="groupDialog" max-width="500">
+      <v-card>
+        <v-card-title class="d-flex align-center pa-5">
+          <v-icon class="mr-2" color="secondary">mdi-folder</v-icon>
+          <span>{{ groupForm.id ? 'Editar Pasta' : 'Nova Pasta' }}</span>
+        </v-card-title>
+        <v-card-text class="pa-5">
+          <v-text-field v-model="groupForm.name" label="Nome da Pasta" variant="outlined" class="mb-4" required></v-text-field>
+          <v-textarea v-model="groupForm.description" label="Descrição" variant="outlined" rows="2" hide-details></v-textarea>
+        </v-card-text>
+        <v-card-actions class="pa-4">
+          <v-spacer></v-spacer>
+          <v-btn variant="outlined" @click="groupDialog = false">Cancelar</v-btn>
+          <v-btn color="primary" @click="saveGroup" :loading="savingGroup" :disabled="!groupForm.name.trim()">Salvar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Snackbar -->
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.message }}
@@ -300,11 +376,17 @@ description: Descrição...
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import axios from '@/plugins/axios'
+import { skillGroupService } from '@/services/skillGroupService'
 
 // State
 const skills = ref([])
 const loading = ref(false)
 const search = ref('')
+const skillGroups = ref([])
+const currentFolder = ref(null)
+const groupDialog = ref(false)
+const groupForm = ref({ id: null, name: '', description: '' })
+const savingGroup = ref(false)
 
 // Dialog
 const dialog = ref(false)
@@ -321,7 +403,8 @@ const formData = reactive({
   name: '',
   intent: '',
   content_md: '',
-  is_active: true
+  is_active: true,
+  group_id: null
 })
 
 // Delete Dialog
@@ -369,7 +452,8 @@ function resetForm() {
     name: '',
     intent: '',
     content_md: '',
-    is_active: true
+    is_active: true,
+    group_id: currentFolder.value?.id || null
   })
   activeTab.value = 'generator'
   generateSuccess.value = false
@@ -380,7 +464,8 @@ function resetForm() {
 async function fetchSkills() {
   loading.value = true
   try {
-    const response = await axios.get('/skills/')
+    const params = { search: search.value || undefined, group_id: currentFolder.value?.id || undefined }
+    const response = await axios.get('/skills/', { params })
     skills.value = response.data.skills || []
   } catch (error) {
     console.error('Error fetching skills:', error)
@@ -399,7 +484,8 @@ function openDialog(skill = null) {
       name: skill.name,
       intent: skill.intent || '',
       content_md: skill.content_md || '',
-      is_active: skill.is_active ?? true
+      is_active: skill.is_active ?? true,
+      group_id: skill.group_id || null
     })
     activeTab.value = 'editor' // Se for edição, assume que quer ver o MD pronto
   } else {
@@ -438,7 +524,8 @@ async function saveSkill() {
       name: formData.name,
       intent: formData.intent,
       content_md: formData.content_md,
-      is_active: formData.is_active
+      is_active: formData.is_active,
+      group_id: formData.group_id || null
     }
     
     if (editing.value) {
@@ -498,8 +585,58 @@ async function deleteSkill() {
   }
 }
 
+async function fetchGroups() {
+  try {
+    const { data } = await skillGroupService.list()
+    skillGroups.value = data
+  } catch (e) { console.error('Failed to fetch groups', e) }
+}
+
+function openGroupDialog(group = null) {
+  if (group) {
+    groupForm.value = { id: group.id, name: group.name, description: group.description || '' }
+  } else {
+    groupForm.value = { id: null, name: '', description: '' }
+  }
+  groupDialog.value = true
+}
+
+async function saveGroup() {
+  savingGroup.value = true
+  try {
+    if (groupForm.value.id) {
+      await skillGroupService.update(groupForm.value.id, { name: groupForm.value.name, description: groupForm.value.description })
+    } else {
+      await skillGroupService.create({ name: groupForm.value.name, description: groupForm.value.description })
+    }
+    groupDialog.value = false
+    await fetchGroups()
+  } catch (e) { console.error('Failed to save group', e) }
+  finally { savingGroup.value = false }
+}
+
+async function deleteGroup(id) {
+  if (!confirm('Excluir pasta? Skills dentro serão desagrupadas.')) return
+  try {
+    await skillGroupService.delete(id)
+    await fetchGroups()
+    if (currentFolder.value?.id === id) backToFolders()
+  } catch (e) { console.error('Failed to delete group', e) }
+}
+
+function openFolder(group) {
+  currentFolder.value = group
+  fetchSkills()
+}
+
+function backToFolders() {
+  currentFolder.value = null
+  fetchSkills()
+}
+
 onMounted(() => {
   fetchSkills()
+  fetchGroups()
 })
 </script>
 

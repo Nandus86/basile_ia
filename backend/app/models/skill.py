@@ -35,7 +35,10 @@ class Skill(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    
+
+    # Folder group
+    group_id = Column(UUID(as_uuid=True), ForeignKey("skill_groups.id", ondelete="SET NULL"), nullable=True)
+
     # Relationships
     agents = relationship(
         "Agent",
@@ -43,6 +46,7 @@ class Skill(Base):
         back_populates="skills",
         lazy="selectin"
     )
+    group = relationship("SkillGroup", back_populates="skills")
     
     def __repr__(self):
         return f"<Skill {self.name}>"
