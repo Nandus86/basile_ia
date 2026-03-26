@@ -138,6 +138,9 @@ class Agent(Base):
     # Priority keywords that force the orchestrator to call this agent
     trigger_keywords = Column(JSON, default=list)
     
+    # Dynamic entity memory path - e.g. $request.church._id
+    entity_memory_path = Column(String(255), nullable=True)
+    
     # Emotional profile - pre-defined communication style
     emotional_profile_id = Column(UUID(as_uuid=True), ForeignKey("emotional_profiles.id", ondelete="SET NULL"), nullable=True)
     emotional_intensity = Column(String(20), default="medium")  # low, medium, high

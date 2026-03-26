@@ -80,6 +80,7 @@ class AgentBase(BaseModel):
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
     trigger_keywords: List[str] = Field(default_factory=list)
+    entity_memory_path: Optional[str] = None
 
 
 class AgentCreate(AgentBase):
@@ -132,6 +133,7 @@ class AgentUpdate(BaseModel):
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
     trigger_keywords: Optional[List[str]] = None
+    entity_memory_path: Optional[str] = None
 
 
 class AgentResponse(BaseModel):
@@ -164,6 +166,8 @@ class AgentResponse(BaseModel):
     is_guardrail_active: bool = False
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
+    trigger_keywords: List[str] = []
+    entity_memory_path: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []

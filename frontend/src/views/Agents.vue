@@ -473,6 +473,18 @@
                           density="comfortable"
                         ></v-combobox>
                       </v-col>
+                      <v-col cols="12">
+                        <v-text-field
+                          v-model="formData.entity_memory_path"
+                          label="Caminho de Memória por Entidade (Opcional)"
+                          hint="Ex: $request.church._id — permite treinar regras por entidade dinâmica extraída do payload"
+                          persistent-hint
+                          prepend-inner-icon="mdi-domain"
+                          variant="outlined"
+                          density="comfortable"
+                          placeholder="$request.church._id"
+                        ></v-text-field>
+                      </v-col>
                     </v-row>
                   </v-card-text>
                 </v-card>
@@ -1987,6 +1999,7 @@ const formData = reactive({
   transition_input_schema: null,
   transition_output_schema: null,
   trigger_keywords: [],
+  entity_memory_path: null,
   config: {
     is_reasoning_model: false,
     reasoning_effort: 'medium',
@@ -2399,6 +2412,7 @@ function resetForm() {
     transition_input_schema: null,
     transition_output_schema: null,
     trigger_keywords: [],
+    entity_memory_path: null,
     config: {
       is_reasoning_model: false,
       reasoning_effort: 'medium',
@@ -2674,6 +2688,7 @@ async function openDialog(agent = null) {
         transition_input_schema: fullAgent.transition_input_schema || null,
         transition_output_schema: fullAgent.transition_output_schema || null,
         trigger_keywords: fullAgent.trigger_keywords || [],
+        entity_memory_path: fullAgent.entity_memory_path || null,
         config: {
           is_reasoning_model: fullAgent.config?.is_reasoning_model ?? false,
           reasoning_effort: fullAgent.config?.reasoning_effort || 'medium',
@@ -3066,6 +3081,7 @@ async function duplicateAgent(agent) {
       transition_input_schema: fullAgent.transition_input_schema || null,
       transition_output_schema: fullAgent.transition_output_schema || null,
       trigger_keywords: fullAgent.trigger_keywords || [],
+      entity_memory_path: fullAgent.entity_memory_path || null,
       config: fullAgent.config || {}
     }
 

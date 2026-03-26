@@ -76,7 +76,31 @@ class DualTrainRequest(BaseModel):
     session_id: Optional[str] = None
     contact_rule: Optional[str] = None
     agent_rule: Optional[str] = None
+    entity_rule: Optional[str] = None
+    entity_path: Optional[str] = None  # e.g. $request.church._id
+    entity_id: Optional[str] = None    # resolved value (alternative to path)
+    job_payload: Optional[dict] = None # full payload to resolve path from
     message_context: Optional[str] = None
+
+
+def _resolve_payload_path(payload: dict, path: str) -> Optional[str]:
+    """Resolve a $request.X.Y path against a payload dict."""
+    if not path or not payload:
+        return None
+    # Strip $request. prefix if present
+    clean = path.strip()
+    if clean.startswith("$request."):
+        clean = clean[len("$request."):]
+    
+    parts = clean.split(".")
+    current = payload
+    for part in parts:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return str(current) if current is not None else None
+
 
 # ─────────────────────────────────────────────────
 # Dual Training (Manual RLHF)
@@ -84,14 +108,16 @@ class DualTrainRequest(BaseModel):
 @router.post("/train-dual")
 async def train_dual_memory(payload: DualTrainRequest):
     """
-    Saves specific manual rules for the Agent (Self-Correction/Instruction) 
-    and/or for the Contact (User Preference/Fact).
+    Saves specific manual rules for the Agent (Self-Correction/Instruction),
+    for the Contact (User Preference/Fact), and/or for a dynamic Entity.
     """
-    if not payload.agent_rule and not payload.contact_rule:
-        raise HTTPException(status_code=400, detail="Pelo menos uma regra (agente ou contato) deve ser fornecida.")
+    if not payload.agent_rule and not payload.contact_rule and not payload.entity_rule:
+        raise HTTPException(status_code=400, detail="Pelo menos uma regra (agente, contato ou entidade) deve ser fornecida.")
         
     saved_contact = False
     saved_agent = False
+    saved_entity = False
+    resolved_entity_id = None
     
     # Identify contact reference
     contact_ref = payload.contact_id or payload.session_id
@@ -116,12 +142,35 @@ async def train_dual_memory(payload: DualTrainRequest):
             metadata=metadata,
             memory_type="manual_rule"
         )
+    
+    # Entity training (3rd box)
+    if payload.entity_rule:
+        # Resolve entity_id from path or use provided value
+        resolved_entity_id = payload.entity_id
+        if not resolved_entity_id and payload.entity_path and payload.job_payload:
+            resolved_entity_id = _resolve_payload_path(payload.job_payload, payload.entity_path)
+        
+        if resolved_entity_id:
+            entity_metadata = {**metadata}
+            if payload.entity_path:
+                entity_metadata["entity_path"] = payload.entity_path
+            
+            saved_entity = await weaviate_client.save_contact_memory(
+                agent_id=payload.agent_id,
+                contact_id=resolved_entity_id,
+                content=f"🏢 REGRA DE ENTIDADE: {payload.entity_rule.strip()}",
+                metadata=entity_metadata,
+                memory_type="entity_rule"
+            )
         
     return {
         "status": "success",
         "saved_contact": saved_contact,
-        "saved_agent": saved_agent
+        "saved_agent": saved_agent,
+        "saved_entity": saved_entity,
+        "resolved_entity_id": resolved_entity_id
     }
+
 
 
 # ─────────────────────────────────────────────────

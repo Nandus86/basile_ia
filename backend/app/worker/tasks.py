@@ -287,6 +287,44 @@ async def _enrich_agent_prompt(
                         f"{self_str}\n"
                     )
 
+                # 3d. Entity-level memories (dynamic entity training)
+                agent_model_obj = agent_config.get("agent_model")
+                entity_path = getattr(agent_model_obj, "entity_memory_path", None) if agent_model_obj else None
+                if entity_path and context_data:
+                    # Resolve entity_id from context_data using dot-path
+                    def _resolve_path(data, path):
+                        clean = path.strip()
+                        if clean.startswith("$request."):
+                            clean = clean[len("$request."):]
+                        parts = clean.split(".")
+                        current = data
+                        for part in parts:
+                            if isinstance(current, dict) and part in current:
+                                current = current[part]
+                            else:
+                                return None
+                        return str(current) if current is not None else None
+                    
+                    entity_id = _resolve_path(context_data, entity_path)
+                    if entity_id:
+                        entity_memories = await weaviate_client.search_contact_memories(
+                            agent_id=str(agent_id),
+                            contact_id=entity_id,
+                            query=message,
+                            limit=5,
+                            memory_type="entity_rule"
+                        )
+                        if entity_memories:
+                            print(f"[Task] 🏢 Retrieved {len(entity_memories)} entity memories for {entity_path}={entity_id}")
+                            ent_lines = [f"- {m['content']}" for m in entity_memories]
+                            ent_str = "\n".join(ent_lines)
+                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                                f"\n\n## 🏢 Regras Específicas da Entidade ({entity_path}={entity_id})\n\n"
+                                f"As regras abaixo foram treinadas especificamente para esta entidade. "
+                                f"Respeite-as SEMPRE:\n\n"
+                                f"{ent_str}\n"
+                            )
+
         except Exception as e:
             print(f"[Task] Failed to retrieve vector memory: {e}")
 

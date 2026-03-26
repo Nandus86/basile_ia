@@ -350,6 +350,125 @@
       </v-card>
     </v-dialog>
 
+    <!-- Training Dialog (3 Boxes) -->
+    <v-dialog v-model="trainingDialog" maxWidth="700" persistent>
+      <v-card rounded="xl">
+        <v-card-title class="d-flex align-center px-6 py-4 border-b">
+          <v-icon :color="trainingType === 'positive' ? 'success' : 'error'" class="mr-2">
+            {{ trainingType === 'positive' ? 'mdi-school' : 'mdi-shield-alert' }}
+          </v-icon>
+          Treinamento Manual (RLHF)
+          <v-spacer></v-spacer>
+          <v-btn icon="mdi-close" variant="text" @click="trainingDialog = false"></v-btn>
+        </v-card-title>
+        
+        <v-card-text class="pa-6">
+          <p class="text-body-2 text-medium-emphasis mb-4">
+            O feedback automático já foi salvo. Opcionalmente, adicione regras manuais nos campos abaixo.
+          </p>
+
+          <!-- Box 1: User Training -->
+          <v-card variant="outlined" class="mb-4 rounded-lg">
+            <v-card-text>
+              <div class="d-flex align-center mb-2">
+                <v-icon color="blue" size="20" class="mr-2">mdi-account</v-icon>
+                <span class="text-subtitle-2 font-weight-medium">Regra do Usuário</span>
+                <v-chip size="x-small" class="ml-2" color="blue" variant="tonal">contact_id</v-chip>
+              </div>
+              <v-textarea
+                v-model="trainingForm.contact_rule"
+                placeholder="Ex: Este usuário prefere respostas curtas e diretas."
+                variant="outlined"
+                density="compact"
+                rows="2"
+                auto-grow
+                hide-details
+              ></v-textarea>
+            </v-card-text>
+          </v-card>
+
+          <!-- Box 2: Agent Training -->
+          <v-card variant="outlined" class="mb-4 rounded-lg">
+            <v-card-text>
+              <div class="d-flex align-center mb-2">
+                <v-icon color="purple" size="20" class="mr-2">mdi-robot</v-icon>
+                <span class="text-subtitle-2 font-weight-medium">Regra do Agente</span>
+                <v-chip size="x-small" class="ml-2" color="purple" variant="tonal">agent_id</v-chip>
+              </div>
+              <v-textarea
+                v-model="trainingForm.agent_rule"
+                placeholder="Ex: Sempre cumprimente o usuário pelo nome antes de responder."
+                variant="outlined"
+                density="compact"
+                rows="2"
+                auto-grow
+                hide-details
+              ></v-textarea>
+            </v-card-text>
+          </v-card>
+
+          <!-- Box 3: Entity Training -->
+          <v-card variant="outlined" class="rounded-lg" color="teal-lighten-5">
+            <v-card-text>
+              <div class="d-flex align-center mb-2">
+                <v-icon color="teal" size="20" class="mr-2">mdi-domain</v-icon>
+                <span class="text-subtitle-2 font-weight-medium">Regra da Entidade</span>
+                <v-chip size="x-small" class="ml-2" color="teal" variant="tonal">entity_id</v-chip>
+              </div>
+              
+              <v-text-field
+                v-model="trainingForm.entity_path"
+                label="Caminho do Payload"
+                placeholder="$request.church._id"
+                variant="outlined"
+                density="compact"
+                prepend-inner-icon="mdi-code-json"
+                hide-details
+                class="mb-3"
+                @update:modelValue="resolveEntityPath"
+              >
+                <template v-slot:append-inner>
+                  <v-chip 
+                    v-if="trainingForm.resolved_entity_id" 
+                    size="x-small" 
+                    color="teal" 
+                    variant="flat"
+                  >
+                    = {{ trainingForm.resolved_entity_id }}
+                  </v-chip>
+                  <v-icon v-else-if="trainingForm.entity_path" color="warning" size="small">mdi-alert-circle-outline</v-icon>
+                </template>
+              </v-text-field>
+              
+              <v-textarea
+                v-model="trainingForm.entity_rule"
+                placeholder="Ex: Para esta igreja, sempre usar tom formal e mencionar o pastor pelo nome."
+                variant="outlined"
+                density="compact"
+                rows="2"
+                auto-grow
+                hide-details
+                :disabled="!trainingForm.resolved_entity_id && !!trainingForm.entity_path"
+              ></v-textarea>
+              
+              <p v-if="trainingForm.entity_path && !trainingForm.resolved_entity_id" class="text-caption text-warning mt-1">
+                ⚠️ Caminho não encontrado no payload desta mensagem.
+              </p>
+            </v-card-text>
+          </v-card>
+        </v-card-text>
+        
+        <v-card-actions class="px-6 py-4 border-t bg-surface-light">
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="trainingDialog = false">Pular</v-btn>
+          <v-btn color="primary" variant="flat" @click="submitTraining">
+            <v-icon start>mdi-brain</v-icon>
+            Salvar Treinamento
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" location="top center">
       {{ snackbar.message }}
     </v-snackbar>
@@ -589,6 +708,9 @@ async function sendMessage() {
 
     const res = await axios.post('/webhook/process', payload)
     
+    // Get the payload that was sent (for entity path resolution later)
+    const sentPayload = { ...payload }
+    
     messages.value.push({
       role: 'assistant',
       content: res.data.response,
@@ -596,6 +718,7 @@ async function sendMessage() {
       agent_id: payload.agent_id,
       processingTime: res.data.processing_time_ms,
       time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      jobPayload: sentPayload,
       // Feedback UI internal states
       feedback: null,
       feedbackLoading: null
@@ -613,6 +736,40 @@ async function sendMessage() {
     loading.value = false
     scrollToBottom()
   }
+}
+
+// Training Dialog State
+const trainingDialog = ref(false)
+const trainingMsg = ref(null)
+const trainingType = ref(null)
+const trainingForm = reactive({
+  contact_rule: '',
+  agent_rule: '',
+  entity_rule: '',
+  entity_path: '',
+  resolved_entity_id: null
+})
+
+function resolveEntityPath() {
+  const msg = trainingMsg.value
+  const path = trainingForm.entity_path.trim()
+  if (!path || !msg?.jobPayload) {
+    trainingForm.resolved_entity_id = null
+    return
+  }
+  let clean = path
+  if (clean.startsWith('$request.')) clean = clean.substring('$request.'.length)
+  const parts = clean.split('.')
+  let current = msg.jobPayload
+  for (const part of parts) {
+    if (current && typeof current === 'object' && part in current) {
+      current = current[part]
+    } else {
+      trainingForm.resolved_entity_id = null
+      return
+    }
+  }
+  trainingForm.resolved_entity_id = current != null ? String(current) : null
 }
 
 async function submitFeedback(msg, type) {
@@ -635,6 +792,7 @@ async function submitFeedback(msg, type) {
   }
 
   try {
+    // 1) First, send auto-RLHF feedback
     const payload = {
       agent_id: msg.agent_id || selectedAgentId.value,
       session_id: sessionId.value,
@@ -647,22 +805,62 @@ async function submitFeedback(msg, type) {
     const res = await axios.post('/webhook/feedback', payload)
     if (res.data.success) {
       msg.feedback = type
-      showNotification(res.data.message || 'Feedback salvo na memória vetorial do agente!', 'success')
-      
-      if (type === 'negative') {
-        const wantsRetry = window.confirm("Feedback registrado com nota de correção! Deseja que o agente tente responder novamente usando a nova restrição?")
-        if (wantsRetry) {
-            inputMessage.value = "Responda a minha pergunta inicial novamente, aplicando esta correção e evitando o erro anterior: " + (correctionNote || "resposta anterior inadequada.");
-            sendMessage();
-        }
-      }
-    } else {
-      showNotification('Erro ao salvar feedback.', 'error')
+      showNotification(res.data.message || 'Feedback RLHF salvo!', 'success')
     }
+    
+    // 2) Open training dialog for manual rules (3 boxes)
+    trainingMsg.value = msg
+    trainingMsg.value._userMessage = userMessage
+    trainingType.value = type
+    trainingForm.contact_rule = ''
+    trainingForm.agent_rule = ''
+    trainingForm.entity_rule = ''
+    trainingForm.entity_path = ''
+    trainingForm.resolved_entity_id = null
+    trainingDialog.value = true
+    
   } catch (error) {
     showNotification('Falha ao processar feedback: ' + (error.response?.data?.detail || error.message), 'error')
   } finally {
     msg.feedbackLoading = null
+  }
+}
+
+async function submitTraining() {
+  const msg = trainingMsg.value
+  if (!msg) return
+  
+  const hasAnyRule = trainingForm.contact_rule.trim() || trainingForm.agent_rule.trim() || trainingForm.entity_rule.trim()
+  if (!hasAnyRule) {
+    trainingDialog.value = false
+    return
+  }
+  
+  try {
+    const payload = {
+      agent_id: msg.agent_id || selectedAgentId.value,
+      session_id: sessionId.value,
+      contact_rule: trainingForm.contact_rule.trim() || null,
+      agent_rule: trainingForm.agent_rule.trim() || null,
+      entity_rule: trainingForm.entity_rule.trim() || null,
+      entity_path: trainingForm.entity_path.trim() || null,
+      entity_id: trainingForm.resolved_entity_id,
+      job_payload: msg.jobPayload || null,
+      message_context: msg._userMessage || null
+    }
+    
+    const res = await axios.post('/memory/train-dual', payload)
+    if (res.data.status === 'success') {
+      const parts = []
+      if (res.data.saved_contact) parts.push('Usuário')
+      if (res.data.saved_agent) parts.push('Agente')
+      if (res.data.saved_entity) parts.push(`Entidade (${res.data.resolved_entity_id})`)
+      showNotification(`Treinamento salvo: ${parts.join(', ')}`, 'success')
+    }
+  } catch (error) {
+    showNotification('Erro no treinamento: ' + (error.response?.data?.detail || error.message), 'error')
+  } finally {
+    trainingDialog.value = false
   }
 }
 
