@@ -11,6 +11,9 @@
           <p>Gerencie seus agentes de inteligência artificial</p>
         </div>
       </div>
+      <v-btn color="secondary" size="large" prepend-icon="mdi-folder-plus" @click="openGroupDialog()" elevation="3" class="mr-3">
+        Nova Pasta
+      </v-btn>
       <v-btn color="primary" size="large" prepend-icon="mdi-plus" @click="openDialog()" elevation="3">
         Novo Agente
       </v-btn>

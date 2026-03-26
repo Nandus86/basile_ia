@@ -11,6 +11,9 @@
           <p>Crie e gerencie habilidades especializadas para os seus agentes</p>
         </div>
       </div>
+      <v-btn color="secondary" size="large" prepend-icon="mdi-folder-plus" @click="openGroupDialog()" elevation="3" class="mr-3">
+        Nova Pasta
+      </v-btn>
       <v-btn color="primary" size="large" prepend-icon="mdi-plus" @click="openDialog()" elevation="3">
         Nova Skill
       </v-btn>
