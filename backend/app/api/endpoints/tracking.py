@@ -89,13 +89,24 @@ async def test_job(job_id: str, db: AsyncSession = Depends(get_db)):
     start_time = time.time()
     
     try:
+        import json
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+                
         # Extrair os campos com defaults básicos
         message = payload.get("message", "Teste vazio")
         session_id = payload.get("session_id", "test_session_id")
         agent_id = payload.get("agent_id")
         user_access_level = payload.get("user_access_level", "normal")
-        context_data = payload.get("context_data", {})
         
+        # Garante que context_data seja um dict válido (converte null/None para {})
+        context_data = payload.get("context_data")
+        if context_data is None or not isinstance(context_data, dict):
+            context_data = {}
+            
         # Mapeamento do request body extra, caso seja payload puro sem 'context_data'
         standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
         for k, v in payload.items():
