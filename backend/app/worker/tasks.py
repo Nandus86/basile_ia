@@ -155,7 +155,10 @@ async def _enrich_agent_prompt(
                         if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
                             target_key = ib.correlation_schema.get("target")
                             if target_key:
-                                parts = target_key.split(".")
+                                clean_target = target_key.strip()
+                                if clean_target.startswith("$request."):
+                                    clean_target = clean_target[len("$request."):]
+                                parts = clean_target.split(".")
                                 val = ctx
                                 for part in parts:
                                     if isinstance(val, dict) and part in val:
