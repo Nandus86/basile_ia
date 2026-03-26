@@ -584,7 +584,8 @@ const memoryTypeOptions = [
   { title: 'Todos', value: 'all' },
   { title: 'Fato', value: 'fact' },
   { title: 'Correção', value: 'correction' },
-  { title: 'Preferência', value: 'preference' }
+  { title: 'Preferência', value: 'preference' },
+  { title: 'Entidade', value: 'entity_rule' }
 ]
 
 const selectedStmKeys = ref([])
@@ -737,7 +738,8 @@ function getMemoryTypeColor(type) {
   const colors = {
     fact: 'info',
     correction: 'error',
-    preference: 'warning'
+    preference: 'warning',
+    entity_rule: 'teal'
   }
   return colors[type] || 'grey'
 }
@@ -746,7 +748,8 @@ function getMemoryTypeIcon(type) {
   const icons = {
     fact: 'mdi-information-outline',
     correction: 'mdi-alert-circle-outline',
-    preference: 'mdi-heart-outline'
+    preference: 'mdi-heart-outline',
+    entity_rule: 'mdi-domain'
   }
   return icons[type] || 'mdi-brain'
 }
@@ -755,7 +758,8 @@ function getMemoryTypeLabel(type) {
   const labels = {
     fact: 'Fato',
     correction: 'Correção',
-    preference: 'Preferência'
+    preference: 'Preferência',
+    entity_rule: 'Regra de Entidade'
   }
   return labels[type] || type
 }
