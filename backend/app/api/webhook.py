@@ -120,12 +120,18 @@ async def process_message(
         
         processing_time = (time.time() - start_time) * 1000
         
-        # Update JobLog with success
+        # Update JobLog with success - salvar payload completo (mesmo que vai para o callback)
         job_log.status = "completed"
-        job_log.response_data = {
-            "output": task_result.get("response", ""), 
+        full_response_data = {
+            "status": "completed",
+            "job_id": job_log.job_id,
+            "result": task_result.get("response", "") if not isinstance(task_result.get("response"), dict) else task_result.get("response"),
             "agent_used": task_result.get("agent_used")
         }
+        transition_data = task_result.get("transition_data")
+        if transition_data:
+            full_response_data["transition_data"] = transition_data
+        job_log.response_data = full_response_data
         job_log.duration_ms = int(processing_time)
         
         try:

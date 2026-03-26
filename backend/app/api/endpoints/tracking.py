@@ -187,16 +187,26 @@ async def human_response_job(
     if not job_log.response_data:
         raise HTTPException(status_code=400, detail="Job has no response_data to modify")
     
-    # Replicate response_data and replace output/response field
+    # Replicate full response_data and replace output/response in result
     import copy
     modified_response = copy.deepcopy(job_log.response_data)
     
-    if "output" in modified_response:
-        modified_response["output"] = human_text
-    elif "response" in modified_response:
-        modified_response["response"] = human_text
+    # Estrutura completa: { status, job_id, result: { output/response }, agent_used, transition_data }
+    if "result" in modified_response and isinstance(modified_response["result"], dict):
+        if "output" in modified_response["result"]:
+            modified_response["result"]["output"] = human_text
+        elif "response" in modified_response["result"]:
+            modified_response["result"]["response"] = human_text
+        else:
+            modified_response["result"]["output"] = human_text
     else:
-        modified_response["output"] = human_text
+        # Fallback para estrutura antiga (sem campo result)
+        if "output" in modified_response:
+            modified_response["output"] = human_text
+        elif "response" in modified_response:
+            modified_response["response"] = human_text
+        else:
+            modified_response["output"] = human_text
     
     # Update job_log.response_data in DB
     job_log.response_data = modified_response

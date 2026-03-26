@@ -219,7 +219,16 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     job_log = res.scalar_one_or_none()
                     if job_log:
                         job_log.status = "completed"
-                        job_log.response_data = final_result if isinstance(final_result, dict) else {"output": final_result}
+                        # Salvar payload completo (mesmo que vai para o callback)
+                        full_response_data = {
+                            "status": "completed",
+                            "job_id": job_id,
+                            "result": final_result if isinstance(final_result, dict) else {"output": final_result},
+                            "agent_used": agent_used
+                        }
+                        if transition_data:
+                            full_response_data["transition_data"] = transition_data
+                        job_log.response_data = full_response_data
                         job_log.completed_at = datetime.now(timezone.utc)
                         if job_log.created_at:
                             job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
