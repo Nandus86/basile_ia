@@ -572,7 +572,7 @@ async def _build_collaborator_tools(
     message: str,
     context_data: Optional[Dict[str, Any]] = None,
     user_access_level: str = "normal",
-) -> list:
+) -> tuple[list, list]:
     """
     Build LangChain tools from an orchestrator's collaborators.
     
@@ -601,7 +601,7 @@ async def _build_collaborator_tools(
             neutral.append(setting.collaborator)
     all_collaborators = enabled + neutral
     if not all_collaborators:
-        return []
+        return [], []
 
     # [VERTICAL HIERARCHY] Filter collaborators by user access level
     from app.models.agent import AccessLevel
@@ -619,6 +619,8 @@ async def _build_collaborator_tools(
         return []
 
     tools = []
+    mandatory_instructions = []
+
     for collab in all_collaborators:
         # Sanitize name for tool compatibility
         safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', collab.name or "agent")
@@ -648,6 +650,33 @@ async def _build_collaborator_tools(
                 details.append(f"FERRAMENTAS: {', '.join(tool_names)}")
         
         priority = "PRIORITÁRIO (RECOMENDADO)" if collab in enabled else "disponível (secundário)"
+        
+        # KEYWORD MATCHING
+        agent_kws = getattr(collab, 'trigger_keywords', []) or []
+        msg_lower = message.lower()
+        matched_kw = None
+        for kw in agent_kws:
+            if kw and kw.lower() in msg_lower:
+                matched_kw = kw
+                break
+                
+        if matched_kw:
+            priority = f"PRIORITÁRIO OBRIGATÓRIO (Keyword: {matched_kw})"
+            forced_instr = f"A mensagem do usuário contém a palavra-chave '{matched_kw}' associada ao agente '{collab.name}'. → Você DEVE chamar '{tool_name}' IMEDIATAMENTE."
+            
+            # Check MCP Keywords on this matched agent
+            if hasattr(collab, 'mcps') and collab.mcps:
+                for mcp in collab.mcps:
+                    mcp_kws = getattr(mcp, 'trigger_keywords', []) or []
+                    for mkw in mcp_kws:
+                        if mkw and mkw.lower() in msg_lower:
+                            # Usually MCP tool is `execute_{safe_name_of_mcp}` but we don't know the exact python function name here, 
+                            # we can just refer to the tool name from the orchestrator perspective. "execute_NOME"
+                            mcp_safe = re.sub(r'[^a-zA-Z0-9_-]', '_', mcp.name)
+                            forced_instr += f"\n→ Ocasionalmente, ele DEVE usar a ferramenta 'execute_{mcp_safe}' ({mcp.name}) antes de qualquer outra ação."
+                            break
+            mandatory_instructions.append(forced_instr)
+            
         details_str = " | ".join(details) if details else ""
         tool_desc = f"Consulta o agente especialista '{collab.name}' [{priority}]. {base_desc}. {details_str}. Envie uma instrução clara e técnica do que este agente deve fazer especificamente."
         
@@ -728,7 +757,7 @@ async def _build_collaborator_tools(
         tools.append(tool)
         print(f"[Task] 🔧 Collaborator tool created: {tool_name} → '{collab.name}'")
 
-    return tools
+    return tools, mandatory_instructions
 
 
 # ─────────────────────────────────────────────────────────────

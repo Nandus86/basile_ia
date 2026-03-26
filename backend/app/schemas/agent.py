@@ -79,6 +79,7 @@ class AgentBase(BaseModel):
     is_guardrail_active: bool = False
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
+    trigger_keywords: List[str] = Field(default_factory=list)
 
 
 class AgentCreate(AgentBase):
@@ -130,6 +131,7 @@ class AgentUpdate(BaseModel):
     is_guardrail_active: Optional[bool] = None
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
+    trigger_keywords: Optional[List[str]] = None
 
 
 class AgentResponse(BaseModel):

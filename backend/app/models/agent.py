@@ -135,6 +135,9 @@ class Agent(Base):
     transition_input_schema = Column(JSON, nullable=True, default=None)
     # Example: {"session_id": {"type": "string", "required": True}}
     
+    # Priority keywords that force the orchestrator to call this agent
+    trigger_keywords = Column(JSON, default=list)
+    
     # Emotional profile - pre-defined communication style
     emotional_profile_id = Column(UUID(as_uuid=True), ForeignKey("emotional_profiles.id", ondelete="SET NULL"), nullable=True)
     emotional_intensity = Column(String(20), default="medium")  # low, medium, high

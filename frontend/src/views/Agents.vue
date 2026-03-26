@@ -457,6 +457,23 @@
                           Quando ativo, este agente consulta seus colaboradores <strong>antes</strong> de responder, delegando tarefas aos especialistas mais adequados.
                         </v-alert>
                       </v-expand-transition>
+
+                    <v-row class="mt-3">
+                      <v-col cols="12">
+                        <v-combobox
+                          v-model="formData.trigger_keywords"
+                          label="Palavras-Chave de Ativação (Opcional)"
+                          hint="Se configuradas, o orquestrador acionará este agente PRIORITARIAMENTE quando alguma delas for digitada pelo usuário"
+                          persistent-hint
+                          multiple
+                          chips
+                          closable-chips
+                          prepend-inner-icon="mdi-key"
+                          variant="outlined"
+                          density="comfortable"
+                        ></v-combobox>
+                      </v-col>
+                    </v-row>
                   </v-card-text>
                 </v-card>
 
@@ -1969,6 +1986,7 @@ const formData = reactive({
   input_schema: null,
   transition_input_schema: null,
   transition_output_schema: null,
+  trigger_keywords: [],
   config: {
     is_reasoning_model: false,
     reasoning_effort: 'medium',
@@ -2380,6 +2398,7 @@ function resetForm() {
     input_schema: null,
     transition_input_schema: null,
     transition_output_schema: null,
+    trigger_keywords: [],
     config: {
       is_reasoning_model: false,
       reasoning_effort: 'medium',
@@ -2654,6 +2673,7 @@ async function openDialog(agent = null) {
         input_schema: fullAgent.input_schema || null,
         transition_input_schema: fullAgent.transition_input_schema || null,
         transition_output_schema: fullAgent.transition_output_schema || null,
+        trigger_keywords: fullAgent.trigger_keywords || [],
         config: {
           is_reasoning_model: fullAgent.config?.is_reasoning_model ?? false,
           reasoning_effort: fullAgent.config?.reasoning_effort || 'medium',
@@ -3045,6 +3065,7 @@ async function duplicateAgent(agent) {
       input_schema: fullAgent.input_schema || null,
       transition_input_schema: fullAgent.transition_input_schema || null,
       transition_output_schema: fullAgent.transition_output_schema || null,
+      trigger_keywords: fullAgent.trigger_keywords || [],
       config: fullAgent.config || {}
     }
 
