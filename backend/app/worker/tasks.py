@@ -922,6 +922,122 @@ async def _build_information_base_tools(
 
 
 # ─────────────────────────────────────────────────────────────
+# Trigger MCP Pre-execution — force MCP execution when keyword matches
+# ─────────────────────────────────────────────────────────────
+
+async def _check_trigger_mcps(
+    db,
+    agent_id: str,
+    message: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Check if any MCPs assigned to the agent have trigger_keywords matching the message.
+    If match found, execute the MCP tools DIRECTLY (without LLM) and return results
+    for injection into the agent's system prompt.
+    """
+    from app.services.mcp_tools import MCPToolExecutor
+    from app.models.agent import Agent as AgentModel
+    from app.models.mcp_group import MCPGroup
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    import json
+
+    # Load agent with MCPs (direct + groups)
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(
+            selectinload(AgentModel.mcps),
+            selectinload(AgentModel.mcp_groups).selectinload(MCPGroup.mcps),
+        )
+        .where(AgentModel.id == agent_id)
+    )
+    agent_obj = result.scalar_one_or_none()
+    if not agent_obj:
+        return None
+
+    # Collect all unique MCPs
+    all_mcps = []
+    seen_ids = set()
+    if agent_obj.mcps:
+        for mcp in agent_obj.mcps:
+            if mcp.is_active and mcp.id not in seen_ids:
+                all_mcps.append(mcp)
+                seen_ids.add(mcp.id)
+    if hasattr(agent_obj, "mcp_groups") and agent_obj.mcp_groups:
+        for group in agent_obj.mcp_groups:
+            if group.is_active and group.mcps:
+                for mcp in group.mcps:
+                    if mcp.is_active and mcp.id not in seen_ids:
+                        all_mcps.append(mcp)
+                        seen_ids.add(mcp.id)
+
+    if not all_mcps:
+        return None
+
+    msg_lower = message.lower()
+    triggered_mcps = []
+
+    # Check each MCP for keyword match
+    for mcp in all_mcps:
+        mcp_kws = getattr(mcp, "trigger_keywords", None) or []
+        matched_kw = None
+        for kw in mcp_kws:
+            if kw and kw.lower() in msg_lower:
+                matched_kw = kw
+                break
+        if matched_kw:
+            triggered_mcps.append((mcp, matched_kw))
+
+    if not triggered_mcps:
+        return None
+
+    # Execute triggered MCP tools directly
+    executor = MCPToolExecutor(db, context_data=context_data)
+    results_parts = []
+
+    for mcp, matched_kw in triggered_mcps:
+        print(f"[Trigger] 🎯 MCP '{mcp.name}' triggered by keyword '{matched_kw}'")
+        try:
+            tools = await executor.create_langchain_tools(mcp)
+            if not tools:
+                print(f"[Trigger] ⚠️ No tools discovered for MCP '{mcp.name}'")
+                continue
+
+            for tool in tools:
+                print(f"[Trigger] ⚡ Executing MCP tool '{tool.name}' directly")
+                try:
+                    result = await tool.coroutine()
+                    # Try to parse and format JSON results
+                    try:
+                        parsed = json.loads(result)
+                        if isinstance(parsed, dict) and "output" in parsed:
+                            result = parsed["output"]
+                        elif isinstance(parsed, dict) and "result" in parsed:
+                            result = parsed["result"]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    results_parts.append(f"### Resultado de '{mcp.name}' (via trigger '{matched_kw}'):\n{result}")
+                    print(f"[Trigger] ✅ MCP '{mcp.name}' executed successfully")
+                except Exception as tool_err:
+                    print(f"[Trigger] ❌ Error executing tool '{tool.name}': {tool_err}")
+                    results_parts.append(f"### Erro ao executar '{mcp.name}': {tool_err}")
+        except Exception as e:
+            print(f"[Trigger] ❌ Error processing MCP '{mcp.name}': {e}")
+
+    if results_parts:
+        return (
+            "\n\n## ⚡ Dados Pré-Executados via Trigger\n\n"
+            "Os seguintes MCPs foram ativados automaticamente por palavras-chave na mensagem do usuário. "
+            "Use os dados abaixo para compor sua resposta:\n\n"
+            + "\n\n".join(results_parts)
+            + "\n"
+        )
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
 # Main task: process_message_task
 # ─────────────────────────────────────────────────────────────
 
@@ -1133,6 +1249,17 @@ async def process_message_task(
             except Exception as e:
                 import traceback
                 print(f"[Task] ❌ Error loading information base tools: {e}")
+                traceback.print_exc()
+
+            # [TRIGGER MCPs] Pre-execute MCPs whose trigger_keywords match the message
+            try:
+                trigger_results = await _check_trigger_mcps(db, agent_id, message, context_data)
+                if trigger_results:
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
+                    print(f"[Task] 🎯 Trigger MCP results injected into agent prompt")
+            except Exception as e:
+                import traceback
+                print(f"[Task] ❌ Error checking trigger MCPs: {e}")
                 traceback.print_exc()
 
             # ── Execute agent ──
