@@ -298,6 +298,9 @@
           <v-alert type="info" variant="tonal" density="compact" class="mb-3">
             O campo <code>id</code> representa o usuário/contato. Quando um agente processar uma mensagem desse usuário, ele terá acesso automático ao conteúdo injetado via <code>data</code>.
           </v-alert>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+            O campo <code>external_id</code> é opcional. O uso de um ID determinístico permite Update ou Replace seguro de vetores em vez de recriar chaves duplicadas (Upsert).
+          </v-alert>
           <v-alert type="warning" variant="tonal" density="compact">
             <code>id_base</code> já está preenchido com o código desta base. Preencha os valores de exemplo com dados reais antes de enviar.
           </v-alert>
@@ -405,6 +408,7 @@ const generatedPayload = computed(() => {
   const payload = {
     id_base: base.code || 'CODIGO_DA_BASE',
     id: '<identificador-do-usuario>',
+    external_id: '<ID unico do documento (opicional)>',
     data: { ...dataFields, ...metaFields }
   }
   return JSON.stringify(payload, null, 2)
