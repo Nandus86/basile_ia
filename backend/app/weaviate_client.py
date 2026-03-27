@@ -167,12 +167,13 @@ class WeaviateClient:
         base_code: str,
         user_id: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        external_id: Optional[str] = None
     ) -> bool:
         """Save a new node into a generic Information Base collection (async-safe)"""
         try:
             return await asyncio.to_thread( # type: ignore
-                self._sync_save_information_base_node, base_code, user_id, content, metadata
+                self._sync_save_information_base_node, base_code, user_id, content, metadata, external_id
             )
         except Exception as e:
             print(f"Error saving information base node: {e}")
@@ -181,12 +182,13 @@ class WeaviateClient:
     async def delete_information_base_nodes(
         self,
         base_code: str,
-        user_id: str
+        user_id: str,
+        external_id: Optional[str] = None
     ) -> bool:
-        """Delete all nodes for a specific Information Base and user ID (async-safe)"""
+        """Delete all nodes (or a specific node) for a specific Information Base and user ID (async-safe)"""
         try:
             return await asyncio.to_thread( # type: ignore
-                self._sync_delete_information_base_nodes, base_code, user_id
+                self._sync_delete_information_base_nodes, base_code, user_id, external_id
             )
         except Exception as e:
             print(f"Error deleting information base nodes: {e}")
@@ -432,7 +434,8 @@ class WeaviateClient:
         base_code: str,
         user_id: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        external_id: Optional[str] = None
     ) -> bool:
         client = self._ensure_connected()
         collection_name = "InformationBaseNode"
@@ -455,6 +458,7 @@ class WeaviateClient:
         collection = client.collections.get(collection_name)
         
         import json
+        import uuid
         from datetime import datetime, timezone
         
         props = {
@@ -465,13 +469,27 @@ class WeaviateClient:
             "created_at": datetime.now(timezone.utc)
         }
         
-        collection.data.insert(properties=props)
+        obj_uuid = None
+        if external_id:
+            # Deterministic UUID prevents duplication and natively enables Upsert behaviour
+            obj_str = f"{base_code}_{user_id}_{external_id}"
+            obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, obj_str))
+            
+            if collection.data.exists(obj_uuid):
+                collection.data.delete_by_id(obj_uuid)
+                
+        if obj_uuid:
+            collection.data.insert(properties=props, uuid=obj_uuid)
+        else:
+            collection.data.insert(properties=props)
+            
         return True
 
     def _sync_delete_information_base_nodes(
         self,
         base_code: str,
-        user_id: str
+        user_id: str,
+        external_id: Optional[str] = None
     ) -> bool:
         client = self._ensure_connected()
         collection_name = "InformationBaseNode"
@@ -481,11 +499,18 @@ class WeaviateClient:
             
         collection = client.collections.get(collection_name)
         
-        filter_user = weaviate.classes.query.Filter.by_property("user_id").equal(str(user_id))
-        filter_code = weaviate.classes.query.Filter.by_property("base_code").equal(str(base_code))
-        combined_filter = filter_user & filter_code
-        
-        collection.data.delete_many(where=combined_filter)
+        if external_id:
+            import uuid
+            obj_str = f"{base_code}_{user_id}_{external_id}"
+            obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, obj_str))
+            if collection.data.exists(obj_uuid):
+                collection.data.delete_by_id(obj_uuid)
+        else:
+            filter_user = weaviate.classes.query.Filter.by_property("user_id").equal(str(user_id))
+            filter_code = weaviate.classes.query.Filter.by_property("base_code").equal(str(base_code))
+            combined_filter = filter_user & filter_code
+            collection.data.delete_many(where=combined_filter)
+            
         return True
 
     def _sync_search_information_bases(

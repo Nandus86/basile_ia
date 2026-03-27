@@ -48,6 +48,7 @@ class InformationBaseWebhookRequest(BaseModel):
     """
     id_base: str = Field(..., description="The code of the InformationBase")
     id: str = Field(..., description="The contact id (user_id) owning this info")
+    external_id: Optional[str] = Field(None, description="Optional unique ID string for this specific document to allow UPSERT (update/insert)")
     data: Dict[str, Any] = Field(..., description="The payload according to content_schema and metadata_schema")
 
 class InformationBaseWebhookDeleteRequest(BaseModel):
@@ -56,6 +57,7 @@ class InformationBaseWebhookDeleteRequest(BaseModel):
     """
     id_base: str = Field(..., description="The code of the InformationBase")
     id: str = Field(..., description="The contact id (user_id) whose documents should be deleted")
+    external_id: Optional[str] = Field(None, description="Optional unique ID. If passed, deletes only this specific document instead of all.")
 
 class InformationBaseWebhookResponse(BaseModel):
     success: bool

@@ -141,7 +141,8 @@ async def webhook_ingest(
         base_code=request.id_base,
         user_id=request.id,
         content=content_str,
-        metadata=request.data  # Using raw original data as generic metadata too
+        metadata=request.data,  # Using raw original data as generic metadata too
+        external_id=request.external_id
     )
     
     if not success:
@@ -178,7 +179,8 @@ async def webhook_delete(
     # Delete from weaviate
     success = await weaviate.delete_information_base_nodes(
         base_code=request.id_base,
-        user_id=request.id
+        user_id=request.id,
+        external_id=request.external_id
     )
     
     if not success:
