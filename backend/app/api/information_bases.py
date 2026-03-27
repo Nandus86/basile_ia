@@ -10,7 +10,8 @@ from app.models.information_base import InformationBase
 from app.schemas.information_base import (
     InformationBaseCreate, InformationBaseUpdate, InformationBaseResponse, 
     InformationBaseList, InformationBaseSummary,
-    InformationBaseWebhookRequest, InformationBaseWebhookResponse
+    InformationBaseWebhookRequest, InformationBaseWebhookResponse,
+    InformationBaseWebhookDeleteRequest
 )
 from app.weaviate_client import get_weaviate, WeaviateClient
 
@@ -153,3 +154,41 @@ async def webhook_ingest(
         success=True,
         message="Data ingested successfully"
     )
+
+@router.post("/webhook/delete", response_model=InformationBaseWebhookResponse)
+async def webhook_delete(
+    request: InformationBaseWebhookDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    weaviate: WeaviateClient = Depends(get_weaviate)
+):
+    """
+    Webhook to completely delete all vector nodes within an Information Base for a specific user ID.
+    Useful for completely refreshing a user's data.
+    """
+    # Verify the information base exists by code
+    result = await db.execute(select(InformationBase).where(InformationBase.code == request.id_base))
+    base = result.scalar_one_or_none()
+    
+    if not base:
+        return InformationBaseWebhookResponse(
+            success=False,
+            message=f"Information Base with code {request.id_base} not found"
+        )
+        
+    # Delete from weaviate
+    success = await weaviate.delete_information_base_nodes(
+        base_code=request.id_base,
+        user_id=request.id
+    )
+    
+    if not success:
+        return InformationBaseWebhookResponse(
+            success=False,
+            message="Failed to delete vectors from database"
+        )
+        
+    return InformationBaseWebhookResponse(
+        success=True,
+        message="Vector data deleted successfully"
+    )
+

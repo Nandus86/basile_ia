@@ -178,6 +178,20 @@ class WeaviateClient:
             print(f"Error saving information base node: {e}")
             return False
 
+    async def delete_information_base_nodes(
+        self,
+        base_code: str,
+        user_id: str
+    ) -> bool:
+        """Delete all nodes for a specific Information Base and user ID (async-safe)"""
+        try:
+            return await asyncio.to_thread( # type: ignore
+                self._sync_delete_information_base_nodes, base_code, user_id
+            )
+        except Exception as e:
+            print(f"Error deleting information base nodes: {e}")
+            return False
+
     async def search_information_bases(
         self,
         base_codes: List[str],
@@ -452,6 +466,26 @@ class WeaviateClient:
         }
         
         collection.data.insert(properties=props)
+        return True
+
+    def _sync_delete_information_base_nodes(
+        self,
+        base_code: str,
+        user_id: str
+    ) -> bool:
+        client = self._ensure_connected()
+        collection_name = "InformationBaseNode"
+        
+        if collection_name not in client.collections.list_all():
+            return True
+            
+        collection = client.collections.get(collection_name)
+        
+        filter_user = weaviate.classes.query.Filter.by_property("user_id").equal(str(user_id))
+        filter_code = weaviate.classes.query.Filter.by_property("base_code").equal(str(base_code))
+        combined_filter = filter_user & filter_code
+        
+        collection.data.delete_many(where=combined_filter)
         return True
 
     def _sync_search_information_bases(

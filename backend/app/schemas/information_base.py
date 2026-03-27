@@ -50,6 +50,13 @@ class InformationBaseWebhookRequest(BaseModel):
     id: str = Field(..., description="The contact id (user_id) owning this info")
     data: Dict[str, Any] = Field(..., description="The payload according to content_schema and metadata_schema")
 
+class InformationBaseWebhookDeleteRequest(BaseModel):
+    """
+    Payload required for webhook to completely purge vector documents of a specific contact inside a base
+    """
+    id_base: str = Field(..., description="The code of the InformationBase")
+    id: str = Field(..., description="The contact id (user_id) whose documents should be deleted")
+
 class InformationBaseWebhookResponse(BaseModel):
     success: bool
     message: str
