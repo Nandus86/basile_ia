@@ -809,6 +809,119 @@ async def _build_collaborator_tools(
 
 
 # ─────────────────────────────────────────────────────────────
+# Information Base Tools — one native tool per information base
+# ─────────────────────────────────────────────────────────────
+
+async def _build_information_base_tools(
+    db,
+    agent_id: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> list:
+    """
+    Build one StructuredTool per active Information Base associated with the agent.
+    Each tool searches Weaviate using the base's own correlation_schema to resolve user_id.
+    """
+    from langchain_core.tools import StructuredTool
+    from app.models.agent import Agent as AgentModel
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    from app.weaviate_client import get_weaviate
+
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(selectinload(AgentModel.information_bases))
+        .where(AgentModel.id == agent_id)
+    )
+    agent_obj = result.scalar_one_or_none()
+    if not agent_obj or not agent_obj.information_bases:
+        return []
+
+    active_bases = [b for b in agent_obj.information_bases if b.is_active]
+    if not active_bases:
+        return []
+
+    weaviate_cl = get_weaviate()
+    if not weaviate_cl:
+        print(f"[Task] ⚠️ Weaviate client not available, skipping information base tools")
+        return []
+
+    tools = []
+    ctx = context_data or {}
+
+    for ib in active_bases:
+        # Resolve user_id from context_data via correlation_schema
+        user_id = None
+        if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+            target_key = ib.correlation_schema.get("target")
+            if target_key:
+                clean_target = target_key.strip()
+                if clean_target.startswith("$request."):
+                    clean_target = clean_target[len("$request."):]
+                parts = clean_target.split(".")
+                val = ctx
+                for part in parts:
+                    if isinstance(val, dict) and part in val:
+                        val = val[part]
+                    else:
+                        val = None
+                        break
+                if val is not None and not isinstance(val, (dict, list)):
+                    user_id = str(val).strip() or None
+
+        if not user_id:
+            # Fallback: use first string value from context_data
+            for k, v in ctx.items():
+                if isinstance(v, str) and v.strip():
+                    user_id = v.strip()
+                    break
+
+        if not user_id:
+            print(f"[Task] ⚠️ Could not resolve user_id for base '{ib.name}', skipping tool creation")
+            continue
+
+        # Sanitize base code for tool name
+        import re
+        safe_code = re.sub(r'[^a-zA-Z0-9_]', '_', ib.code or ib.name or "base")
+        safe_code = re.sub(r'^[^a-zA-Z_]', '_', safe_code)
+        safe_code = re.sub(r'_+', '_', safe_code).strip('_')[:64]
+        tool_name = f"pesquisar_{safe_code.lower()}"
+
+        _base_code = ib.code
+        _base_name = ib.name
+        _uid = user_id
+        _wc = weaviate_cl
+
+        async def _search_base(query: str, _bc=_base_code, _bn=_base_name, _u=_uid, _w=_wc) -> str:
+            """Search this information base for relevant content."""
+            try:
+                results = await _w.search_information_bases(
+                    base_codes=[_bc],
+                    user_id=_u,
+                    query=query,
+                    limit=5,
+                )
+                if not results:
+                    return f"Nenhum resultado encontrado na base '{_bn}'."
+                lines = [f"- {r['content']}" for r in results]
+                return f"Resultados da base '{_bn}':\n" + "\n".join(lines)
+            except Exception as e:
+                return f"Erro ao pesquisar base '{_bn}': {str(e)}"
+
+        tool_desc = f"Pesquisa na base de informação '{ib.name}'. Use esta ferramenta para buscar informações, documentos ou dados específicos desta base. Descreva claramente o que deseja encontrar."
+
+        tool = StructuredTool.from_function(
+            coroutine=_search_base,
+            name=tool_name,
+            description=tool_desc,
+            return_direct=False,
+        )
+        tools.append(tool)
+        print(f"[Task] 🔧 Information Base tool created: {tool_name} → '{ib.name}' (user_id={user_id})")
+
+    return tools
+
+
+# ─────────────────────────────────────────────────────────────
 # Main task: process_message_task
 # ─────────────────────────────────────────────────────────────
 
@@ -1002,12 +1115,25 @@ async def process_message_task(
             except Exception as e:
                 print(f"[Task] ⚠️ Failed to load session context: {e}")
 
-            # Enrich prompt (RAG, InfoBases, VectorMemory, Orchestrator pre-consultation, Session Continuity)
+            # Enrich prompt (RAG, InfoBases as context, VectorMemory, Orchestrator pre-consultation, Session Continuity)
             rag_context = await _enrich_agent_prompt(
                 db, agent_config, agent_id, message, session_id, context_data, history, transition_data,
                 session_context=session_context,
                 user_access_level=user_access_level,
             )
+
+            # [INFORMATION BASE TOOLS] Add native Weaviate search tools for agents with information bases
+            try:
+                ib_tools = await _build_information_base_tools(db, agent_id, context_data)
+                if ib_tools:
+                    existing_tools = agent_config.get("tools", []) or []
+                    agent_config["tools"] = existing_tools + ib_tools
+                    agent_config["has_tools"] = True
+                    print(f"[Task] 🔍 Added {len(ib_tools)} information base tools to '{agent_config['name']}'")
+            except Exception as e:
+                import traceback
+                print(f"[Task] ❌ Error loading information base tools: {e}")
+                traceback.print_exc()
 
             # ── Execute agent ──
             max_retries = 2

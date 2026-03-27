@@ -276,6 +276,20 @@ Responda APENAS em JSON válido com este formato exato:
                 print(f"[Orchestrator] ❌ Error loading nested collaborator tools for '{agent.name}': {e}")
                 traceback.print_exc()
 
+        # [INFORMATION BASE TOOLS] Add native Weaviate search tools for collaborators with information bases
+        try:
+            from app.worker.tasks import _build_information_base_tools
+            ib_tools = await _build_information_base_tools(self.db, str(agent.id), context_data)
+            if ib_tools:
+                existing_tools = agent_config.get("tools", []) or []
+                agent_config["tools"] = existing_tools + ib_tools
+                agent_config["has_tools"] = True
+                print(f"[Orchestrator] 🔍 Added {len(ib_tools)} information base tools to collaborator '{agent.name}'")
+        except Exception as e:
+            import traceback
+            print(f"[Orchestrator] ❌ Error loading information base tools for collaborator '{agent.name}': {e}")
+            traceback.print_exc()
+
         # Include collaborator's own skills in the delegation message
         skills_section = ""
         if hasattr(agent, 'skills') and agent.skills:
