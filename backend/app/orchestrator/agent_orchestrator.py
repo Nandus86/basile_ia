@@ -292,11 +292,17 @@ Responda APENAS em JSON válido com este formato exato:
 
         # [TRIGGER MCPs] Pre-execute MCPs whose trigger_keywords match the message
         try:
-            from app.worker.tasks import _check_trigger_mcps
-            trigger_results = await _check_trigger_mcps(self.db, str(agent.id), message, context_data)
-            if trigger_results:
-                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
-                print(f"[Orchestrator] 🎯 Trigger MCP results injected into collaborator '{agent.name}' prompt")
+            from app.worker.tasks import _check_global_trigger_keywords
+            global_trigger = await _check_global_trigger_keywords(self.db, message, context_data)
+            if global_trigger:
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + global_trigger
+                print(f"[Orchestrator] 🎯 Global trigger MCP results injected into collaborator '{agent.name}' prompt")
+            else:
+                from app.worker.tasks import _check_trigger_mcps
+                trigger_results = await _check_trigger_mcps(self.db, str(agent.id), message, context_data)
+                if trigger_results:
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
+                    print(f"[Orchestrator] 🎯 Trigger MCP results injected into collaborator '{agent.name}' prompt")
         except Exception as e:
             import traceback
             print(f"[Orchestrator] ❌ Error checking trigger MCPs for collaborator '{agent.name}': {e}")

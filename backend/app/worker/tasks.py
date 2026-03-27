@@ -922,6 +922,96 @@ async def _build_information_base_tools(
 
 
 # ─────────────────────────────────────────────────────────────
+# Global Trigger MCP Pre-execution — check ALL MCPs for trigger_keywords match
+# ─────────────────────────────────────────────────────────────
+
+async def _check_global_trigger_keywords(
+    db,
+    message: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Check ALL active MCPs in the system for trigger_keywords matching the message.
+    If a match is found, execute the MCP tool directly and return results
+    for injection into the agent's system prompt.
+    
+    This runs BEFORE any agent routing, checking globally across all MCPs.
+    """
+    from app.services.mcp_tools import MCPToolExecutor
+    from app.models.mcp import MCP
+    from sqlalchemy import select as sa_select
+    import json
+
+    msg_lower = message.lower()
+
+    result = await db.execute(
+        sa_select(MCP)
+        .where(
+            MCP.is_active == True,
+            MCP.trigger_keywords.isnot(None),
+        )
+    )
+    all_mcps = result.scalars().all()
+
+    triggered_mcps = []
+    for mcp in all_mcps:
+        mcp_kws = mcp.trigger_keywords or []
+        matched_kw = None
+        for kw in mcp_kws:
+            if kw and kw.lower().strip() in msg_lower:
+                matched_kw = kw
+                break
+        if matched_kw:
+            triggered_mcps.append((mcp, matched_kw))
+
+    if not triggered_mcps:
+        return None
+
+    print(f"[GlobalTrigger] 🎯 Found {len(triggered_mcps)} MCP(s) with matching trigger_keywords")
+
+    executor = MCPToolExecutor(db, context_data=context_data)
+    results_parts = []
+
+    for mcp, matched_kw in triggered_mcps:
+        print(f"[GlobalTrigger] ⚡ Executing MCP '{mcp.name}' triggered by keyword '{matched_kw}'")
+        try:
+            tools = await executor.create_langchain_tools(mcp)
+            if not tools:
+                print(f"[GlobalTrigger] ⚠️ No tools discovered for MCP '{mcp.name}'")
+                continue
+
+            for tool in tools:
+                try:
+                    result = await tool.coroutine()
+                    try:
+                        parsed = json.loads(result)
+                        if isinstance(parsed, dict) and "output" in parsed:
+                            result = parsed["output"]
+                        elif isinstance(parsed, dict) and "result" in parsed:
+                            result = parsed["result"]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                    results_parts.append(f"### Resultado de '{mcp.name}' (via trigger '{matched_kw}'):\n{result}")
+                    print(f"[GlobalTrigger] ✅ MCP '{mcp.name}' executed successfully")
+                except Exception as tool_err:
+                    print(f"[GlobalTrigger] ❌ Error executing tool '{tool.name}': {tool_err}")
+                    results_parts.append(f"### Erro ao executar '{mcp.name}': {tool_err}")
+        except Exception as e:
+            print(f"[GlobalTrigger] ❌ Error processing MCP '{mcp.name}': {e}")
+
+    if results_parts:
+        return (
+            "\n\n## ⚡ Dados Pré-Executados via Trigger Global\n\n"
+            "Os seguintes MCPs foram ativados automaticamente por palavras-chave na mensagem do usuário. "
+            "Use os dados abaixo para compor sua resposta:\n\n"
+            + "\n\n".join(results_parts)
+            + "\n"
+        )
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────
 # Trigger MCP Pre-execution — force MCP execution when keyword matches
 # ─────────────────────────────────────────────────────────────
 
@@ -1070,10 +1160,22 @@ async def process_message_task(
     agent_config = None
     monitor = None
 
+    trigger_results = None
+
     try:
         async with AsyncSessionLocal() as db:
             from app.orchestrator.agent_factory import AgentFactory
             from langchain_core.messages import HumanMessage, AIMessage
+
+            print("[Task] 🔍 Checking global trigger keywords...")
+            try:
+                trigger_results = await _check_global_trigger_keywords(db, message, context_data)
+                if trigger_results:
+                    print("[Task] 🎯 Global trigger MCP results found and ready to inject")
+            except Exception as e:
+                import traceback
+                print(f"[Task] ❌ Error checking global trigger keywords: {e}")
+                traceback.print_exc()
 
             factory = AgentFactory(db)
 
@@ -1251,9 +1353,10 @@ async def process_message_task(
                 print(f"[Task] ❌ Error loading information base tools: {e}")
                 traceback.print_exc()
 
-            # [TRIGGER MCPs] Pre-execute MCPs whose trigger_keywords match the message
+            # [TRIGGER MCPs] Use global trigger results if available, otherwise check local
             try:
-                trigger_results = await _check_trigger_mcps(db, agent_id, message, context_data)
+                if not trigger_results:
+                    trigger_results = await _check_trigger_mcps(db, agent_id, message, context_data)
                 if trigger_results:
                     agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
                     print(f"[Task] 🎯 Trigger MCP results injected into agent prompt")
