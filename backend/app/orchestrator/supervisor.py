@@ -385,7 +385,7 @@ Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}.
                                         base_codes=[ib.code],
                                         user_id=uid,
                                         query=current_message,
-                                        limit=5
+                                        limit=getattr(ib, 'max_results', 3) or 3
                                     )
                                     if info_nodes:
                                         all_info_nodes.extend(info_nodes)
@@ -398,7 +398,7 @@ Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}.
                                         seen.add(n['content'])
                                         unique_nodes.append(n)
                                 print(f"[Supervisor] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
-                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]])
+                                info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:6]])
                                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
             except Exception as e:
                 import traceback
