@@ -169,6 +169,18 @@
               persistent-hint
             ></v-text-field>
 
+            <v-text-field
+              v-model.number="formData.max_results"
+              label="Máx. Resultados por Busca"
+              type="number"
+              min="1"
+              max="20"
+              prepend-inner-icon="mdi-magnify"
+              hint="Quantos resultados buscar no Weaviate por consulta (padrão: 3)"
+              persistent-hint
+              class="mt-2"
+            ></v-text-field>
+
             <v-alert type="info" variant="tonal" density="compact" class="mt-4 mb-4">
               A webhook utiliza estes schemas para validar o JSON recebido e injetar informações adicionais.
             </v-alert>
@@ -343,6 +355,7 @@ const formData = reactive({
   content_schema: '{}',
   metadata_schema: '{}',
   correlation_schema: '{}',
+  max_results: 3,
   is_active: true
 })
 
@@ -437,6 +450,7 @@ function resetForm() {
     content_schema: '{}',
     metadata_schema: '{}',
     correlation_schema: '{}',
+    max_results: 3,
     is_active: true
   })
   if (formRef.value) formRef.value.resetValidation()
@@ -470,6 +484,7 @@ async function openDialog(base = null) {
         content_schema: fullBase.content_schema ? JSON.stringify(fullBase.content_schema, null, 2) : '{}',
         metadata_schema: fullBase.metadata_schema ? JSON.stringify(fullBase.metadata_schema, null, 2) : '{}',
         correlation_schema: fullBase.correlation_schema ? JSON.stringify(fullBase.correlation_schema, null, 2) : '{}',
+        max_results: fullBase.max_results ?? 3,
         is_active: fullBase.is_active ?? true
       })
     } catch (error) {
@@ -515,6 +530,7 @@ async function saveBase() {
       content_schema: parsedContent,
       metadata_schema: parsedMeta,
       correlation_schema: parsedCorrelation,
+      max_results: formData.max_results,
       is_active: formData.is_active
     }
     
