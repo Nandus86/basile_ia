@@ -383,6 +383,7 @@ Cite a fonte quando usar informações do contexto acima.
 
             resilience_cfg = agent_config.get("resilience", {})
             max_retries = resilience_cfg.get("max_retries", 3)
+            timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
 
             tool_instructions = f"""
 {skills_reminder}
@@ -399,6 +400,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
 - Se uma ferramenta retornar dados válidos (lista, objeto, mensagem de sucesso), NÃO repita a chamada. Avance para o próximo passo.
 - Somente se falhar definitivamente após {max_retries} tentativas, explique ao usuário o motivo da falha.
 - **NUNCA chame a mesma ferramenta com os mesmos argumentos repetidamente.**
+- ⏱️ LIMITE DE TEMPO: Você tem no máximo {timeout_seconds} segundos para completar toda a execução. Priorize as ações mais importantes e evite chamadas desnecessárias de ferramentas.
 """
             full_prompt = system_prompt + tool_instructions
             

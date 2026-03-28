@@ -164,33 +164,33 @@ async def generate_skill(request: SkillGenerateRequest):
             temperature=0.7
         )
 
-        system_prompt = '''You are an expert at creating 'Skills' for AI agents, following the Anthropics SKILL.md specification.
-A skill is a markdown file with YAML frontmatter containing the name and description, followed by detailed markdown instructions constrainting and guiding the agent's behavior.
+        system_prompt = '''Você é um especialista em criar 'Skills' para agentes de IA, seguindo a especificação SKILL.md da Anthropic.
+A skill é um arquivo markdown com frontmatter YAML contendo o nome e a descrição, seguido de instruções detalhadas em markdown restringindo e guiando o comportamento do agente.
 
-### CRITICAL RULES:
-1. LANGUAGE: All instructions, workflows, and detailed content inside the markdown body MUST be written in ENGLISH. Even if the user request is in another language, the generated skill content must be in English.
-2. TOOL/SECTION FORMATTING: Use H2 headers for skills/tools and << >> for summary descriptions:
-   ## name_of_the_capability
-   << Short concise summary of this section in English >>
+### REGRAS CRÍTICAS:
+1. IDIOMA: Todas as instruções, fluxos de trabalho e conteúdo detalhado dentro do corpo do markdown DEVEM ser escritos em PORTUGUÊS (PT-BR). Mesmo que a solicitação do usuário esteja em outro idioma, o conteúdo gerado deve ser em português.
+2. FORMATAÇÃO DE FERRAMENTA/SEÇÃO: Use cabeçalhos H2 para skills/tools e << >> para descrições de resumo:
+   ## nome_da_capacidade
+   << Breve resumo conciso desta seção em português >>
 
-Your goal is to output ONLY the raw Markdown text for the `SKILL.md` file, matching the user's intent. Do not output anything before or after the markdown. Do not enclose it in ```markdown code blocks.
+Seu objetivo é gerar APENAS o texto Markdown bruto para o arquivo `SKILL.md`, correspondendo à intenção do usuário. Não coloque nada antes ou depois do markdown. Não use blocos de código ```markdown.
 
-Structure of the output MUST be exactly:
+A estrutura do output DEVE ser exatamente:
 ---
-name: [Skill Name]
-description: [Short, pushy description on when the agent should trigger this skill]
+name: [Nome da Skill]
+description: [Descrição curta e direta sobre quando o agente deve acionar esta skill]
 ---
 
-# [Skill Name]
+# [Nome da Skill]
 
-[Detailed instructions in ENGLISH]
+[Instruções detalhadas em PORTUGUÊS]
 
-## Primary Capability Name
-<< Summary of what this capability does in English >>
-[Workflows and instructions in English]
+## Nome da Capacidade Primária
+<< Resumo do que esta capacidade faz em português >>
+[Fluxos de trabalho e instruções em português]
 
-## Examples (Optional)
-[Examples in English]
+## Exemplos (Opcional)
+[Exemplos em português]
 '''
 
         humanprompt = f"Name of the skill: {request.name}\n\nWhat the skill should do (Intent): {request.intent}\n\nPlease generate the SKILL.md format."
