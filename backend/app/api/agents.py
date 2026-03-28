@@ -124,6 +124,8 @@ async def get_agent(
     # Build collaborators list
     collaborators = []
     for setting in agent.collaborator_settings:
+        if setting.status.value == "blocked":
+            continue
         collaborators.append(CollaboratorSummary(
             id=setting.collaborator.id,
             name=setting.collaborator.name,
@@ -324,6 +326,7 @@ async def delete_agent(
 @router.get("/{agent_id}/collaborators", response_model=List[CollaboratorSummary])
 async def get_collaborators(
     agent_id: UUID,
+    include_blocked: bool = Query(False),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all collaborators for an agent"""
@@ -342,6 +345,8 @@ async def get_collaborators(
     
     collaborators = []
     for setting in agent.collaborator_settings:
+        if not include_blocked and setting.status.value == "blocked":
+            continue
         collaborators.append(CollaboratorSummary(
             id=setting.collaborator.id,
             name=setting.collaborator.name,
@@ -405,7 +410,7 @@ async def update_collaborators(
     
     await db.commit()
     
-    return await get_collaborators(agent_id, db)
+    return await get_collaborators(agent_id, include_blocked=True, db=db)
 
 
 @router.post("/{agent_id}/collaborators/{collaborator_id}", response_model=CollaboratorSummary)
@@ -1448,16 +1453,19 @@ async def get_prompt_preview(
     if agent.is_orchestrator and agent.collaborator_settings:
         collab_lines = []
         for setting in agent.collaborator_settings:
+            if setting.status.value == "blocked":
+                continue
             collab = setting.collaborator
-            status_icon = "✅" if setting.status.value == "enabled" else "⚪" if setting.status.value == "neutral" else "🚫"
+            status_icon = "✅" if setting.status.value == "enabled" else "⚪"
             collab_lines.append(f"- {status_icon} **{collab.name}**: {collab.description or 'Sem descrição'} (status: {setting.status.value})")
-        collab_text = "Agentes Especialistas (Colaboradores):\n" + "\n".join(collab_lines)
-        sections.append(PromptSection(
-            name="Orquestração: Colaboradores",
-            content=collab_text,
-            source="orchestrator",
-            estimated_tokens=estimate_tokens(collab_text)
-        ))
+        if collab_lines:
+            collab_text = "Agentes Especialistas (Colaboradores):\n" + "\n".join(collab_lines)
+            sections.append(PromptSection(
+                name="Orquestração: Colaboradores",
+                content=collab_text,
+                source="orchestrator",
+                estimated_tokens=estimate_tokens(collab_text)
+            ))
     
     # 9. Information Bases (dynamic — show placeholder)
     if agent.information_bases:
