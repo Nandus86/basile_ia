@@ -2102,7 +2102,7 @@ const formData = reactive({
     short_term_memory_enabled: true,
     short_term_memory_ttl_hours: 24
   },
-  status_updates_enabled: true,
+  status_updates_enabled: false,
   status_updates_config: {
     initial_delay_seconds: 5,
     follow_up_interval_seconds: 10,

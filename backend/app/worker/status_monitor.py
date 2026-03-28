@@ -8,8 +8,8 @@ logger = logging.getLogger("app.worker.status_monitor")
 
 class StatusMonitor:
     def __init__(
-        self, 
-        callback_url: Optional[str], 
+        self,
+        callback_url: Optional[str],
         agent_config: Dict[str, Any],
         session_id: str,
         start_time: Optional[float] = None
@@ -21,11 +21,11 @@ class StatusMonitor:
         self.is_running = False
         self.task = None
         self.progress_log: List[str] = []
-        
+
         # Extract config
         self.enabled = agent_config.get("status_updates_enabled", False)
         self.config = agent_config.get("status_updates_config", {}) or {}
-        
+
         # Keys aligned with frontend (Agents.vue status_updates_config)
         self.initial_delay = float(self.config.get("initial_delay_seconds", 5))
         self.initial_msg = self.config.get("initial_message", "Aguarde um momentinho, estou processando sua solicitacao...")
@@ -34,12 +34,12 @@ class StatusMonitor:
         self.max_updates = int(self.config.get("max_updates", 3))
 
     async def start(self):
-        if not self.enabled or not self.callback_url:
+        if not self.callback_url:
             return
-        
+
         self.is_running = True
         self.task = asyncio.create_task(self._run_loop())
-        logger.info(f"StatusMonitor started for session {self.session_id} (max_updates={self.max_updates})")
+        logger.info(f"StatusMonitor started for session {self.session_id} (enabled={self.enabled}, max_updates={self.max_updates})")
 
     async def stop(self):
         self.is_running = False
@@ -60,16 +60,19 @@ class StatusMonitor:
     async def _run_loop(self):
         try:
             sent_count = 0
-            
-            while self.is_running and sent_count < self.max_updates:
+            # Always send at least the initial message if callback_url exists
+            # If status_updates_enabled is False, only send initial (no follow-ups)
+            max_msgs = self.max_updates if self.enabled else 1
+
+            while self.is_running and sent_count < max_msgs:
                 elapsed = time.time() - self.start_time
-                
+
                 # Calculate when the next message should be sent
                 if sent_count == 0:
                     next_delay = self.initial_delay
                 else:
                     next_delay = self.initial_delay + (sent_count * self.follow_up_interval)
-                
+
                 if elapsed >= next_delay:
                     # Choose message based on count
                     if sent_count == 0:
@@ -80,13 +83,13 @@ class StatusMonitor:
                         summary = "\n".join(self.progress_log[-3:]) if self.progress_log else ""
                         if summary:
                             text += f"\n\nO que ja fiz:\n{summary}"
-                    
+
                     await self._send_status(text)
                     sent_count += 1
-                    logger.info(f"StatusMonitor sent message {sent_count}/{self.max_updates} for session {self.session_id}")
-                
+                    logger.info(f"StatusMonitor sent message {sent_count}/{max_msgs} for session {self.session_id}")
+
                 await asyncio.sleep(1)
-                
+
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -95,17 +98,21 @@ class StatusMonitor:
     async def _send_status(self, text: str):
         if not self.callback_url:
             return
-            
+
         payload = {
             "status": "processing",
             "session_id": self.session_id,
             "response": text,
             "is_interim": True
         }
-        
+
         try:
             async with httpx.AsyncClient() as client:
-                await client.post(self.callback_url, json=payload, timeout=5.0)
-                logger.info(f"Interim status sent to {self.callback_url}: {text[:50]}...")
+                resp = await client.post(self.callback_url, json=payload, timeout=10.0)
+                logger.info(f"Interim status sent to {self.callback_url}: {text[:50]}... (HTTP {resp.status_code})")
+        except httpx.TimeoutException:
+            logger.error(f"Timeout sending status update to {self.callback_url}")
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error sending status update to {self.callback_url}: {e}")
         except Exception as e:
-            logger.error(f"Failed to send status update: {e}")
+            logger.error(f"Failed to send status update to {self.callback_url}: {e}")

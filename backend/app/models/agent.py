@@ -110,7 +110,7 @@ class Agent(Base):
     guardrail_model = Column(String(100), nullable=True)
     
     # New status configuration for long-running jobs
-    status_updates_enabled = Column(Boolean, default=True)
+    status_updates_enabled = Column(Boolean, default=False)
     status_updates_config = Column(JSON, nullable=True) # {delay_1_seconds: X, delay_1_message: Y, ...}
     
     # Intelligent Vector Memory - for storing temporal/qualitative data about contacts
