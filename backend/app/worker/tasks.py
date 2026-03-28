@@ -34,6 +34,7 @@ async def _enrich_agent_prompt(
     monitor: Optional[StatusMonitor] = None,
     session_context: Optional[Dict[str, Any]] = None,
     user_access_level: str = "normal",
+    has_ib_tools: bool = False,
 ):
     """
     Enrich an agent's system_prompt with all contextual data:
@@ -128,81 +129,83 @@ async def _enrich_agent_prompt(
     except Exception as e:
         print(f"[Task] VFS RAG 3.0 error: {e}")
 
-    # 2. Information Bases
-    try:
-        from app.models.agent import Agent as AgentModel
-        from sqlalchemy import select as sa_select
-        from sqlalchemy.orm import selectinload
-        from app.weaviate_client import get_weaviate
+    # 2. Information Bases (skip if agent has IB tools — agent will search on demand)
+    if not has_ib_tools:
+        try:
+            from app.models.agent import Agent as AgentModel
+            from sqlalchemy import select as sa_select
+            from sqlalchemy.orm import selectinload
+            from app.weaviate_client import get_weaviate
 
-        ib_result = await db.execute(
-            sa_select(AgentModel)
-            .options(selectinload(AgentModel.information_bases))
-            .where(AgentModel.id == agent_id)
-        )
-        ib_agent = ib_result.scalar_one_or_none()
-        if ib_agent and ib_agent.information_bases:
-            active_bases = [b for b in ib_agent.information_bases if b.is_active]
-            if active_bases:
-                ctx = context_data or {}
-                weaviate_cl = get_weaviate()
-                all_info_nodes = []
-                
-                if weaviate_cl:
-                    for ib in active_bases:
-                        possible_ids = []
-                        # Try extraction via correlation_schema
-                        if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
-                            target_key = ib.correlation_schema.get("target")
-                            if target_key:
-                                clean_target = target_key.strip()
-                                if clean_target.startswith("$request."):
-                                    clean_target = clean_target[len("$request."):]
-                                parts = clean_target.split(".")
-                                val = ctx
-                                for part in parts:
-                                    if isinstance(val, dict) and part in val:
-                                        val = val[part]
-                                    else:
-                                        val = None
-                                        break
-                                if val is not None and not isinstance(val, (dict, list)):
-                                    v_str = str(val).strip()
-                                    if v_str:
-                                        possible_ids.append(v_str)
-                        
-                        # Fallback to general context scanning if no specific id was found
-                        if not possible_ids:
-                            for k, v in ctx.items():
-                                if isinstance(v, str) and v.strip():
-                                    possible_ids.append(v.strip())
-                            if session_id:
-                                possible_ids.append(str(session_id))
-                        
-                        # Fetch nodes uniquely for this base's IDs
-                        for uid in possible_ids:
-                            info_nodes = await weaviate_cl.search_information_bases(
-                                base_codes=[ib.code], user_id=uid, query=message, limit=5
+            ib_result = await db.execute(
+                sa_select(AgentModel)
+                .options(selectinload(AgentModel.information_bases))
+                .where(AgentModel.id == agent_id)
+            )
+            ib_agent = ib_result.scalar_one_or_none()
+            if ib_agent and ib_agent.information_bases:
+                active_bases = [b for b in ib_agent.information_bases if b.is_active]
+                if active_bases:
+                    ctx = context_data or {}
+                    weaviate_cl = get_weaviate()
+                    all_info_nodes = []
+                    
+                    if weaviate_cl:
+                        for ib in active_bases:
+                            possible_ids = []
+                            # Try extraction via correlation_schema
+                            if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                target_key = ib.correlation_schema.get("target")
+                                if target_key:
+                                    clean_target = target_key.strip()
+                                    if clean_target.startswith("$request."):
+                                        clean_target = clean_target[len("$request."):]
+                                    parts = clean_target.split(".")
+                                    val = ctx
+                                    for part in parts:
+                                        if isinstance(val, dict) and part in val:
+                                            val = val[part]
+                                        else:
+                                            val = None
+                                            break
+                                    if val is not None and not isinstance(val, (dict, list)):
+                                        v_str = str(val).strip()
+                                        if v_str:
+                                            possible_ids.append(v_str)
+                            
+                            # Fallback to general context scanning if no specific id was found
+                            if not possible_ids:
+                                for k, v in ctx.items():
+                                    if isinstance(v, str) and v.strip():
+                                        possible_ids.append(v.strip())
+                                if session_id:
+                                    possible_ids.append(str(session_id))
+                            
+                            # Fetch nodes uniquely for this base's IDs
+                            ib_limit = getattr(ib, 'max_results', 3) or 3
+                            for uid in possible_ids:
+                                info_nodes = await weaviate_cl.search_information_bases(
+                                    base_codes=[ib.code], user_id=uid, query=message, limit=ib_limit
+                                )
+                                if info_nodes:
+                                    all_info_nodes.extend(info_nodes)
+                                    
+                        if all_info_nodes:
+                            seen = set()
+                            unique_nodes = [
+                                n for n in all_info_nodes
+                                if n["content"] not in seen and not seen.add(n["content"])
+                            ]
+                            print(f"[Task] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
+                            info_str = "\n".join(
+                                [f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:6]]
                             )
-                            if info_nodes:
-                                all_info_nodes.extend(info_nodes)
-                                
-                    if all_info_nodes:
-                        seen = set()
-                        unique_nodes = [
-                            n for n in all_info_nodes
-                            if n["content"] not in seen and not seen.add(n["content"])
-                        ]
-                        print(f"[Task] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
-                        info_str = "\n".join(
-                            [f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:10]]
-                        )
-                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                            f"\n\n## Contextualização Personalizada Externa\n\n"
-                            f"Informações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
-                        )
-    except Exception as ib_err:
-        print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
+                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                                f"\n\n## Contextualização Personalizada Externa\n\n"
+                                f"Informações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
+                            )
+        except Exception as ib_err:
+            print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
 
     # 3. Vector Memory (contact-level + agent-level)
     vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False)
@@ -890,15 +893,16 @@ async def _build_information_base_tools(
         _base_name = ib.name
         _uid = user_id
         _wc = weaviate_cl
+        _max = getattr(ib, 'max_results', 3) or 3
 
-        async def _search_base(query: str, _bc=_base_code, _bn=_base_name, _u=_uid, _w=_wc) -> str:
+        async def _search_base(query: str, _bc=_base_code, _bn=_base_name, _u=_uid, _w=_wc, _m=_max) -> str:
             """Search this information base for relevant content."""
             try:
                 results = await _w.search_information_bases(
                     base_codes=[_bc],
                     user_id=_u,
                     query=query,
-                    limit=5,
+                    limit=_m,
                 )
                 if not results:
                     return f"Nenhum resultado encontrado na base '{_bn}'."
@@ -907,7 +911,11 @@ async def _build_information_base_tools(
             except Exception as e:
                 return f"Erro ao pesquisar base '{_bn}': {str(e)}"
 
-        tool_desc = f"Pesquisa na base de informação '{ib.name}'. Use esta ferramenta para buscar informações, documentos ou dados específicos desta base. Descreva claramente o que deseja encontrar."
+        tool_desc = (
+            f"Pesquisa na base de informação '{ib.name}'. "
+            f"Use esta ferramenta UMA VEZ para buscar informações relevantes. "
+            f"Descreva claramente o que deseja encontrar. NÃO repita a mesma busca."
+        )
 
         tool = StructuredTool.from_function(
             coroutine=_search_base,
@@ -1333,25 +1341,28 @@ async def process_message_task(
             except Exception as e:
                 print(f"[Task] ⚠️ Failed to load session context: {e}")
 
-            # Enrich prompt (RAG, InfoBases as context, VectorMemory, Orchestrator pre-consultation, Session Continuity)
-            rag_context = await _enrich_agent_prompt(
-                db, agent_config, agent_id, message, session_id, context_data, history, transition_data,
-                session_context=session_context,
-                user_access_level=user_access_level,
-            )
-
-            # [INFORMATION BASE TOOLS] Add native Weaviate search tools for agents with information bases
+            # [INFORMATION BASE TOOLS] Build IB tools first to know if RAG enrichment should skip
+            has_ib_tools = False
             try:
                 ib_tools = await _build_information_base_tools(db, agent_id, context_data)
                 if ib_tools:
                     existing_tools = agent_config.get("tools", []) or []
                     agent_config["tools"] = existing_tools + ib_tools
                     agent_config["has_tools"] = True
+                    has_ib_tools = True
                     print(f"[Task] 🔍 Added {len(ib_tools)} information base tools to '{agent_config['name']}'")
             except Exception as e:
                 import traceback
                 print(f"[Task] ❌ Error loading information base tools: {e}")
                 traceback.print_exc()
+
+            # Enrich prompt (RAG, InfoBases as context if no tools, VectorMemory, Orchestrator, Session Continuity)
+            rag_context = await _enrich_agent_prompt(
+                db, agent_config, agent_id, message, session_id, context_data, history, transition_data,
+                session_context=session_context,
+                user_access_level=user_access_level,
+                has_ib_tools=has_ib_tools,
+            )
 
             # [TRIGGER MCPs] Use global trigger results if available, otherwise check local
             try:
