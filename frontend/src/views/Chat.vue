@@ -727,10 +727,16 @@ async function sendMessage() {
     lastProcessingTime.value = res.data.processing_time_ms
     lastAgentUsed.value = res.data.agent_used
   } catch (e) {
+    let errorContent
+    if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
+      errorContent = 'Desculpe, a resposta está demorando mais do que o esperado. Por favor, tente novamente ou reformule sua pergunta.'
+    } else {
+      errorContent = `Erro: ${e.message}`
+    }
     messages.value.push({
       role: 'assistant',
-      content: `Erro: ${e.message}`,
-      time: new Date().toLocaleTimeString()
+      content: errorContent,
+      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     })
   } finally {
     loading.value = false

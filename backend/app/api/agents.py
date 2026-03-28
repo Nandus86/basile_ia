@@ -1440,7 +1440,7 @@ async def get_prompt_preview(
     # 7. Resilience Config
     if agent.resilience_config:
         rc = agent.resilience_config
-        rc_text = f"Configuração de Resiliência:\n- Max iterations: {getattr(rc, 'max_iterations', 'N/A')}\n- Timeout: {getattr(rc, 'timeout_seconds', 'N/A')}s"
+        rc_text = f"Configuração de Resiliência:\n- Max retries: {getattr(rc, 'max_retries', 'N/A')}\n- Timeout: {getattr(rc, 'timeout_seconds', 'N/A')}s"
         sections.append(PromptSection(
             name="Resiliência",
             content=rc_text,

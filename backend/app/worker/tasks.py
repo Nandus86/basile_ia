@@ -1263,33 +1263,46 @@ async def process_message_task(
                 traceback.print_exc()
 
             # ── Execute agent ──
-            max_retries = 2
+            resilience_cfg = agent_config.get("resilience", {}) if agent_config else {}
+            max_retries = resilience_cfg.get("max_retries", 2)
+            timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
             retry_count = 0
-            
+
             while retry_count <= max_retries:
-                if agent_config.get("output_schema"):
-                    # Structured output
-                    result_dict = await factory.invoke_agent_structured(
-                        agent_config=agent_config,
-                        messages=messages,
-                        rag_context=rag_context,
-                        context_data=context_data,
-                    )
-                    print(f"[Task] Structured result: {result_dict}")
-                    final_result = result_dict if isinstance(result_dict, dict) else {"output": str(result_dict)}
-                    agent_used = agent_config["name"]
-                    output_text = final_result.get("output", str(final_result))
-                else:
-                    # Standard text output
-                    response = await factory.invoke_agent(
-                        agent_config=agent_config,
-                        messages=messages,
-                        rag_context=rag_context,
-                        context_data=context_data,
-                    )
-                    final_result = response
-                    agent_used = agent_config["name"]
-                    output_text = str(final_result)
+                try:
+                    import asyncio
+                    if agent_config.get("output_schema"):
+                        # Structured output
+                        result_dict = await asyncio.wait_for(
+                            factory.invoke_agent_structured(
+                                agent_config=agent_config,
+                                messages=messages,
+                                rag_context=rag_context,
+                                context_data=context_data,
+                            ),
+                            timeout=timeout_seconds
+                        )
+                        print(f"[Task] Structured result: {result_dict}")
+                        final_result = result_dict if isinstance(result_dict, dict) else {"output": str(result_dict)}
+                        agent_used = agent_config["name"]
+                        output_text = final_result.get("output", str(final_result))
+                    else:
+                        # Standard text output
+                        response = await asyncio.wait_for(
+                            factory.invoke_agent(
+                                agent_config=agent_config,
+                                messages=messages,
+                                rag_context=rag_context,
+                                context_data=context_data,
+                            ),
+                            timeout=timeout_seconds
+                        )
+                        final_result = response
+                        agent_used = agent_config["name"]
+                        output_text = str(final_result)
+                except asyncio.TimeoutError:
+                    print(f"[Task] ⏱️ Agent execution timed out after {timeout_seconds}s")
+                    raise
 
                 # Interceptar FIM DE INTERACAO
                 if "[FIM_DE_INTERACAO]" in output_text:
