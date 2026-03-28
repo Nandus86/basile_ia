@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, Table, ForeignKey, DateTime
+from sqlalchemy import Column, String, Boolean, Integer, Table, ForeignKey, DateTime
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -30,6 +30,7 @@ class InformationBase(Base):
     content_schema = Column(JSONB, nullable=True)
     metadata_schema = Column(JSONB, nullable=True)
     correlation_schema = Column(JSONB, nullable=True) # Novo Schema para correlacionar o contexto com o "id"
+    max_results = Column(Integer, default=3, nullable=False) # Máximo de resultados por busca
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
