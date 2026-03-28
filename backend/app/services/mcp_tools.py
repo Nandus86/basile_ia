@@ -86,15 +86,27 @@ def _get_value_by_path(data: dict, path: str) -> Any:
 def _inject_request_params(text: str, context_data: dict) -> str:
     """
     Substitui {{ $request.path }} por valores reais do context_data.
-    Suporta filtros: {{ $request.path | truncate(150) }}
+    Suporta filtros: {{ $request.path | truncate(150) }} ou {{ $request.path.truncate(150) }}
     """
     if not text or not context_data:
         return text
     
     def replacer(match):
         raw = match.group(1).strip()
-        parts = raw.split('|')
-        path = parts[0].strip()
+        
+        # Suporta tanto 'path | truncate(N)' quanto 'path.truncate(N)'
+        limit = None
+        path = raw
+        
+        # Regex para capturar | truncate(N) ou .truncate(N) no final da string
+        # Aceita 'truncate' ou 'limit'
+        filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', raw)
+        if filter_match:
+            try:
+                limit = int(filter_match.group(1))
+                path = raw[:filter_match.start()].strip()
+            except:
+                pass
         
         val = _get_value_by_path(context_data, path)
         
@@ -109,19 +121,10 @@ def _inject_request_params(text: str, context_data: dict) -> str:
         else:
             res = str(val)
             
-        # Aplica filtros se existirem
-        if len(parts) > 1:
-            filter_part = parts[1].strip()
-            # Suporta truncate(N) ou limit(N)
-            match_limit = re.match(r'(?:truncate|limit)\((\d+)\)', filter_part)
-            if match_limit:
-                try:
-                    limit = int(match_limit.group(1))
-                    if len(res) > limit:
-                        # Adiciona reticências se foi truncado
-                        res = res[:limit].strip() + "..."
-                except:
-                    pass
+        # Aplica limite se extraído
+        if limit is not None:
+            if len(res) > limit:
+                res = res[:limit].strip() + "..."
         
         return res
             
@@ -166,6 +169,17 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
     if not mapping or not isinstance(mapping, dict):
         return data
 
+    def _apply_limit(val, limit):
+        if val is None:
+            return None
+        if isinstance(val, list):
+            return [_apply_limit(item, limit) for item in val]
+        
+        res = str(val)
+        if len(res) > limit:
+            return res[:limit].strip() + "..."
+        return res
+
     def _extract(obj, path):
         if not path:
             return obj
@@ -194,11 +208,30 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
         return current
 
     result = {}
-    for key, path in mapping.items():
-        if isinstance(path, str):
-            result[key] = _extract(data, path)
+    for key, raw_path in mapping.items():
+        if isinstance(raw_path, str):
+            path = raw_path.strip()
+            limit = None
+            
+            # Detecta filtro truncate/limit via pipe ou dot notation
+            # Ex: "body[*].desc | truncate(150)" ou "body[*].desc.truncate(150)"
+            filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', path)
+            if filter_match:
+                try:
+                    limit = int(filter_match.group(1))
+                    path = path[:filter_match.start()].strip()
+                except:
+                    pass
+                    
+            val = _extract(data, path)
+            
+            # Aplica o limite se encontrado (suporta listas recursivamente)
+            if limit is not None:
+                val = _apply_limit(val, limit)
+                
+            result[key] = val
         else:
-            result[key] = path  # fallback
+            result[key] = raw_path
 
     # Filtra apenas os valores que não são None (que foram encontrados)
     filtered_result = {k: v for k, v in result.items() if v is not None}
