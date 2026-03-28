@@ -112,6 +112,16 @@ class AgentFactory:
         
         # Build system prompt with skills injection
         system_prompt = agent.system_prompt
+
+        # Regra Global Absoluta: Não incluir metadados de tempo na resposta
+        system_prompt += (
+            "\n\n## Diretrizes de Formatação e Resposta\n"
+            "1. Você verá metadados temporais no histórico de mensagens como `[CONTEXTO_TEMPORAL: ...]`. "
+            "Use essas informações APENAS para cronologia interna da conversa.\n"
+            "2. NUNCA inclua esses carimbos de data, horários ou quaisquer prefixos de metadados de tempo no início ou em qualquer parte de sua resposta final.\n"
+            "Sua resposta deve ser natural e focada apenas no conteúdo solicitado pelo usuário.\n"
+        )
+
         skills_summary = []
         if hasattr(agent, 'skills') and agent.skills:
             active_skills = [s for s in agent.skills if s.is_active]

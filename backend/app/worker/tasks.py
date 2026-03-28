@@ -1310,7 +1310,7 @@ async def process_message_task(
             messages = []
             for msg in history:
                 timestamp = msg.get("created_at") or msg.get("timestamp")
-                prefix = f"[{timestamp}] " if timestamp else ""
+                prefix = f"[CONTEXTO_TEMPORAL: {timestamp}] " if timestamp else ""
                 
                 if msg.get("role") == "user":
                     messages.append(HumanMessage(content=f"{prefix}{msg['content']}"))
@@ -1327,6 +1327,13 @@ async def process_message_task(
                 "\n\n## Regra de Encerramento Subentendido\n"
                 "Caso a mensagem atual do usuário seja EXCLUSIVAMENTE um agradecimento final, despedida ou negação de mais ajuda (ex: 'não, era só isso, obrigado', 'tchau', 'valeu'), "
                 "e NÃO contenha nenhuma nova solicitação, você DEVE responder EXATAMENTE E APENAS com o código: `[FIM_DE_INTERACAO]`."
+            )
+
+            # Reforçar a regra de metadados temporais
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                "\n\n## Atenção aos Metadados Temporais\n"
+                "As mensagens no histórico contêm o prefixo `[CONTEXTO_TEMPORAL: ...]`. "
+                "Este prefixo NÃO faz parte do conteúdo da mensagem e NUNCA deve ser incluído na sua resposta."
             )
 
             # Save original system prompt before enrichment (for self-correction analysis)
