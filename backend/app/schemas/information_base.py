@@ -8,6 +8,7 @@ class InformationBaseBase(BaseModel):
     content_schema: Optional[Dict[str, Any]] = Field(None, description="Schema de como os dados de conteúdo textual serão recebidos")
     metadata_schema: Optional[Dict[str, Any]] = Field(None, description="Schema do metadata que pode ser filtrado")
     correlation_schema: Optional[Dict[str, Any]] = Field(None, description="Schema JSON para extrair o user_id (id da base) do context_data")
+    max_results: int = Field(default=3, ge=1, le=20, description="Máximo de resultados por busca")
     is_active: bool = True
 
 class InformationBaseCreate(InformationBaseBase):
@@ -19,6 +20,7 @@ class InformationBaseUpdate(BaseModel):
     content_schema: Optional[Dict[str, Any]] = None
     metadata_schema: Optional[Dict[str, Any]] = None
     correlation_schema: Optional[Dict[str, Any]] = None
+    max_results: Optional[int] = Field(None, ge=1, le=20, description="Máximo de resultados por busca")
     is_active: Optional[bool] = None
 
 class InformationBaseResponse(InformationBaseBase):
