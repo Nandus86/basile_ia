@@ -3280,7 +3280,7 @@ async function openCollaboratorsDialog(agent) {
   collaboratorStatuses.value = {}
   
   try {
-    const response = await axios.get(`/agents/${agent.id}/collaborators`)
+    const response = await axios.get(`/agents/${agent.id}/collaborators?include_blocked=true`)
     for (const collab of response.data) {
       collaboratorStatuses.value[collab.id] = collab.status
     }
