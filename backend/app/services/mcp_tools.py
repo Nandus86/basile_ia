@@ -25,11 +25,17 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_request_paths(text: str) -> set:
-    """Extrai todos os caminhos de {{ $request.path }} em um texto"""
+    """Extrai todos os caminhos de {{ $request.path }} em um texto, ignorando filtros."""
     if not text:
         return set()
     matches = re.finditer(r'\{\{\s*\$request\.(.*?)\s*\}\}', text)
-    return {m.group(1).strip() for m in matches}
+    paths = set()
+    for m in matches:
+        raw = m.group(1).strip()
+        # Pega apenas a parte antes do pipe '|'
+        path = raw.split('|')[0].strip()
+        paths.add(path)
+    return paths
 
 
 def _extract_from_ai_params(text: str) -> dict:
@@ -78,22 +84,46 @@ def _get_value_by_path(data: dict, path: str) -> Any:
 
 
 def _inject_request_params(text: str, context_data: dict) -> str:
-    """Substitui {{ $request.path.to.field }} por valores reais do context_data"""
+    """
+    Substitui {{ $request.path }} por valores reais do context_data.
+    Suporta filtros: {{ $request.path | truncate(150) }}
+    """
     if not text or not context_data:
         return text
     
     def replacer(match):
-        path = match.group(1).strip()
+        raw = match.group(1).strip()
+        parts = raw.split('|')
+        path = parts[0].strip()
+        
         val = _get_value_by_path(context_data, path)
         
         if val is None:
             return match.group(0)  # Mantém o placeholder se não encontrar
             
+        # Converte para string base
         if isinstance(val, bool):
-            return "true" if val else "false"
-        if isinstance(val, (dict, list)):
-            return json.dumps(val, ensure_ascii=False)
-        return str(val)
+            res = "true" if val else "false"
+        elif isinstance(val, (dict, list)):
+            res = json.dumps(val, ensure_ascii=False)
+        else:
+            res = str(val)
+            
+        # Aplica filtros se existirem
+        if len(parts) > 1:
+            filter_part = parts[1].strip()
+            # Suporta truncate(N) ou limit(N)
+            match_limit = re.match(r'(?:truncate|limit)\((\d+)\)', filter_part)
+            if match_limit:
+                try:
+                    limit = int(match_limit.group(1))
+                    if len(res) > limit:
+                        # Adiciona reticências se foi truncado
+                        res = res[:limit].strip() + "..."
+                except:
+                    pass
+        
+        return res
             
     return re.sub(r'\{\{\s*\$request\.(.*?)\s*\}\}', replacer, text)
 

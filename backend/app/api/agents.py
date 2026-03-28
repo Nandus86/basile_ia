@@ -169,6 +169,7 @@ async def get_agent(
         training_memory_enabled=agent.training_memory_enabled,
         status_updates_enabled=agent.status_updates_enabled,
         status_updates_config=agent.status_updates_config,
+        trigger_keywords=agent.trigger_keywords or [],
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
