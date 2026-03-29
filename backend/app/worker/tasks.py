@@ -84,6 +84,52 @@ async def _enrich_agent_prompt(
     current_time_str = now.strftime(f'%d/%m/%Y %H:%M:%S (Fuso: {tz_name})')
     current_iso = now.isoformat()
     
+    # [12H WINDOW RULE] Calculate deterministic greeting rule in code
+    is_within_12h = False
+    last_interaction_info = "Nenhuma encontrada no histórico recente."
+    
+    if history:
+        try:
+            # Get the very last message from history to check timing
+            last_msg = history[-1]
+            last_ts = last_msg.get("created_at") or last_msg.get("timestamp")
+            
+            if last_ts:
+                from datetime import datetime as dt_obj
+                # Handle both datetime objects and ISO strings safely
+                if isinstance(last_ts, str):
+                    try:
+                        # standard ISO format handling
+                        last_dt = dt_obj.fromisoformat(last_ts.replace('Z', '+00:00'))
+                    except ValueError:
+                        last_dt = None
+                elif isinstance(last_ts, dt_obj):
+                    last_dt = last_ts
+                else:
+                    last_dt = None
+                
+                if last_dt:
+                    # Sync timezones for comparison
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=user_tz)
+                    else:
+                        last_dt = last_dt.astimezone(user_tz)
+                    
+                    diff_seconds = (now - last_dt).total_seconds()
+                    # Rule: if less than 12 hours since last interaction
+                    if 0 < diff_seconds < (12 * 3600):
+                        is_within_12h = True
+                    
+                    last_interaction_info = f"{last_dt.strftime('%d/%m/%Y %H:%M:%S')} (há {int(diff_seconds // 3600)}h e {int((diff_seconds % 3600) // 60)}min)"
+        except Exception as e:
+            print(f"[Task] Error calculating 12h window: {e}")
+
+    # Define explicit greeting instruction for the AI
+    if is_within_12h:
+        greeting_rule = "🚨 REGRA CRÍTICA DE SAUDAÇÃO: ÚLTIMA INTERAÇÃO HÁ MENOS DE 12H. **NÃO SAUDE O USUÁRIO**. Vá direto ao ponto, sem 'Paz do Senhor', 'Olá', 'Tudo bem?' ou 'Como posso ajudar?'."
+    else:
+        greeting_rule = "Pode saudar o usuário normalmente (Primeiro contato ou última interação há mais de 12h)."
+
     agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
         f"\n\n## Data e Hora Local do Sistema\n"
         f"Abaixo estão os dados temporais deste exato momento. "
@@ -91,6 +137,8 @@ async def _enrich_agent_prompt(
         f"as datas gravadas nas memórias (que também possuem timestamp).\n"
         f"- Data/Hora legível: {current_time_str}\n"
         f"- Timestamp ISO: {current_iso}\n"
+        f"- Última interação detectada: {last_interaction_info}\n"
+        f"- **DIRETRIZ DE SAUDAÇÃO**: {greeting_rule}\n"
     )
 
     # 0. Session Continuity — inject previous agent info
