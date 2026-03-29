@@ -1274,21 +1274,20 @@ async def process_message_task(
                 agent = await factory.get_agent_by_id(agent_id)
                 if agent:
                     agent_config = await factory.get_agent_config(agent, context_data=context_data)
-            
-            # Job Status Updates Monitor - Enriched with transition fallback and structured flag
-            if callback_url:
-                # Fallback: if transition_data is missing, try to build it from context_data (common in n8n payloads)
-                effective_transition = transition_data
-                if effective_transition is None and context_data:
-                    fallback_transition = {}
-                    if "zoneName" in context_data:
-                        fallback_transition["zoneName"] = context_data["zoneName"]
-                    if "global" in context_data:
-                        fallback_transition["global"] = context_data["global"]
                     
-                    if fallback_transition:
-                        effective_transition = fallback_transition
+                    # Auto-map transition data based on agent schema if not provided
+                    if agent.transition_input_schema and not transition_data:
+                        trans_keys = set(agent.transition_input_schema.keys())
+                        if context_data:
+                            t_data = {}
+                            for k in trans_keys:
+                                if k in context_data:
+                                    t_data[k] = context_data[k]
+                            if t_data:
+                                transition_data = t_data
 
+            # Job Status Updates Monitor - Sync with consumer logic
+            if callback_url:
                 is_structured = bool(agent_config.get("output_schema")) if agent_config else False
 
                 monitor = StatusMonitor(
@@ -1299,11 +1298,11 @@ async def process_message_task(
                     },
                     session_id=session_id,
                     start_time=start_time,
-                    transition_data=effective_transition,
+                    transition_data=transition_data,
                     is_structured=is_structured
                 )
                 await monitor.start()
-                # Early log to ensure {{ $show_moment }} is not empty
+                # Fast initial progress
                 monitor.log_progress("Analisando sua solicitação...")
 
             if not agent_config:
