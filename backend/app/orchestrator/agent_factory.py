@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.agent import Agent, AccessLevel
 from app.config import settings
+from app.orchestrator.callbacks import build_cost_callbacks
 
 import logging
 import json
@@ -195,7 +196,8 @@ class AgentFactory:
     
     def create_llm(self, agent_config: Dict[str, Any]) -> ChatOpenAI:
         """Create LLM instance for an agent, routing to the correct provider.
-        Supports reasoning models (O1, O3, DeepSeek R1) with special parameters."""
+        Supports reasoning models (O1, O3, DeepSeek R1) with special parameters.
+        Automatically injects cost-tracking callbacks for LangSmith observability."""
         model_id = agent_config.get("model", "gpt-4o-mini")
         extra_config = agent_config.get("config", {})
         is_reasoning = extra_config.get("is_reasoning_model", False)
@@ -230,6 +232,14 @@ class AgentFactory:
         else:
             # OpenAI direct
             kwargs["api_key"] = settings.OPENAI_API_KEY
+        
+        # Inject cost-tracking callbacks (only when LangSmith tracing is active)
+        if settings.LANGCHAIN_TRACING_V2:
+            kwargs["callbacks"] = build_cost_callbacks(
+                model=model_id,
+                openrouter_api_key=settings.OPENROUTER_API_KEY,
+                openai_api_key=settings.OPENAI_API_KEY,
+            )
         
         return ChatOpenAI(**kwargs)
     
