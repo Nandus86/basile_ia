@@ -35,6 +35,7 @@ async def _enrich_agent_prompt(
     session_context: Optional[Dict[str, Any]] = None,
     user_access_level: str = "normal",
     has_ib_tools: bool = False,
+    history_source: str = "NONE",
 ):
     """
     Enrich an agent's system_prompt with all contextual data:
@@ -474,8 +475,41 @@ async def _enrich_agent_prompt(
             import traceback
             print(f"[Task] Orchestrator pre-consultation error: {e}")
             traceback.print_exc()
+    # 5. [GREETING LOGIC] Replace placeholders and inject state rules
+    greeting_config = agent_config.get("greeting_config", {"initial": "", "normal": ""})
+    initial_text = greeting_config.get("initial", "")
+    normal_text = greeting_config.get("normal", "")
+
+    # Replace placeholders in the system prompt
+    current_prompt = agent_config.get("system_prompt", "")
+    current_prompt = current_prompt.replace("{{ $greeting.initial }}", initial_text)
+    current_prompt = current_prompt.replace("{{ $greeting.normal }}", normal_text)
+
+    # Inject definitive state rule
+    state_instruction = ""
+    if history_source == "STM":
+        state_instruction = (
+            "\n\n## ESTADO DA CONVERSA: RECENTE (Fluxo Contínuo)\n"
+            "Interação detectada na memória de curto prazo (Redis). "
+            "REGRA ABSOLUTA: **NÃO USE SAUDAÇÕES**. Não utilize 'Paz do Senhor', 'Olá', 'Tudo bem?' ou qualquer cumprimento inicial. "
+            "A conversa já está em andamento. Responda diretamente ao que foi solicitado.\n"
+        )
+    elif history_source == "MTM":
+        state_instruction = (
+            "\n\n## ESTADO DA CONVERSA: RETORNO (Boas-vindas de Volta)\n"
+            "O usuário está retornando após algum tempo. "
+            f"Se for apropriado saudar, utilize preferencialmente a saudação de retorno: \"{normal_text}\".\n"
+        )
     else:
-        print(f"[Task] 🔍 SKIPPING collaboration (not applicable)")
+        state_instruction = (
+            "\n\n## ESTADO DA CONVERSA: INICIAL (Primeiro Contato)\n"
+            "Este é o primeiro contato deste usuário. "
+            f"Inicie o atendimento utilizando a saudação inicial: \"{initial_text}\".\n"
+        )
+    
+    agent_config["system_prompt"] = current_prompt + state_instruction
+
+    print(f"[Task] 📝 Greeting logic applied: state={history_source}")
 
     return rag_context
 
@@ -1316,9 +1350,13 @@ async def process_message_task(
 
             # STM: load history
             history = []
+            history_source = "NONE"
             mtm_context_note = ""
             if stm_enabled:
                 history = await redis_client.get_conversation(session_id)
+                if history:
+                    history_source = "STM"
+                
                 await redis_client.add_message(
                     session_id=session_id, role="user",
                     content=message, ttl_seconds=stm_ttl_seconds
@@ -1333,6 +1371,7 @@ async def process_message_task(
                 mtm_history = await _load_mtm_fallback(db, agent_id, session_id, limit=5)
                 if mtm_history:
                     history = mtm_history
+                    history_source = "MTM"
                     mtm_context_note = (
                         "\n\n## Contexto de Conversa Anterior\n\n"
                         "O usuário já interagiu com você anteriormente. "
@@ -1417,6 +1456,7 @@ async def process_message_task(
                 session_context=session_context,
                 user_access_level=user_access_level,
                 has_ib_tools=has_ib_tools,
+                history_source=history_source,
             )
 
             # [TRIGGER MCPs] Use global trigger results if available, otherwise check local

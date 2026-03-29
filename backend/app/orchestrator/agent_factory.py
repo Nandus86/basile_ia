@@ -123,16 +123,37 @@ class AgentFactory:
         )
 
         skills_summary = []
+        greeting_config = {"initial": "", "normal": ""}
+
         if hasattr(agent, 'skills') and agent.skills:
             active_skills = [s for s in agent.skills if s.is_active]
             if active_skills:
                 skills_parts = []
                 from app.schemas.skill import get_skill_capability_description
+                import re
+                import json
+
                 for skill in active_skills:
                     skills_parts.append(f"### {skill.name}\n{skill.content_md}")
                     # Use the refined summary for orchestrator to see collaborator skills
                     summary_text = get_skill_capability_description(skill)
                     skills_summary.append({"name": skill.name, "description": summary_text})
+
+                    # [GREETING CONFIG SCAN] Look for JSON with "greeting" key in skills
+                    content = skill.content_md or ""
+                    try:
+                        # Find ```json ... ``` blocks
+                        json_matches = re.findall(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                        for j_str in json_matches:
+                            data = json.loads(j_str)
+                            if isinstance(data, dict) and "greeting" in data:
+                                g_data = data["greeting"]
+                                if isinstance(g_data, dict):
+                                    greeting_config["initial"] = g_data.get("initial", greeting_config["initial"])
+                                    greeting_config["normal"] = g_data.get("normal", greeting_config["normal"])
+                                    logger.info(f"[AgentFactory] 🎯 Encontrou config de saudação na skill '{skill.name}'")
+                    except Exception as e:
+                        logger.debug(f"[AgentFactory] Erro ao processar JSON na skill '{skill.name}': {e}")
                 skills_section = (
                     "\n\n## ⚠️ SKILLS ATIVAS — REGRAS ABSOLUTAS ⚠️\n\n"
                     "As instruções abaixo são REGRAS OBRIGATÓRIAS do seu comportamento.\n"
@@ -166,6 +187,7 @@ class AgentFactory:
             "resilience": agent.resilience_config.to_dict() if agent.resilience_config else {},
             "agent_model": agent,  # Keep reference for collaboration
             "skills_summary": skills_summary,  # For orchestrator to see collaborator skills
+            "greeting_config": greeting_config,
         }
         
         self._agent_cache[agent_id] = config
