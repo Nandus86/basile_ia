@@ -1275,8 +1275,22 @@ async def process_message_task(
                 if agent:
                     agent_config = await factory.get_agent_config(agent, context_data=context_data)
             
-            # Job Status Updates Monitor
+            # Job Status Updates Monitor - Enriched with transition fallback and structured flag
             if callback_url:
+                # Fallback: if transition_data is missing, try to build it from context_data (common in n8n payloads)
+                effective_transition = transition_data
+                if effective_transition is None and context_data:
+                    fallback_transition = {}
+                    if "zoneName" in context_data:
+                        fallback_transition["zoneName"] = context_data["zoneName"]
+                    if "global" in context_data:
+                        fallback_transition["global"] = context_data["global"]
+                    
+                    if fallback_transition:
+                        effective_transition = fallback_transition
+
+                is_structured = bool(agent_config.get("output_schema")) if agent_config else False
+
                 monitor = StatusMonitor(
                     callback_url=callback_url,
                     agent_config={
@@ -1285,9 +1299,12 @@ async def process_message_task(
                     },
                     session_id=session_id,
                     start_time=start_time,
-                    transition_data=transition_data
+                    transition_data=effective_transition,
+                    is_structured=is_structured
                 )
                 await monitor.start()
+                # Early log to ensure {{ $show_moment }} is not empty
+                monitor.log_progress("Analisando sua solicitação...")
 
             if not agent_config:
                 # No specific agent → fallback to Supervisor router
