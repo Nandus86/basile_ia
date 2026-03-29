@@ -114,14 +114,9 @@ class StatusMonitor:
             "status": "processing",
             "session_id": self.session_id,
             "is_interim": True,
-            "transition_data": self.transition_data
+            "transition_data": self.transition_data,
+            "result": text  # Unified key for all types of agents (including structured)
         }
-
-        # Select response key based on agent type
-        if self.is_structured:
-            payload["output"] = text
-        else:
-            payload["response"] = text
 
         try:
             async with httpx.AsyncClient() as client:
