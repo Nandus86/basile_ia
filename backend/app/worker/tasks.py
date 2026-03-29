@@ -821,9 +821,9 @@ async def _build_collaborator_tools(
         _collab = collab
         _db = db
         _context_data = context_data
-        _is_planner = getattr(agent_model, "is_planner", False)
-        _planner_prompt = getattr(agent_model, "planner_prompt", None)
-        _planner_model = getattr(agent_model, "planner_model", None)
+        _is_planner = getattr(collab, "is_planner", False)
+        _planner_prompt = getattr(collab, "planner_prompt", None)
+        _planner_model = getattr(collab, "planner_model", None)
 
         async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner, _p_prompt=_planner_prompt, _p_model=_planner_model) -> str:
             """
