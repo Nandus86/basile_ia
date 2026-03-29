@@ -1302,8 +1302,7 @@ async def process_message_task(
                     is_structured=is_structured
                 )
                 await monitor.start()
-                # Fast initial progress
-                monitor.log_progress("Analisando sua solicitação...")
+                # Initial state is handled by the loop delay and default moment
 
             if not agent_config:
                 # No specific agent → fallback to Supervisor router
