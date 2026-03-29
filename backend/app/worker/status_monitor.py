@@ -13,13 +13,15 @@ class StatusMonitor:
         agent_config: Dict[str, Any],
         session_id: str,
         start_time: Optional[float] = None,
-        transition_data: Optional[Dict[str, Any]] = None
+        transition_data: Optional[Dict[str, Any]] = None,
+        is_structured: bool = False
     ):
         self.callback_url = callback_url
         self.agent_config = agent_config
         self.session_id = session_id
         self.start_time = start_time or time.time()
         self.transition_data = transition_data
+        self.is_structured = is_structured
         self.is_running = False
         self.task = None
         self.progress_log: List[str] = []
@@ -30,9 +32,9 @@ class StatusMonitor:
         self.config = agent_config.get("status_updates_config", {}) or {}
 
         # Keys aligned with frontend (Agents.vue status_updates_config)
-        self.initial_delay = float(self.config.get("initial_delay_seconds", 5))
+        self.initial_delay = float(self.config.get("initial_delay_seconds", 2))
         self.initial_msg = self.config.get("initial_message", "Aguarde um momentinho, estou processando sua solicitacao...")
-        self.follow_up_interval = float(self.config.get("follow_up_interval_seconds", 10))
+        self.follow_up_interval = float(self.config.get("follow_up_interval_seconds", 7))
         self.follow_up_msg = self.config.get("follow_up_message", "Ainda estou trabalhando nisso, ja estou quase terminando...")
         self.max_updates = int(self.config.get("max_updates", 3))
 
@@ -111,10 +113,15 @@ class StatusMonitor:
         payload = {
             "status": "processing",
             "session_id": self.session_id,
-            "response": text,
             "is_interim": True,
             "transition_data": self.transition_data
         }
+
+        # Select response key based on agent type
+        if self.is_structured:
+            payload["output"] = text
+        else:
+            payload["response"] = text
 
         try:
             async with httpx.AsyncClient() as client:
