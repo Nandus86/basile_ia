@@ -452,7 +452,7 @@ async def _enrich_agent_prompt(
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
 
-            orchestrator = AgentOrchestrator(db)
+            orchestrator = AgentOrchestrator(db, monitor=monitor)
             subordinate_context = await orchestrator.gather_subordinate_responses(
                 message=message,
                 primary_agent=agent_model,
@@ -1276,14 +1276,16 @@ async def process_message_task(
                     agent_config = await factory.get_agent_config(agent, context_data=context_data)
             
             # Job Status Updates Monitor
-            if callback_url and agent:
+            if callback_url:
                 monitor = StatusMonitor(
                     callback_url=callback_url,
                     agent_config={
-                        "status_updates_enabled": getattr(agent, "status_updates_enabled", False),
-                        "status_updates_config": getattr(agent, "status_updates_config", {})
+                        "status_updates_enabled": getattr(agent, "status_updates_enabled", True) if agent else True,
+                        "status_updates_config": getattr(agent, "status_updates_config", {}) if agent else {}
                     },
-                    session_id=session_id
+                    session_id=session_id,
+                    start_time=start_time,
+                    transition_data=transition_data
                 )
                 await monitor.start()
 
@@ -1312,6 +1314,7 @@ async def process_message_task(
                     db=db,
                     user_access_level=user_access_level,
                     context_data=context_data,
+                    monitor=monitor
                 )
                 final_result = result["response"]
                 agent_used = result.get("agent_used")
@@ -1642,7 +1645,7 @@ async def process_message_task(
             }
     finally:
         # Stop StatusMonitor to prevent resource leaks
-        if monitor is not None:
+        if monitor:
             try:
                 await monitor.stop()
             except Exception:

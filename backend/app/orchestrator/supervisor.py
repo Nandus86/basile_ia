@@ -27,8 +27,9 @@ class Supervisor:
     Loop settings are read from agent.orchestrator_config (per-agent).
     """
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, monitor: Optional[Any] = None):
         self.db = db
+        self.monitor = monitor
         self.factory = AgentFactory(db)
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
@@ -42,6 +43,9 @@ class Supervisor:
         Also loads orchestrator_config for reasoning loop settings.
         Loads session_context from Redis for continuity hints.
         """
+        if self.monitor:
+            self.monitor.log_progress("Analisando sua solicitação para escolher o melhor especialista")
+            
         config = RunnableConfig(
             run_name="Agent Router",
             metadata={"node": "router"},
@@ -218,6 +222,9 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
         Worker node: Executes the selected agent (or next pending agent from loop).
         """
         # Check if there's a pending agent from the evaluate loop
+        if self.monitor:
+            self.monitor.log_progress("Consultando um agente especializado para detalhes adicionais")
+            
         pending = state.get("pending_agents", [])
         if pending:
             next_agent = pending.pop(0)
@@ -464,6 +471,9 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
         
         messages.append(HumanMessage(content=state["original_message"]))
         
+        if self.monitor:
+            self.monitor.log_progress(f"Iniciando atendimento com o agente {agent_name}")
+            
         # Invoke agent
         try:
             response = await self.factory.invoke_agent(
@@ -508,14 +518,11 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
     
     async def evaluate(self, state: SupervisorState) -> SupervisorState:
         """
-        Evaluate node (NEW in v0.0.9): Decides if the task is complete or needs more agents.
-        
-        Uses LLM to analyze accumulated responses and decide:
-        - "complete" → go to synthesize
-        - "delegate" → select next agent, push to pending_agents, go to execute
-        
-        Loop settings come from orchestrator_loop_config (per-agent).
+        Evaluation node: Decides if the task is complete or needs more delegation.
         """
+        if self.monitor:
+            self.monitor.log_progress("Avaliando se a resposta está completa ou se precisa de mais informações")
+            
         config = RunnableConfig(
             run_name="Reasoning Evaluator",
             metadata={"node": "evaluate"},
@@ -544,7 +551,7 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
         
         try:
             from app.orchestrator.agent_orchestrator import AgentOrchestrator
-            orchestrator = AgentOrchestrator(self.db)
+            orchestrator = AgentOrchestrator(self.db, monitor=self.monitor)
             agent_with_settings = await orchestrator.get_agent_with_collaborators(agent_model.id)
             
             if not agent_with_settings or not agent_with_settings.collaborator_settings:
@@ -725,6 +732,9 @@ OU
             state["next_action"] = "end"
             return state
         
+        if self.monitor:
+            self.monitor.log_progress("Finalizando e organizando a resposta para você")
+            
         # Multiple agents, combine responses
         config = RunnableConfig(
             run_name="Response Synthesizer",
@@ -832,10 +842,11 @@ async def run_supervisor(
     agent_id: Optional[str],
     db: AsyncSession,
     user_access_level: str = "normal",
-    context_data: Optional[Dict[str, Any]] = None
+    context_data: Optional[Dict[str, Any]] = None,
+    monitor: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
-    Run the supervisor orchestrator.
+    Run the supervisor-based orchestrator.
     
     Args:
         message: User message
@@ -845,11 +856,12 @@ async def run_supervisor(
         db: Database session
         user_access_level: User's access level
         context_data: Optional structured context data for the agent
+        monitor: Optional monitor for progress tracking
         
     Returns:
         Dict with response and agents_used
     """
-    supervisor = Supervisor(db)
+    supervisor = Supervisor(db, monitor=monitor)
     graph = supervisor.build_graph()
     
     # Create initial state

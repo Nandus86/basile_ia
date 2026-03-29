@@ -32,8 +32,9 @@ class AgentOrchestrator:
     5. Collaborator responses are appended to orchestrator's system_prompt
     """
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, monitor: Optional[Any] = None):
         self.db = db
+        self.monitor = monitor
         from langchain_openai import ChatOpenAI
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
@@ -416,6 +417,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                     selected_collaborators.append((agent, orientation))
                     break
         
+        monitor = monitor or self.monitor
         if monitor:
             monitor.log_progress(f"Iniciando consulta a {len(selected_collaborators)} colaboradores")
             
@@ -476,6 +478,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             elif setting.status == CollaborationStatus.NEUTRAL:
                 neutral.append(setting.collaborator)
         
+        monitor = monitor or self.monitor
         if monitor:
             monitor.log_progress("Iniciando orquestração final pós-resposta")
             

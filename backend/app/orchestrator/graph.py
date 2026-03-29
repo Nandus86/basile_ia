@@ -584,7 +584,8 @@ async def run_orchestrator_v2(
     agent_id: Optional[str],
     db: AsyncSession,
     user_access_level: str = "normal",
-    context_data: Optional[Dict[str, Any]] = None
+    context_data: Optional[Dict[str, Any]] = None,
+    monitor: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Run the new supervisor-based orchestrator (v2).
@@ -598,5 +599,6 @@ async def run_orchestrator_v2(
         agent_id=agent_id,
         db=db,
         user_access_level=user_access_level,
-        context_data=context_data
+        context_data=context_data,
+        monitor=monitor
     )
