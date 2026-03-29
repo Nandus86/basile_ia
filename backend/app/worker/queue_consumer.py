@@ -182,12 +182,16 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     monitor = StatusMonitor(
                         callback_url=callback_url,
                         agent_config={
-                            "status_updates_enabled": getattr(agent, "status_updates_enabled", False),
+                            "status_updates_enabled": getattr(agent, "status_updates_enabled", True),
                             "status_updates_config": getattr(agent, "status_updates_config", {}) or {}
                         },
-                        session_id=session_id
+                        session_id=session_id,
+                        transition_data=transition_data, # Use reconstructed transition data
+                        is_structured=bool(agent.output_schema)
                     )
                     await monitor.start()
+                    # Initial progress log
+                    monitor.log_progress("Analisando sua solicitação...")
                 
                 while attempts <= max_retries:
                     attempts += 1
