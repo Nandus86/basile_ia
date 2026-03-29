@@ -36,6 +36,10 @@ _PRICE_TABLE: Dict[str, Dict[str, float]] = {
     "google/gemini-pro-1.5":            {"prompt": 0.00125,  "completion": 0.005},
     "google/gemini-2.0-flash-001":      {"prompt": 0.0001,   "completion": 0.0004},
     "google/gemini-2.5-pro-preview":    {"prompt": 0.00125,  "completion": 0.01},
+    # Qwen (Alibaba)
+    "qwen/qwen3.5-flash-02-23":         {"prompt": 0.000065, "completion": 0.00026},
+    "qwen/qwen-2.5-72b-instruct":       {"prompt": 0.00023,  "completion": 0.00033},
+    "qwen/qwen-2.5-coder-32b-instruct": {"prompt": 0.00018,  "completion": 0.00018},
     # OpenAI via OpenRouter
     "openai/gpt-4o":                    {"prompt": 0.0025,   "completion": 0.01},
     "openai/gpt-4o-mini":               {"prompt": 0.00015,  "completion": 0.0006},
@@ -49,6 +53,9 @@ _PRICE_TABLE: Dict[str, Dict[str, float]] = {
     # Mistral
     "mistralai/mistral-7b-instruct":    {"prompt": 0.000055,  "completion": 0.000055},
     "mistralai/mixtral-8x7b-instruct":  {"prompt": 0.00024,   "completion": 0.00024},
+    # DeepSeek
+    "deepseek/deepseek-chat-v3-0324":   {"prompt": 0.0003,   "completion": 0.0009},
+    "deepseek/deepseek-r1":             {"prompt": 0.0005,   "completion": 0.002},
     # OpenAI direto (não via OpenRouter)
     "gpt-4o":                           {"prompt": 0.0025,   "completion": 0.01},
     "gpt-4o-mini":                      {"prompt": 0.00015,  "completion": 0.0006},
@@ -198,20 +205,29 @@ class OpenRouterCostCallback(AsyncCallbackHandler):
             if cost_usd is not None:
                 extra_metadata["cost_usd"] = cost_usd
 
+            cost_str = f"${cost_usd:.6f}" if cost_usd is not None else "$N/A"
+
             try:
                 from langsmith import Client as LangSmithClient
                 ls_client = LangSmithClient()
                 ls_client.update_run(
                     run_id=str(run_id),
-                    extra=extra_metadata,
+                    extra={"metadata": extra_metadata},
                 )
-                logger.debug(
+                logger.info(
                     f"[CostCallback] ✅ LangSmith run {run_id} atualizado com custo "
-                    f"${cost_usd:.6f if cost_usd else 'N/A'} ({cost_source})"
+                    f"{cost_str} ({cost_source})"
                 )
             except Exception as ls_exc:
-                # Não quebrar o fluxo por falha de observabilidade
-                logger.warning(f"[CostCallback] ⚠️ Falha ao atualizar LangSmith run: {ls_exc}")
+                exc_str = str(ls_exc)
+                if "409" in exc_str or "Conflict" in exc_str:
+                    # Run já foi finalizado pelo LangSmith — esperado em ReAct agents
+                    logger.debug(
+                        f"[CostCallback] ℹ️ LangSmith run {run_id} já finalizado (409). "
+                        f"Custo capturado localmente: {cost_str}"
+                    )
+                else:
+                    logger.warning(f"[CostCallback] ⚠️ Falha ao atualizar LangSmith run: {ls_exc}")
 
         except Exception as exc:
             # Nunca deixar o callback quebrar o fluxo principal
