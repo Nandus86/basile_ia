@@ -12,15 +12,18 @@ class StatusMonitor:
         callback_url: Optional[str],
         agent_config: Dict[str, Any],
         session_id: str,
-        start_time: Optional[float] = None
+        start_time: Optional[float] = None,
+        transition_data: Optional[Dict[str, Any]] = None
     ):
         self.callback_url = callback_url
         self.agent_config = agent_config
         self.session_id = session_id
         self.start_time = start_time or time.time()
+        self.transition_data = transition_data
         self.is_running = False
         self.task = None
         self.progress_log: List[str] = []
+        self.current_moment = "processando sua solicitação"
 
         # Extract config
         self.enabled = agent_config.get("status_updates_enabled", False)
@@ -52,43 +55,49 @@ class StatusMonitor:
         logger.info(f"StatusMonitor stopped for session {self.session_id}")
 
     def log_progress(self, message: str):
-        """Log a step of progress to be included in future status updates"""
+        """Log a step of progress and update current_moment"""
         timestamp = time.strftime("%H:%M:%S")
         self.progress_log.append(f"[{timestamp}] {message}")
+        # Automatically update current_moment with a cleaned version of the progress
+        # Limit to 100 chars as requested
+        self.current_moment = message[:100].lower().strip(".")
         logger.info(f"Progress log: {message}")
 
     async def _run_loop(self):
         try:
             sent_count = 0
-            # Always send at least the initial message if callback_url exists
-            # If status_updates_enabled is False, only send initial (no follow-ups)
+            # If status_updates_enabled is False, only send up to 1 (initial) if enough time passes
             max_msgs = self.max_updates if self.enabled else 1
 
             while self.is_running and sent_count < max_msgs:
+                await asyncio.sleep(1) # Check every second
                 elapsed = time.time() - self.start_time
 
                 # Calculate when the next message should be sent
                 if sent_count == 0:
-                    next_delay = self.initial_delay
+                    target_time = self.initial_delay
                 else:
-                    next_delay = self.initial_delay + (sent_count * self.follow_up_interval)
+                    target_time = self.initial_delay + (sent_count * self.follow_up_interval)
 
-                if elapsed >= next_delay:
+                if elapsed >= target_time:
                     # Choose message based on count
                     if sent_count == 0:
                         text = self.initial_msg
                     else:
                         text = self.follow_up_msg
-                        # Include progress summary for follow-ups
-                        summary = "\n".join(self.progress_log[-3:]) if self.progress_log else ""
-                        if summary:
-                            text += f"\n\nO que ja fiz:\n{summary}"
+                    
+                    # 1. Replace {{ $show_moment }} with current status
+                    if "{{ $show_moment }}" in text:
+                        text = text.replace("{{ $show_moment }}", self.current_moment)
+                    
+                    # 2. Traditional summary if no placeholder was used and enabled
+                    elif self.enabled and self.progress_log:
+                        summary = "\n".join(self.progress_log[-3:])
+                        text += f"\n\nO que ja fiz:\n{summary}"
 
                     await self._send_status(text)
                     sent_count += 1
                     logger.info(f"StatusMonitor sent message {sent_count}/{max_msgs} for session {self.session_id}")
-
-                await asyncio.sleep(1)
 
         except asyncio.CancelledError:
             pass
@@ -103,7 +112,8 @@ class StatusMonitor:
             "status": "processing",
             "session_id": self.session_id,
             "response": text,
-            "is_interim": True
+            "is_interim": True,
+            "transition_data": self.transition_data
         }
 
         try:
