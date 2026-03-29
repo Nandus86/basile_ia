@@ -82,22 +82,11 @@ class StatusMonitor:
                     target_time = self.initial_delay + (sent_count * self.follow_up_interval)
 
                 if elapsed >= target_time:
-                    # Choose message based on count
-                    if sent_count == 0:
-                        text = self.initial_msg
-                    else:
-                        text = self.follow_up_msg
-                    
-                    # 1. Replace {{ $show_moment }} with current status
-                    if "{{ $show_moment }}" in text:
-                        text = text.replace("{{ $show_moment }}", self.current_moment)
-                    
-                    # 2. Traditional summary if no placeholder was used and enabled
-                    elif self.enabled and self.progress_log:
-                        summary = "\n".join(self.progress_log[-3:])
-                        text += f"\n\nO que ja fiz:\n{summary}"
+                    # Build status text
+                    status_text = self.follow_up_msg if sent_count > 0 else self.initial_msg
+                    status_text = status_text.replace("{{ $show_moment }}", self.current_moment)
 
-                    await self._send_status(text)
+                    await self._send_status(status_text)
                     sent_count += 1
                     logger.info(f"StatusMonitor sent message {sent_count}/{max_msgs} for session {self.session_id}")
 

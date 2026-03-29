@@ -190,8 +190,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         is_structured=bool(agent.output_schema)
                     )
                     await monitor.start()
-                    # Initial progress log
-                    monitor.log_progress("Analisando sua solicitação...")
+                    # Initial state is handled by the loop delay
                 
                 while attempts <= max_retries:
                     attempts += 1
