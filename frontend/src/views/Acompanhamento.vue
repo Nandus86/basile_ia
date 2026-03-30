@@ -296,9 +296,49 @@
           >
             Human Response
           </v-btn>
-          <div class="text-caption text-medium-emphasis ms-2 me-auto align-self-center">
-            (Roda internamente, não aciona webhook de saída)
+          <!-- Agent Control Buttons -->
+          <v-btn
+            color="error"
+            variant="tonal"
+            prepend-icon="mdi-robot-off"
+            :loading="pausingAgent"
+            @click="pauseAgent(null)"
+            size="small"
+          >
+            Desativar Agente
+          </v-btn>
+          <div class="d-flex align-center ga-1">
+            <v-btn
+              color="error"
+              variant="tonal"
+              prepend-icon="mdi-timer-off"
+              :loading="pausingAgent"
+              :disabled="!pauseMinutes"
+              @click="pauseAgent(pauseMinutes)"
+              size="small"
+            >
+              Desativar por
+            </v-btn>
+            <v-text-field
+              v-model.number="pauseMinutes"
+              type="number"
+              density="compact"
+              variant="outlined"
+              hide-details
+              style="max-width: 75px"
+              placeholder="min"
+            />
           </div>
+          <v-btn
+            color="success"
+            variant="tonal"
+            prepend-icon="mdi-robot"
+            :loading="activatingAgent"
+            @click="activateAgent"
+            size="small"
+          >
+            Ativar Agente
+          </v-btn>
           <v-btn
             v-if="selectedJob.status === 'in_progress' || selectedJob.status === 'queued'"
             color="error"
@@ -309,7 +349,7 @@
           >
             Abortar Job
           </v-btn>
-          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob || abortingJob || resendingJob || sendingHuman">Fechar</v-btn>
+          <v-btn color="primary" variant="text" @click="dialog = false" :disabled="testingJob || abortingJob || resendingJob || sendingHuman || pausingAgent || activatingAgent">Fechar</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -337,11 +377,11 @@
               v-for="(msg, idx) in memoryMessages"
               :key="idx"
               class="memory-bubble pa-3 rounded-lg"
-              :class="msg.role === 'user' ? 'mem-user-msg' : 'mem-assistant-msg'"
+              :class="getMemoryBubbleClass(msg.role)"
             >
               <div class="d-flex align-center mb-1">
-                <v-icon size="14" class="mr-1" :color="msg.role === 'user' ? '#00D1FF' : '#9D4EDD'">
-                  {{ msg.role === 'user' ? 'mdi-account' : 'mdi-robot' }}
+                <v-icon size="14" class="mr-1" :color="getMemoryIconColor(msg.role)">
+                  {{ getMemoryIcon(msg.role) }}
                 </v-icon>
                 <span class="text-caption font-weight-bold text-uppercase" style="opacity: 0.7">{{ msg.role }}</span>
                 <span v-if="msg.created_at || msg.timestamp" class="text-caption ml-2" style="opacity: 0.4">
@@ -445,7 +485,7 @@ const itemsPerPageOptions = [
 ]
 const searchPath = ref('')
 const statusFilter = ref(null)
-const statusOptions = ['completed', 'failed', 'queued', 'in_progress']
+const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
 const headers = [
   { title: 'Data/Hora', key: 'created_at', sortable: false },
@@ -473,6 +513,11 @@ const resendingJob = ref(false)
 const showHumanInput = ref(false)
 const humanText = ref('')
 const sendingHuman = ref(false)
+
+// Agent Control state
+const pauseMinutes = ref(null)
+const pausingAgent = ref(false)
+const activatingAgent = ref(false)
 
 // STM/MTM Memory Dialog
 const memoryDialog = ref(false)
@@ -742,8 +787,61 @@ const sendHumanResponse = async () => {
   }
 }
 
-const getStatusColor = (status) => ({ 'completed': 'success', 'failed': 'error', 'queued': 'warning', 'in_progress': 'info' }[status] || 'grey')
-const getStatusIcon = (status) => ({ 'completed': 'mdi-check', 'failed': 'mdi-close', 'queued': 'mdi-clock', 'in_progress': 'mdi-play' }[status] || 'mdi-help')
+// ── Agent Control Functions ──
+const pauseAgent = async (minutes) => {
+  if (!selectedJob.value) return;
+  pausingAgent.value = true;
+  try {
+    const body = minutes ? { timeout_minutes: Number(minutes) } : {};
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/pause-agent`, body);
+    const modeText = data.mode === 'temporary' ? `por ${data.timeout_minutes} min` : 'permanentemente';
+    showSnackbar(`Agente desativado ${modeText} para sessão ${data.session_id}`, 'warning');
+  } catch (error) {
+    console.error("Erro ao pausar agente:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao desativar agente', 'error');
+  } finally {
+    pausingAgent.value = false;
+  }
+}
+
+const activateAgent = async () => {
+  if (!selectedJob.value) return;
+  activatingAgent.value = true;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/activate-agent`);
+    showSnackbar(`Agente reativado para sessão ${data.session_id}`, 'success');
+  } catch (error) {
+    console.error("Erro ao ativar agente:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao ativar agente', 'error');
+  } finally {
+    activatingAgent.value = false;
+  }
+}
+
+// ── Memory Bubble Helpers ──
+const getMemoryBubbleClass = (role) => ({
+  'user': 'mem-user-msg',
+  'assistant': 'mem-assistant-msg',
+  'fromMe': 'mem-fromme-msg',
+  'supportResponse': 'mem-support-msg',
+}[role] || 'mem-user-msg')
+
+const getMemoryIcon = (role) => ({
+  'user': 'mdi-account',
+  'assistant': 'mdi-robot',
+  'fromMe': 'mdi-whatsapp',
+  'supportResponse': 'mdi-headset',
+}[role] || 'mdi-account')
+
+const getMemoryIconColor = (role) => ({
+  'user': '#00D1FF',
+  'assistant': '#9D4EDD',
+  'fromMe': '#25D366',
+  'supportResponse': '#FBBF24',
+}[role] || '#00D1FF')
+
+const getStatusColor = (status) => ({ 'completed': 'success', 'failed': 'error', 'queued': 'warning', 'in_progress': 'info', 'buffered': 'purple', 'paused': 'orange' }[status] || 'grey')
+const getStatusIcon = (status) => ({ 'completed': 'mdi-check', 'failed': 'mdi-close', 'queued': 'mdi-clock', 'in_progress': 'mdi-play', 'buffered': 'mdi-tray-full', 'paused': 'mdi-pause-circle' }[status] || 'mdi-help')
 const formatDate = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 const formatJSON = (obj) => { try { return JSON.stringify(obj, null, 2) } catch { return obj } }
 
@@ -816,6 +914,16 @@ onUnmounted(() => {
 .mem-assistant-msg {
   background: rgba(157, 78, 221, 0.06);
   border-left: 3px solid rgba(157, 78, 221, 0.5);
+}
+
+.mem-fromme-msg {
+  background: rgba(37, 211, 102, 0.08);
+  border-left: 3px solid rgba(37, 211, 102, 0.5);
+}
+
+.mem-support-msg {
+  background: rgba(251, 191, 36, 0.08);
+  border-left: 3px solid rgba(251, 191, 36, 0.5);
 }
 
 /* Data table pagination footer */

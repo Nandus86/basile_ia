@@ -70,18 +70,76 @@ async def _listen_for_aborts():
     except Exception as e:
         logger.error(f"Error in pubsub abort listener: {e}")
 
+async def _save_to_mtm(agent_id: str, session_id: str, role: str, content: str):
+    """Helper to save a message to MTM (PostgreSQL ConversationMessage)."""
+    try:
+        import uuid as uuid_mod
+        from app.models.conversation_message import ConversationMessage
+        async with async_session_maker() as db_session:
+            msg = ConversationMessage(
+                id=uuid_mod.uuid4(),
+                agent_id=uuid_mod.UUID(str(agent_id)),
+                session_id=str(session_id),
+                role=role,
+                content=content,
+            )
+            db_session.add(msg)
+            await db_session.commit()
+    except Exception as e:
+        logger.error(f"Failed to save {role} message to MTM: {e}")
+
+
+async def _mark_job_status(job_id: str, status: str, payload: dict = None, error_msg: str = None):
+    """Helper to update JobLog status and publish SSE event."""
+    try:
+        from sqlalchemy.future import select
+        from app.models.job_log import JobLog
+        from datetime import datetime, timezone
+        async with async_session_maker() as db_session:
+            query = select(JobLog).where(JobLog.job_id == job_id)
+            res = await db_session.execute(query)
+            job_log = res.scalar_one_or_none()
+            if job_log:
+                job_log.status = status
+                if error_msg:
+                    job_log.error_message = error_msg
+                job_log.completed_at = datetime.now(timezone.utc)
+                if job_log.created_at:
+                    job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                await db_session.commit()
+                await _publish_job_update(
+                    job_id=job_id, status=status,
+                    webhook_path=job_log.webhook_path,
+                    request_data=payload,
+                    error_message=error_msg,
+                    duration_ms=job_log.duration_ms,
+                    created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                )
+    except Exception:
+        pass
+
+
 async def process_webhook_message(message: aio_pika.IncomingMessage):
-    """Callback to process a message from RabbitMQ"""
+    """Callback to process a message from RabbitMQ.
+    
+    Includes two guard layers:
+    1. Agent Pause Check — if agent is paused for this session, save msg to MTM and skip.
+    2. Concurrency Guard — if another job is active for this session, buffer msg in Redis.
+    
+    After processing, drains any buffered messages and re-publishes as a single combined job.
+    """
     async with message.process():
+        lock_acquired = False
+        session_id = None
+        job_id = None
+        body = None
+
         try:
             body = json.loads(message.body.decode())
             payload = body.get("payload", {})
             config_id = body.get("webhook_config_id")
             session_id = body.get("session_id")
             job_id = body.get("job_id")
-            
-            if job_id:
-                active_jobs[job_id] = asyncio.current_task()
 
             logger.info(f"Processing webhook job {job_id} for session {session_id}")
 
@@ -92,7 +150,62 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             context_data = payload.get("context_data")
             transition_data = payload.get("transition_data")
             callback_url = payload.get("callback_url")
-            
+
+            # ═══════════════════════════════════════════════════════
+            # GUARD 1: Agent Pause Check
+            # ═══════════════════════════════════════════════════════
+            if session_id and await redis_client.is_agent_paused(session_id):
+                logger.info(f"[Guard] Agent is PAUSED for session {session_id}. Saving to MTM and skipping job {job_id}.")
+
+                # Save the user's message to MTM so it's not lost
+                if message_text and agent_id:
+                    await _save_to_mtm(agent_id, session_id, "user", message_text)
+
+                # Mark job as paused
+                await redis_client.set(
+                    f"job:{job_id}",
+                    json.dumps({"job_id": job_id, "status": "paused", "result": None}),
+                    expire=3600
+                )
+                await _mark_job_status(job_id, "paused", payload)
+                return
+
+            # ═══════════════════════════════════════════════════════
+            # GUARD 2: Concurrency Guard (Lock)
+            # ═══════════════════════════════════════════════════════
+            if session_id and job_id:
+                lock_acquired = await redis_client.acquire_user_lock(session_id, job_id)
+
+                if not lock_acquired:
+                    logger.info(f"[Guard] Session {session_id} is LOCKED (another job active). Buffering job {job_id}.")
+
+                    # Buffer the essential payload for later processing
+                    buffer_data = json.dumps({
+                        "message": message_text,
+                        "agent_id": agent_id,
+                        "context_data": context_data,
+                        "transition_data": transition_data,
+                        "callback_url": callback_url,
+                        "user_access_level": user_access_level,
+                        "original_job_id": job_id,
+                    })
+                    await redis_client.push_to_buffer(session_id, buffer_data)
+
+                    # Mark job as buffered
+                    await redis_client.set(
+                        f"job:{job_id}",
+                        json.dumps({"job_id": job_id, "status": "buffered", "result": None}),
+                        expire=3600
+                    )
+                    await _mark_job_status(job_id, "buffered", payload)
+                    return
+
+            # ═══════════════════════════════════════════════════════
+            # MAIN PROCESSING (original logic, unchanged)
+            # ═══════════════════════════════════════════════════════
+            if job_id:
+                active_jobs[job_id] = asyncio.current_task()
+
             # Set to in_progress
             await redis_client.set(
                 f"job:{job_id}",
@@ -326,7 +439,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     await monitor.stop()
                 except Exception:
                     pass
-            job_id = body.get("job_id") if 'body' in locals() else None
+            job_id = body.get("job_id") if body else None
             if job_id:
                 try:
                     await redis_client.set(
@@ -372,7 +485,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     await monitor.stop()
                 except Exception:
                     pass
-            job_id = body.get("job_id") if 'body' in locals() else None
+            job_id = body.get("job_id") if body else None
             if job_id:
                 try:
                     await redis_client.set(
@@ -413,8 +526,100 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             return
             
         finally:
-            if 'job_id' in locals() and job_id in active_jobs:
+            # ═══════════════════════════════════════════════════════
+            # DRAIN BUFFER & RELEASE LOCK
+            # ═══════════════════════════════════════════════════════
+            if job_id and job_id in active_jobs:
                 active_jobs.pop(job_id, None)
+
+            if lock_acquired and session_id:
+                try:
+                    # Check if agent was paused DURING processing (human took over)
+                    if await redis_client.is_agent_paused(session_id):
+                        logger.info(f"[Guard] Agent was paused during processing of {job_id}. Releasing lock without draining buffer.")
+                        await redis_client.release_user_lock(session_id)
+                    else:
+                        # Drain buffer — check for accumulated messages
+                        buffered_items = await redis_client.drain_buffer(session_id)
+
+                        if buffered_items:
+                            logger.info(f"[Guard] Draining {len(buffered_items)} buffered messages for session {session_id}")
+
+                            # Combine messages into a single text
+                            combined_parts = []
+                            # Use the first buffered item's metadata for the new job
+                            first_item = json.loads(buffered_items[0])
+                            new_agent_id = first_item.get("agent_id")
+                            new_callback_url = first_item.get("callback_url")
+                            new_context_data = first_item.get("context_data")
+                            new_transition_data = first_item.get("transition_data")
+                            new_user_access_level = first_item.get("user_access_level", "normal")
+
+                            for i, item_json in enumerate(buffered_items):
+                                item = json.loads(item_json)
+                                msg = item.get("message", "")
+                                if msg:
+                                    combined_parts.append(f"Mensagem {i+1}: \"{msg}\"")
+
+                            combined_message = (
+                                "[O usuário enviou mensagens adicionais enquanto o atendimento anterior estava em andamento]\n\n"
+                                + "\n".join(combined_parts)
+                            )
+
+                            # Re-publish as a new job to RabbitMQ (lock stays active)
+                            import uuid as uuid_mod
+                            new_job_id = f"job_{uuid_mod.uuid4().hex}"
+
+                            new_payload = {
+                                "message": combined_message,
+                                "agent_id": new_agent_id,
+                                "session_id": session_id,
+                                "user_access_level": new_user_access_level,
+                                "context_data": new_context_data,
+                                "transition_data": new_transition_data,
+                                "callback_url": new_callback_url,
+                            }
+
+                            # Create JobLog for the new combined job
+                            try:
+                                from app.models.job_log import JobLog
+                                async with async_session_maker() as db_session:
+                                    job_log = JobLog(
+                                        job_id=new_job_id,
+                                        webhook_path="buffer_drain",
+                                        status="queued",
+                                        request_data=new_payload,
+                                        callback_url=new_callback_url,
+                                    )
+                                    db_session.add(job_log)
+                                    await db_session.commit()
+                            except Exception as e:
+                                logger.error(f"[Guard] Failed to create JobLog for drained job: {e}")
+
+                            # Publish to RabbitMQ
+                            from app.services.rabbitmq_service import rabbitmq_client as rmq
+                            success = await rmq.publish_webhook_job(
+                                payload=new_payload,
+                                config_id="buffer_drain",
+                                session_id=session_id,
+                                job_id=new_job_id,
+                            )
+                            if success:
+                                logger.info(f"[Guard] Re-published drained buffer as new job {new_job_id}")
+                            else:
+                                logger.error(f"[Guard] Failed to re-publish drained buffer!")
+                                await redis_client.release_user_lock(session_id)
+                        else:
+                            # No buffer — simply release lock
+                            await redis_client.release_user_lock(session_id)
+                            logger.info(f"[Guard] Lock released for session {session_id}")
+                except Exception as guard_err:
+                    logger.error(f"[Guard] Error in drain/release: {guard_err}")
+                    # Safety: always release lock on error
+                    try:
+                        await redis_client.release_user_lock(session_id)
+                    except Exception:
+                        pass
 
 async def start_rabbitmq_consumer():
     """

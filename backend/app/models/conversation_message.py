@@ -16,7 +16,7 @@ class ConversationMessage(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
     session_id = Column(String, nullable=False)
-    role = Column(String(20), nullable=False)  # "user" | "assistant"
+    role = Column(String(30), nullable=False)  # "user" | "assistant" | "fromMe" | "supportResponse"
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 

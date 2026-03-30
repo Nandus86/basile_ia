@@ -185,7 +185,8 @@ async def human_response_job(
     body: dict,
     db: AsyncSession = Depends(get_db)
 ):
-    """Send a human-written response replacing the output field, sending to callback_url"""
+    """Send a human-written response replacing the output field, sending to callback_url.
+    Also saves the message to MTM as 'supportResponse'."""
     human_text = body.get("human_text")
     if not human_text:
         raise HTTPException(status_code=400, detail="human_text is required")
@@ -202,6 +203,28 @@ async def human_response_job(
     
     if not job_log.response_data:
         raise HTTPException(status_code=400, detail="Job has no response_data to modify")
+    
+    # Save to MTM as supportResponse
+    try:
+        import uuid as uuid_mod
+        from app.models.conversation_message import ConversationMessage
+
+        request_data = job_log.request_data or {}
+        mtm_agent_id = request_data.get("agent_id")
+        mtm_session_id = request_data.get("session_id")
+
+        if mtm_agent_id and mtm_session_id:
+            msg = ConversationMessage(
+                id=uuid_mod.uuid4(),
+                agent_id=uuid_mod.UUID(str(mtm_agent_id)),
+                session_id=str(mtm_session_id),
+                role="supportResponse",
+                content=human_text,
+            )
+            db.add(msg)
+            # commit is done below together with response_data update
+    except Exception as e:
+        logger.error(f"Failed to save supportResponse to MTM: {e}")
     
     # Replicate full response_data and replace result (que agora é string)
     import copy
@@ -222,6 +245,75 @@ async def human_response_job(
         return {"success": True, "message": f"Human response enviada para {job_log.callback_url}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send human response: {str(e)}")
+
+
+@router.post("/jobs/{job_id}/pause-agent")
+async def pause_agent_for_job(
+    job_id: str,
+    body: dict = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Pause the agent for the session_id associated with this job.
+    Body: { "timeout_minutes": 30 } for temporary, or {} / omit for fixed pause.
+    """
+    body = body or {}
+    query = select(JobLog).where(JobLog.job_id == job_id)
+    result = await db.execute(query)
+    job_log = result.scalar_one_or_none()
+
+    if not job_log:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    request_data = job_log.request_data or {}
+    session_id = request_data.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Job has no session_id in request_data")
+
+    timeout_minutes = body.get("timeout_minutes")
+    mode = "fixed"
+
+    if timeout_minutes and int(timeout_minutes) > 0:
+        await redis_client.set_agent_pause(session_id, int(timeout_minutes))
+        mode = "temporary"
+    else:
+        await redis_client.set_agent_pause(session_id)
+
+    return {
+        "status": "paused",
+        "session_id": session_id,
+        "mode": mode,
+        "timeout_minutes": timeout_minutes if mode == "temporary" else None,
+    }
+
+
+@router.post("/jobs/{job_id}/activate-agent")
+async def activate_agent_for_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Reactivate the agent for the session_id associated with this job."""
+    query = select(JobLog).where(JobLog.job_id == job_id)
+    result = await db.execute(query)
+    job_log = result.scalar_one_or_none()
+
+    if not job_log:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    request_data = job_log.request_data or {}
+    session_id = request_data.get("session_id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Job has no session_id in request_data")
+
+    was_paused = await redis_client.is_agent_paused(session_id)
+    await redis_client.remove_agent_pause(session_id)
+
+    return {
+        "status": "active",
+        "session_id": session_id,
+        "was_paused": was_paused,
+    }
+
 
 
 # ─────────────────────────────────────────────────

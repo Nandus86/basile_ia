@@ -135,6 +135,71 @@ class RedisClient:
         client = await self.connect()
         await client.publish(channel, message)
 
+    # ─── Job Concurrency Guard ───────────────────────────────
+
+    async def acquire_user_lock(self, session_id: str, job_id: str, ttl: int = 1800) -> bool:
+        """
+        Attempt to acquire an exclusive lock for a session_id.
+        Uses SET NX EX (atomic set-if-not-exists with expiry).
+        Returns True if lock was acquired, False if another job holds it.
+        """
+        client = await self.connect()
+        result = await client.set(
+            f"user_lock:{session_id}", job_id, nx=True, ex=ttl
+        )
+        return result is not None
+
+    async def release_user_lock(self, session_id: str):
+        """Release the concurrency lock for a session_id."""
+        client = await self.connect()
+        await client.delete(f"user_lock:{session_id}")
+
+    async def push_to_buffer(self, session_id: str, data_json: str):
+        """Push a message payload to the session's pending buffer (FIFO list)."""
+        client = await self.connect()
+        key = f"msg_buffer:{session_id}"
+        await client.rpush(key, data_json)
+        await client.expire(key, 7200)  # 2h safety TTL
+
+    async def drain_buffer(self, session_id: str) -> List[str]:
+        """
+        Atomically read all buffered messages and clear the list.
+        Uses a pipeline to ensure LRANGE + DEL are executed together.
+        Returns list of JSON strings.
+        """
+        client = await self.connect()
+        key = f"msg_buffer:{session_id}"
+        pipe = client.pipeline(transaction=True)
+        pipe.lrange(key, 0, -1)
+        pipe.delete(key)
+        results = await pipe.execute()
+        return results[0] if results[0] else []
+
+    # ─── Agent Pause (Human Takeover) ────────────────────────
+
+    async def set_agent_pause(self, session_id: str, timeout_minutes: int = None):
+        """
+        Pause the agent for a session_id.
+        If timeout_minutes is provided, the pause expires automatically (temporary).
+        If None, the pause is permanent until manually removed (fixed).
+        """
+        client = await self.connect()
+        key = f"agent_pause:{session_id}"
+        if timeout_minutes and timeout_minutes > 0:
+            await client.setex(key, timeout_minutes * 60, "paused")
+        else:
+            await client.set(key, "paused")
+
+    async def is_agent_paused(self, session_id: str) -> bool:
+        """Check if the agent is paused for a session_id."""
+        client = await self.connect()
+        return await client.exists(f"agent_pause:{session_id}") > 0
+
+    async def remove_agent_pause(self, session_id: str):
+        """Remove agent pause, reactivating it for this session_id."""
+        client = await self.connect()
+        await client.delete(f"agent_pause:{session_id}")
+
 
 # Global instance
 redis_client = RedisClient()
