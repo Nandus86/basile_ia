@@ -437,7 +437,7 @@ async def execute_mcp(
             # Log do payload de entrada (parâmetros da UI MCP Protocol)
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"[MCP API] 📤 PAYLOAD ENTRADA (MCP): {json.dumps(params, ensure_ascii=False)}")
+            logger.info(f"[MCP API] 📤 PAYLOAD ENTRADA (MCP): action={action} tool={tool_name} args={json.dumps(tool_args, ensure_ascii=False)}")
                 
             mcp_result = await execute_mcp_protocol(
                 endpoint=mcp.endpoint,

@@ -164,8 +164,36 @@ def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     return result, used_args
 
 
+def _parse_group_fields(fields_str: str) -> list:
+    """Parse '{field1, alias2: field2, field3}' into [(alias, path)] tuples.
+    If no alias is given, uses the last segment of the path as alias.
+    Examples:
+        '_id, name' -> [('_id','_id'), ('name','name')]
+        'id: _id, nome: name' -> [('id','_id'), ('nome','name')]
+        '_id, profile.name' -> [('_id','_id'), ('name','profile.name')]
+    """
+    fields = []
+    for part in fields_str.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        if ':' in part:
+            alias, path = part.split(':', 1)
+            fields.append((alias.strip(), path.strip()))
+        else:
+            # Default alias = last segment of the path
+            alias = part.rsplit('.', 1)[-1] if '.' in part else part
+            fields.append((alias, part))
+    return fields
+
+
 def _apply_response_mapping(data: dict, mapping: dict) -> dict:
-    """Extrai partes de um JSON de resposta profundo e mapeia como especificado pelo admin"""
+    """Extrai partes de um JSON de resposta profundo e mapeia como especificado pelo admin.
+    
+    Suporta sintaxe agrupada: "body[*].{_id, name, address}" que retorna
+    [{_id, name, address}, ...] ao invés de arrays separados.
+    Também suporta renomeação: "body[*].{id: _id, nome: name}".
+    """
     if not mapping or not isinstance(mapping, dict):
         return data
 
@@ -174,6 +202,8 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
             return None
         if isinstance(val, list):
             return [_apply_limit(item, limit) for item in val]
+        if isinstance(val, dict):
+            return {k: _apply_limit(v, limit) for k, v in val.items()}
         
         res = str(val)
         if len(res) > limit:
@@ -207,6 +237,32 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
                 return None
         return current
 
+    def _extract_grouped(source_data, base_path, fields, limit):
+        """Extrai campos agrupados de um array, retornando [{alias: val, ...}, ...]"""
+        # Resolve o base_path até chegar no array (remove [*] do final)
+        # Ex: "body[*]" -> extrai "body", "data.results[*]" -> extrai "data.results"
+        array_path = base_path
+        if array_path.endswith('[*]'):
+            array_path = array_path[:-3]
+        if array_path.endswith('.'):
+            array_path = array_path[:-1]
+        
+        source_array = _extract(source_data, array_path) if array_path else source_data
+        
+        if not isinstance(source_array, list):
+            return None
+        
+        grouped = []
+        for item in source_array:
+            obj = {}
+            for alias, field_path in fields:
+                val = _extract(item, field_path)
+                if limit is not None:
+                    val = _apply_limit(val, limit)
+                obj[alias] = val
+            grouped.append(obj)
+        return grouped
+
     result = {}
     for key, raw_path in mapping.items():
         if isinstance(raw_path, str):
@@ -222,12 +278,21 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
                     path = path[:filter_match.start()].strip()
                 except:
                     pass
-                    
-            val = _extract(data, path)
             
-            # Aplica o limite se encontrado (suporta listas recursivamente)
-            if limit is not None:
-                val = _apply_limit(val, limit)
+            # Detecta sintaxe agrupada: path[*].{field1, field2, alias: field3}
+            group_match = re.search(r'\.\{([^}]+)\}$', path)
+            if group_match and '[*]' in path:
+                fields_str = group_match.group(1)
+                fields = _parse_group_fields(fields_str)
+                base_path = path[:group_match.start()]  # tudo antes do .{...}
+                
+                val = _extract_grouped(data, base_path, fields, limit)
+            else:
+                val = _extract(data, path)
+                
+                # Aplica o limite se encontrado (suporta listas recursivamente)
+                if limit is not None:
+                    val = _apply_limit(val, limit)
                 
             result[key] = val
         else:
@@ -268,18 +333,20 @@ def _truncate_large_response(data: Any, max_len: int = 10000) -> Any:
         
     # If it's a list, try taking just the first few items
     if isinstance(data, list) and len(data) > 3:
+        original_count = len(data)
         truncated_list = data[:3]
         return {
             "items": truncated_list,
-            "total_items": len(data),
-            "warning": f"Response truncated from {len(data)} items to 3 to prevent context overflow."
+            "total_items": original_count,
+            "warning": f"Response truncated from {original_count} items to 3 to prevent context overflow."
         }
     
     # If it's a dict with a large body, truncate the body
     if isinstance(data, dict) and "body" in data and isinstance(data["body"], list):
-        if len(data["body"]) > 3:
+        original_body_count = len(data["body"])
+        if original_body_count > 3:
             data["body"] = data["body"][:3]
-            data["warning"] = f"Body list truncated from {len(data['body'])} to 3 items."
+            data["warning"] = f"Body list truncated from {original_body_count} to 3 items."
             return data
 
     # Fallback to string truncation if still too big
@@ -642,13 +709,22 @@ class MCPToolExecutor:
                     if result.get("success"):
                         res_data = result.get("result", {})
                         # Log do payload de saída (bruto para MCP protocol)
-                        logger.info(f"[MCPTool] 📦 PAYLOAD SAÍDA (MCP): {json.dumps(res_data, ensure_ascii=False)[:1000]}")
+                        logger.info(f"[MCPTool] 📦 PAYLOAD SAÍDA (MCP raw): {json.dumps(res_data, ensure_ascii=False)[:1000]}")
+                        
+                        # Aplica response_mapping (mesmo tratamento que HTTP)
+                        if getattr(mcp, "response_mapping", None):
+                            res_data = _apply_response_mapping(res_data, mcp.response_mapping)
+                        
+                        # Apply safe filtering and truncation (mesmo que HTTP)
+                        res_data = _filter_sensitive_response_fields(res_data)
+                        res_data = _truncate_large_response(res_data)
                         
                         raw = json.dumps(res_data, indent=2, ensure_ascii=False)
                         logger.info(
                             f"[MCPTool] ✅ MCP OK  tool={tool_name!r}  "
                             f"elapsed={_elapsed:.0f}ms  response_preview={raw[:500]!r}"
                         )
+                        _call_history[kwargs_hash]["last_result"] = raw
                         return raw
                     else:
                         err = result.get("error", "Unknown error")
