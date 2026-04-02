@@ -435,7 +435,10 @@ async def _enrich_agent_prompt(
                     f"DIRETRIZES DE ORQUESTRAÇÃO (OBRIGATÓRIO):\n"
                     f"1. ANÁLISE: Antes de chamar um especialista, avalie se a solicitação realmente requer expertise externa.\n"
                     f"2. INSTRUÇÃO CLARA: Ao acionar um especialista, envie uma instrução técnica e direta do que ele deve resolver. Inclua contexto relevante.\n"
-                    f"3. SÍNTESE OBRIGATÓRIA: Após obter respostas dos especialistas, você DEVE sintetizar e compor sua resposta final. NUNCA simplesmente repasse a resposta do especialista sem tratamento.\n"
+                    f"3. ADAPTAÇÃO: Após obter respostas dos especialistas, avalie se é necessário adaptar ou sintetizar. "
+                    f"Se UM especialista retornou uma resposta clara e completa, utilize-a diretamente com pequenas adaptações de tom. "
+                    f"Se MÚLTIPLOS especialistas contribuíram, sintetize as informações em uma resposta coesa. "
+                    f"NUNCA simplesmente copie respostas que pareçam relatórios técnicos internos.\n"
                     f"4. RESPOSTA FINAL: Se sua instrução principal exige um especialista de 'Resposta Final', você DEVE chamá-lo para formatar o texto final antes de encerrar.\n"
                     f"5. HIERARQUIA: Você é o COORDENADOR. Os especialistas reportam a VOCÊ, não ao usuário final. Você é responsável pela qualidade da resposta final.\n"
                     f"6. NÃO REDUNDÂNCIA: Se você já possui informação suficiente na conversa ou no contexto, NÃO acione especialistas desnecessariamente.\n"
@@ -467,8 +470,9 @@ async def _enrich_agent_prompt(
                 print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                     f"\n\n## Colaboradores (Subordinados)\n"
-                    f"Os seguintes especialistas forneceram análises sobre a solicitação do usuário. "
-                    f"Sintetize e utilize as informações relevantes para construir a resposta final:\n"
+                    f"Os seguintes especialistas forneceram contribuições sobre a solicitação do usuário. "
+                    f"Se as respostas já estiverem adequadas para o usuário final, utilize-as diretamente. "
+                    f"Se necessário, sintetize e adapte o conteúdo para garantir clareza e coesão:\n"
                     f"{subordinate_context}\n"
                 )
         except Exception as e:
@@ -508,6 +512,13 @@ async def _enrich_agent_prompt(
         )
     
     agent_config["system_prompt"] = current_prompt + state_instruction
+
+    # Resolve global macros like {{ $now }} with ISO-8601 format
+    try:
+        from app.utils.macros import resolve_global_macros
+        agent_config["system_prompt"] = resolve_global_macros(agent_config["system_prompt"], transition_data)
+    except Exception as e:
+        print(f"[Task] Erro ao resolver macros globais: {e}")
 
     print(f"[Task] 📝 Greeting logic applied: state={history_source}")
 
@@ -824,8 +835,9 @@ async def _build_collaborator_tools(
         _is_planner = getattr(collab, "is_planner", False)
         _planner_prompt = getattr(collab, "planner_prompt", None)
         _planner_model = getattr(collab, "planner_model", None)
+        _response_style = getattr(collab, "response_style", "structured")
 
-        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner, _p_prompt=_planner_prompt, _p_model=_planner_model) -> str:
+        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner, _p_prompt=_planner_prompt, _p_model=_planner_model, _r_style=_response_style) -> str:
             """
             Invoke a collaborator agent with the given instruction.
             Args:
@@ -874,6 +886,7 @@ async def _build_collaborator_tools(
                     context="",
                     context_data=_ctx,
                     orientation=final_instruction,
+                    response_style=_r_style,
                 )
                 print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
                 return response or f"Agente {name} não retornou resposta."

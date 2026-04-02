@@ -99,6 +99,9 @@ class Agent(Base):
     is_orchestrator = Column(Boolean, default=False, nullable=False)
     orchestrator_config = Column(JSON, default=dict)  # Additional orchestrator settings
     
+    # Response style for collaborator output ("structured" or "natural")
+    response_style = Column(String(20), default="structured", nullable=False)
+
     # Planner mode
     is_planner = Column(Boolean, default=False, nullable=False)
     planner_prompt = Column(Text, nullable=True)

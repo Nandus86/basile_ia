@@ -408,6 +408,10 @@ Use as seguintes informações para responder:
 
 Cite a fonte quando usar informações do contexto acima.
 """
+
+        # Resolve global macros like {{ $now }} before execution
+        from app.utils.macros import resolve_global_macros
+        system_prompt = resolve_global_macros(system_prompt, context_data)
         
         if agent_config["has_tools"]:
             # Use ReAct agent with tools

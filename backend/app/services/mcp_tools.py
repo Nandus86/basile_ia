@@ -681,7 +681,14 @@ class MCPToolExecutor:
                     headers_str = _inject_request_params(headers_str, context)
                     query_str = _inject_request_params(query_str, context)
                     endpoint_str = _inject_request_params(endpoint_str, context)
-                    
+
+                    # Resolve global macros like {{ $now }}
+                    from app.utils.macros import resolve_global_macros
+                    body_str = resolve_global_macros(body_str, context)
+                    headers_str = resolve_global_macros(headers_str, context)
+                    query_str = resolve_global_macros(query_str, context)
+                    endpoint_str = resolve_global_macros(endpoint_str, context)
+
                     used_all.update(u_body, u_headers, u_query, u_endpoint)
                     
                     body = json.loads(body_str)

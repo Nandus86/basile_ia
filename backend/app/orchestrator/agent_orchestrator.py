@@ -185,10 +185,12 @@ Responda APENAS em JSON válido com este formato exato:
         orientation: str = "",
         primary_agent: Optional[Agent] = None,
         monitor: Optional[Any] = None,
+        response_style: str = "structured",
     ) -> tuple:
         """
         Invoke a single collaborator.
         Directly injects context_data into the input message based on input_schema.
+        response_style: "structured" (ACHADOS/DADOS/RECOMENDAÇÃO) or "natural" (direct response).
         """
         if monitor:
             monitor.log_progress(f"Consultando agente colaborador: {agent.name}")
@@ -202,6 +204,22 @@ Responda APENAS em JSON válido com este formato exato:
         
         # System Message Instruction - Hierarchy reinforcement
         primary_name = primary_agent.name if primary_agent else "Coordenador de Sistema"
+        
+        if response_style == "natural":
+            response_format_block = (
+                "FORMATO DE RESPOSTA FINAL:\n"
+                "Responda de forma direta e objetiva ao coordenador.\n"
+                "Apresente os resultados obtidos de forma clara e natural, sem formatação estruturada rígida.\n\n"
+            )
+        else:
+            response_format_block = (
+                "FORMATO DE RESPOSTA FINAL (Use apenas quando já tiver todos os dados):\n"
+                "Você DEVE responder ao coordenador de forma estruturada:\n"
+                "1. **ACHADOS**: O que você encontrou/analisou\n"
+                "2. **DADOS**: Dados coletados, registros encontrados ou ações executadas (apresente os dados reais obtidos das ferramentas)\n"
+                "3. **RECOMENDAÇÃO**: Sua recomendação técnica para a resposta final\n\n"
+            )
+        
         collab_instruction = (
             "\n\n---\n"
             f"**[DIRETRIZ DE HIERARQUIA — OBRIGATÓRIO]**\n"
@@ -211,12 +229,8 @@ Responda APENAS em JSON válido com este formato exato:
             "- Se você tem ferramentas (tools) disponíveis para buscar dados, VOCÊ MESMO DEVE EXECUTAR A FERRAMENTA.\n"
             "- NUNCA responda dizendo que o coordenador deve executar a ferramenta. A execução é SUA responsabilidade.\n"
             "- Somente APÓS executar as ferramentas necessárias e obter os resultados reais, você deve gerar sua resposta final.\n\n"
-            "FORMATO DE RESPOSTA FINAL (Use apenas quando já tiver todos os dados):\n"
-            "Você DEVE responder ao coordenador de forma estruturada:\n"
-            "1. **ACHADOS**: O que você encontrou/analisou\n"
-            "2. **DADOS**: Dados coletados, registros encontrados ou ações executadas (apresente os dados reais obtidos das ferramentas)\n"
-            "3. **RECOMENDAÇÃO**: Sua recomendação técnica para a resposta final\n\n"
-            "REGRAS ABSOLUTAS:\n"
+            + response_format_block
+            + "REGRAS ABSOLUTAS:\n"
             "- NÃO fale como se estivesse conversando com o usuário final\n"
             "- NÃO use saudações, despedidas ou tom casual\n"
             "- NÃO repita informações que o coordenador já possui\n"
@@ -434,6 +448,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 orientation=orientation,
                 primary_agent=primary_agent,
                 monitor=monitor,
+                response_style=getattr(collaborator, 'response_style', 'structured'),
             )
             for collaborator, orientation in selected_collaborators
         ]
@@ -504,6 +519,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 orientation=orientation,
                 primary_agent=primary_agent,
                 monitor=monitor,
+                response_style=getattr(collaborator, 'response_style', 'structured'),
             )
             for collaborator, orientation in selected_collaborators
         ]

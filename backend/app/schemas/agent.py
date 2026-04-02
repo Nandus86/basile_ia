@@ -74,6 +74,7 @@ class AgentBase(BaseModel):
     training_memory_enabled: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = Field(default=None)
+    response_style: str = "structured"
     planner_prompt: Optional[str] = None
     planner_model: Optional[str] = None
     is_guardrail_active: bool = False
@@ -118,6 +119,7 @@ class AgentUpdate(BaseModel):
     skill_ids: Optional[List[UUID]] = None
     is_orchestrator: Optional[bool] = None
     is_planner: Optional[bool] = None
+    response_style: Optional[str] = None
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
@@ -153,6 +155,7 @@ class AgentResponse(BaseModel):
     collaboration_enabled: bool = True
     is_orchestrator: bool = False
     is_planner: bool = False
+    response_style: str = "structured"
     emotional_profile: Optional[EmotionalProfileSummary] = None
     emotional_intensity: str = "medium"
     output_schema: Optional[Dict[str, Any]] = None
@@ -191,6 +194,7 @@ class AgentListItem(BaseModel):
     collaboration_enabled: bool = True
     is_orchestrator: bool = False
     is_planner: bool = False
+    response_style: str = "structured"
     emotional_profile_id: Optional[UUID] = None
     vector_memory_enabled: bool = False
     training_memory_enabled: bool = False
