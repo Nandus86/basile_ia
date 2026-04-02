@@ -444,20 +444,22 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
                 print(f"[Supervisor] Failed to retrieve vector memory: {e}")
                 traceback.print_exc()
 
-        # Extract New Vector Memories in background asynchronously
+        # Extract New Vector Memories in background asynchronously (only for substantive interactions)
         if vector_memory_enabled and agent_id and contact_id:
             try:
-                from app.services.vector_memory_service import extract_and_save_memories
-                import asyncio
-                history_copy = state.get("history", [])[:]
-                asyncio.create_task(
-                    extract_and_save_memories(
-                        agent_id=str(agent_id),
-                        contact_id=str(contact_id),
-                        history=history_copy,
-                        current_message=current_message
+                from app.services.memory_gate import should_extract_memories
+                if should_extract_memories(current_message, history=state.get("history", [])):
+                    from app.services.vector_memory_service import extract_and_save_memories
+                    import asyncio
+                    history_copy = state.get("history", [])[:]
+                    asyncio.create_task(
+                        extract_and_save_memories(
+                            agent_id=str(agent_id),
+                            contact_id=str(contact_id),
+                            history=history_copy,
+                            current_message=current_message
+                        )
                     )
-                )
             except Exception as e:
                 print(f"[Supervisor] Failed to launch extraction task: {e}")
         
