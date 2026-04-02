@@ -119,7 +119,10 @@ async def webhook_ingest(
 ):
     """
     Webhook to ingest data into an Information Base for a specific user ID.
-    The payload should be structured according to the base's schemas.
+    
+    If the base has a content_schema with semantic/vectorize flags, data is
+    processed into multiple semantic facets for optimized vector search.
+    Otherwise, falls back to saving the raw JSON as a single node.
     """
     # Verify the information base exists by code
     result = await db.execute(select(InformationBase).where(InformationBase.code == request.id_base))
@@ -130,30 +133,39 @@ async def webhook_ingest(
             success=False,
             message=f"Information Base with code {request.id_base} not found"
         )
-        
-    # In a real scenario, we might validate the request.data against base.content_schema and base.metadata_schema.
-    # We will format the entire data as a structured text block for Weaviate to vectorize, and save raw generic metadata.
     
-    content_str = json.dumps(request.data, ensure_ascii=False, indent=2)
+    # Use semantic ingestion if schema has semantic/vectorize flags
+    from app.services.semantic_ingestion import process_webhook_payload, _has_semantic_flags
     
-    # Send to weaviate
-    success = await weaviate.save_information_base_node(
-        base_code=request.id_base,
-        user_id=request.id,
-        content=content_str,
-        metadata=request.data,  # Using raw original data as generic metadata too
-        external_id=request.external_id
-    )
+    content_schema = base.content_schema
+    facets = process_webhook_payload(request.data, content_schema)
     
-    if not success:
+    saved_count = 0
+    for i, facet in enumerate(facets):
+        success = await weaviate.save_information_base_node(
+            base_code=request.id_base,
+            user_id=request.id,
+            content=facet["content"],
+            metadata=facet["metadata"],
+            external_id=request.external_id,
+            facet_index=i if len(facets) > 1 else None,
+            facet_type=facet.get("facet_type", "raw"),
+        )
+        if success:
+            saved_count += 1
+    
+    if saved_count == 0:
         return InformationBaseWebhookResponse(
             success=False,
             message="Failed to ingest data into vector database"
         )
-        
+    
+    is_semantic = _has_semantic_flags(content_schema)
+    mode = f"semantic ({saved_count} facets)" if is_semantic else "raw (1 node)"
+    
     return InformationBaseWebhookResponse(
         success=True,
-        message="Data ingested successfully"
+        message=f"Data ingested successfully [{mode}]"
     )
 
 @router.post("/webhook/delete", response_model=InformationBaseWebhookResponse)

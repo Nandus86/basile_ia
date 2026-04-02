@@ -191,12 +191,19 @@
             </p>
             <v-textarea
               v-model="formData.content_schema"
-              placeholder="{}"
+              :placeholder="contentSchemaPlaceholder"
               rows="4"
               variant="outlined"
               density="compact"
               style="font-family: monospace; font-size: 13px;"
             ></v-textarea>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-4" style="font-size: 12px;">
+              <strong>Flags de Vetorização Semântica:</strong><br>
+              <code>"semantic": true</code> → Inclui o campo na frase-resumo de busca (índice semântico)<br>
+              <code>"vectorize": true</code> → Cria vetor(es) dedicado(s) para o campo (ideal para textos longos como descrições)<br>
+              Campos sem flags vão apenas como metadado (guardado, mas não buscável por vetor).
+              Todos os dados originais são sempre retornados ao agente.
+            </v-alert>
 
             <p class="text-subtitle-2 text-medium-emphasis mb-2 mt-4">
               <v-icon size="18" class="mr-1">mdi-tag-multiple-outline</v-icon>
@@ -395,6 +402,17 @@ const activeCount = computed(() => bases.value.filter(s => s.is_active).length)
 
 const webhookUrl = computed(() => {
   return window.location.origin + '/api'
+})
+
+const contentSchemaPlaceholder = computed(() => {
+  return JSON.stringify({
+    properties: {
+      nome: { type: "string", semantic: true },
+      categoria: { type: "string", semantic: true },
+      descricao: { type: "string", semantic: true, vectorize: true },
+      vagas: { type: "number" }
+    }
+  }, null, 2)
 })
 
 // Generate sample values from a JSON schema's properties

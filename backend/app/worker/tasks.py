@@ -241,14 +241,22 @@ async def _enrich_agent_prompt(
                                     
                         if all_info_nodes:
                             seen = set()
-                            unique_nodes = [
-                                n for n in all_info_nodes
-                                if n["content"] not in seen and not seen.add(n["content"])
-                            ]
-                            print(f"[Task] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
-                            info_str = "\n".join(
-                                [f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:6]]
-                            )
+                            unique_nodes = []
+                            for n in all_info_nodes:
+                                # Deduplicate by metadata (not content) to avoid repeating
+                                # the same record from multiple facets (summary + field chunks)
+                                meta_key = n.get("metadata", "")
+                                if meta_key not in seen:
+                                    seen.add(meta_key)
+                                    unique_nodes.append(n)
+                            
+                            print(f"[Task] 📚 Retrieved {len(unique_nodes)} Information Base contexts (from {len(all_info_nodes)} facets)")
+                            info_parts = []
+                            for n in unique_nodes[:6]:
+                                # Use metadata (complete data) for prompt injection
+                                meta_str = n.get('metadata', '{}')
+                                info_parts.append(f"- {meta_str}")
+                            info_str = "\n".join(info_parts)
                             agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                                 f"\n\n## Contextualização Personalizada Externa\n\n"
                                 f"Informações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"

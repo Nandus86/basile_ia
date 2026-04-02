@@ -188,7 +188,35 @@ class DocumentProcessor:
         chunk_size: int = 1000,
         chunk_overlap: int = 200
     ) -> List[str]:
-        """Split text into chunks"""
+        """Split text into chunks.
+        
+        Primary: SemanticChunker (splits by meaning/context boundaries)
+        Fallback: RecursiveCharacterTextSplitter (splits by character count)
+        """
+        # Try SemanticChunker first for context-aware splitting
+        if len(text) > 500:  # Only worth it for non-trivial texts
+            try:
+                from langchain_experimental.text_splitter import SemanticChunker
+                from langchain_openai import OpenAIEmbeddings
+                
+                sem_chunker = SemanticChunker(
+                    OpenAIEmbeddings(model="text-embedding-3-small"),
+                    breakpoint_threshold_type="percentile",
+                    breakpoint_threshold_amount=85,
+                )
+                docs = sem_chunker.create_documents([text])
+                chunks = [doc.page_content for doc in docs if doc.page_content.strip()]
+                
+                if chunks:
+                    logger.info(
+                        f"SemanticChunker: {len(chunks)} context-aware chunks "
+                        f"(vs ~{max(1, len(text)//chunk_size)} by chars)"
+                    )
+                    return chunks
+            except Exception as e:
+                logger.warning(f"SemanticChunker failed, falling back to char-based: {e}")
+        
+        # Fallback: RecursiveCharacterTextSplitter (original behavior)
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

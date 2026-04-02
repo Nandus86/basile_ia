@@ -168,12 +168,14 @@ class WeaviateClient:
         user_id: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
-        external_id: Optional[str] = None
+        external_id: Optional[str] = None,
+        facet_index: Optional[int] = None,
+        facet_type: Optional[str] = None
     ) -> bool:
         """Save a new node into a generic Information Base collection (async-safe)"""
         try:
             return await asyncio.to_thread( # type: ignore
-                self._sync_save_information_base_node, base_code, user_id, content, metadata, external_id
+                self._sync_save_information_base_node, base_code, user_id, content, metadata, external_id, facet_index, facet_type
             )
         except Exception as e:
             print(f"Error saving information base node: {e}")
@@ -435,7 +437,9 @@ class WeaviateClient:
         user_id: str,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
-        external_id: Optional[str] = None
+        external_id: Optional[str] = None,
+        facet_index: Optional[int] = None,
+        facet_type: Optional[str] = None
     ) -> bool:
         client = self._ensure_connected()
         collection_name = "InformationBaseNode"
@@ -452,8 +456,30 @@ class WeaviateClient:
                     weaviate.classes.config.Property(name="content", data_type=weaviate.classes.config.DataType.TEXT),
                     weaviate.classes.config.Property(name="metadata", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="created_at", data_type=weaviate.classes.config.DataType.DATE, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="external_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
+                    weaviate.classes.config.Property(name="facet_type", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                 ]
             )
+        else:
+            # Ensure new properties exist on existing collection (schema evolution)
+            try:
+                collection_obj = client.collections.get(collection_name)
+                existing_props = {p.name for p in collection_obj.config.get().properties}
+                new_props = [
+                    ("external_id", weaviate.classes.config.DataType.TEXT),
+                    ("facet_type", weaviate.classes.config.DataType.TEXT),
+                ]
+                for prop_name, prop_type in new_props:
+                    if prop_name not in existing_props:
+                        collection_obj.config.add_property(
+                            weaviate.classes.config.Property(
+                                name=prop_name,
+                                data_type=prop_type,
+                                skip_vectorization=True
+                            )
+                        )
+            except Exception:
+                pass  # Non-critical: properties may already exist
             
         collection = client.collections.get(collection_name)
         
@@ -466,13 +492,20 @@ class WeaviateClient:
             "user_id": str(user_id),
             "content": content,
             "metadata": json.dumps(metadata) if metadata else "{}",
-            "created_at": datetime.now(timezone.utc)
+            "created_at": datetime.now(timezone.utc),
         }
+        
+        # Add new fields if available
+        if external_id:
+            props["external_id"] = str(external_id)
+        if facet_type:
+            props["facet_type"] = facet_type
         
         obj_uuid = None
         if external_id:
-            # Deterministic UUID prevents duplication and natively enables Upsert behaviour
-            obj_str = f"{base_code}_{user_id}_{external_id}"
+            # Compose UUID with facet_index for multi-facet records
+            facet_suffix = f"_f{facet_index}" if facet_index is not None else ""
+            obj_str = f"{base_code}_{user_id}_{external_id}{facet_suffix}"
             obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, obj_str))
             
             if collection.data.exists(obj_uuid):
@@ -500,11 +533,23 @@ class WeaviateClient:
         collection = client.collections.get(collection_name)
         
         if external_id:
-            import uuid
-            obj_str = f"{base_code}_{user_id}_{external_id}"
-            obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, obj_str))
-            if collection.data.exists(obj_uuid):
-                collection.data.delete_by_id(obj_uuid)
+            # Delete ALL facets for this external_id using property filter
+            # This handles multi-facet records (summary + field chunks)
+            filter_user = weaviate.classes.query.Filter.by_property("user_id").equal(str(user_id))
+            filter_code = weaviate.classes.query.Filter.by_property("base_code").equal(str(base_code))
+            filter_ext = weaviate.classes.query.Filter.by_property("external_id").equal(str(external_id))
+            combined_filter = filter_user & filter_code & filter_ext
+            collection.data.delete_many(where=combined_filter)
+            
+            # Also try legacy single-UUID delete for backward compat (old records without external_id property)
+            try:
+                import uuid
+                obj_str = f"{base_code}_{user_id}_{external_id}"
+                obj_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, obj_str))
+                if collection.data.exists(obj_uuid):
+                    collection.data.delete_by_id(obj_uuid)
+            except Exception:
+                pass
         else:
             filter_user = weaviate.classes.query.Filter.by_property("user_id").equal(str(user_id))
             filter_code = weaviate.classes.query.Filter.by_property("base_code").equal(str(base_code))
@@ -557,6 +602,7 @@ class WeaviateClient:
                 "base_code": props.get("base_code", ""),
                 "content": props.get("content", ""),
                 "metadata": props.get("metadata", "{}"),
+                "facet_type": props.get("facet_type", "raw"),
                 "distance": obj.metadata.distance if obj.metadata else None
             })
             
