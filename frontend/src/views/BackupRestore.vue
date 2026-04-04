@@ -334,30 +334,21 @@ const createBackup = async () => {
   backupError.value = ''
   
   try {
-    const response = await axios.get('/backup/create', {
-      responseType: 'blob'
-    })
-    
-    const blob = new Blob([response.data], { type: 'application/json' })
-    const url = window.URL.createObjectURL(blob)
+    // Use native browser download - bypasses axios/blob/CORS issues entirely
     const link = document.createElement('a')
-    link.href = url
-    
-    const contentDisposition = response.headers['content-disposition']
-    const filename = contentDisposition
-      ? contentDisposition.split('filename=')[1].replace(/"/g, '')
-      : `basile_backup_${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.json`
-    
-    link.setAttribute('download', filename)
+    link.href = '/api/backup/create'
+    link.setAttribute('download', '')
     document.body.appendChild(link)
     link.click()
     link.remove()
-    window.URL.revokeObjectURL(url)
     
-    showMessage('Backup gerado e download iniciado com sucesso!')
+    // Give browser a moment to start the download
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    
+    showMessage('Download do backup iniciado!')
   } catch (error) {
     console.error('Error creating backup:', error)
-    backupError.value = error.response?.data?.detail || 'Erro ao criar backup. Tente novamente.'
+    backupError.value = 'Erro ao iniciar download. Tente novamente.'
     showMessage(backupError.value, 'error')
   } finally {
     backupLoading.value = false
