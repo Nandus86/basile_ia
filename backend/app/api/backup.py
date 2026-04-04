@@ -32,90 +32,49 @@ async def create_backup(db: AsyncSession = Depends(get_db)):
     Sensitive fields (API keys, tokens) are excluded for security.
     """
     try:
-        from app.services.backup_service import TABLE_EXPORT_ORDER, WEAVIATE_COLLECTIONS, _export_weaviate_collection, _export_files_directory, _sanitize_row, _serialize_row
-        from app.config import settings
-        from datetime import timezone
-        from sqlalchemy import text
-        from app.weaviate_client import get_weaviate
-        from app.services.document_processor import UPLOAD_DIR
-        from app.services.vfs_rag_service import get_vfs_root
+        backup_data = await create_full_backup(db)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"basile_backup_{timestamp}.json"
         
-        async def stream_backup():
-            yield '{\n'
+        def _generate_json():
+            yield '{'
             
-            # Metadata
-            metadata = {
-                "version": "1.0.0",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "database_url": settings.DATABASE_URL,
-                "weaviate_url": settings.WEAVIATE_URL,
-            }
-            yield '"metadata": ' + json.dumps(metadata) + ',\n'
+            yield '"metadata": '
+            yield json.dumps(backup_data["metadata"], default=str)
+            yield ","
             
-            # Tables
-            yield '"tables": {\n'
+            yield '"tables": {'
             first_table = True
-            for table_name in TABLE_EXPORT_ORDER:
-                try:
-                    result = await db.execute(text(f"SELECT * FROM {table_name}"))
-                    columns = result.keys()
-                    rows = []
-                    for row in result.fetchall():
-                        row_dict = dict(zip(columns, row))
-                        row_dict = _serialize_row(row_dict)
-                        row_dict = _sanitize_row(table_name, row_dict)
-                        rows.append(row_dict)
-                    
-                    if not first_table:
-                        yield ',\n'
-                    yield f'  "{table_name}": ' + json.dumps(rows)
-                    first_table = False
-                except Exception as e:
-                    logger.warning(f"[Backup] Failed to export table {table_name}: {e}")
-                    
-            yield '\n},\n'
+            for table_name, rows in backup_data["tables"].items():
+                if not first_table:
+                    yield ","
+                yield f'"{table_name}": {json.dumps(rows, default=str)}'
+                first_table = False
+            yield "},"
             
-            # Weaviate
-            yield '"weaviate": {\n'
+            yield '"weaviate": {'
             first_coll = True
-            weaviate_client = get_weaviate()
-            for coll_name in WEAVIATE_COLLECTIONS:
-                try:
-                    objects = await _export_weaviate_collection(weaviate_client, coll_name)
-                    if not first_coll:
-                        yield ',\n'
-                    yield f'  "{coll_name}": ' + json.dumps(objects)
-                    first_coll = False
-                except Exception as e:
-                    logger.warning(f"[Backup] Failed to export Weaviate {coll_name}: {e}")
+            for coll_name, objects in backup_data["weaviate"].items():
+                if not first_coll:
+                    yield ","
+                yield f'"{coll_name}": {json.dumps(objects, default=str)}'
+                first_coll = False
+            yield "},"
             
-            yield '\n},\n'
+            yield '"files": {'
+            first_file_type = True
+            for file_type, files in backup_data["files"].items():
+                if not first_file_type:
+                    yield ","
+                yield f'"{file_type}": {json.dumps(files, default=str)}'
+                first_file_type = False
+            yield "}"
             
-            # Files
-            yield '"files": {\n'
-            try:
-                docs = _export_files_directory(UPLOAD_DIR)
-                yield '  "documents": ' + json.dumps(docs) + ',\n'
-            except Exception as e:
-                logger.warning(f"[Backup] Failed to export docs: {e}")
-                yield '  "documents": {},\n'
-                
-            try:
-                vfs_root = get_vfs_root()
-                vfs_files = _export_files_directory(vfs_root, base_path=vfs_root)
-                yield '  "vfs": ' + json.dumps(vfs_files) + '\n'
-            except Exception as e:
-                logger.warning(f"[Backup] Failed to export VFS: {e}")
-                yield '  "vfs": {}\n'
-            
-            yield '}\n'
-            yield '}\n'
-
+            yield "}"
+        
         return StreamingResponse(
-            stream_backup(),
+            _generate_json(),
             media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"'
