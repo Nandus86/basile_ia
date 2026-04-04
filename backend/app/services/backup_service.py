@@ -79,6 +79,10 @@ def _serialize_value(value: Any) -> Any:
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, list):
+        return [_serialize_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _serialize_value(v) for k, v in value.items()}
     return value
 
 
@@ -164,7 +168,7 @@ async def _export_weaviate_collection(weaviate_client, collection_name: str) -> 
             for obj in result:
                 objects.append({
                     "uuid": str(obj.uuid),
-                    "properties": dict(obj.properties),
+                    "properties": _serialize_row(dict(obj.properties)),
                     "vector": obj.vector if hasattr(obj, 'vector') and obj.vector else None,
                 })
             break
