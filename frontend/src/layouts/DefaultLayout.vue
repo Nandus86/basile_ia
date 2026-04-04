@@ -180,29 +180,31 @@ const menuItems = [
   { title: 'Chat IA', icon: 'mdi-chat-processing-outline', to: '/chat' },
   { title: 'Meus Agentes', icon: 'mdi-robot-outline', to: '/agents' },
   { title: 'Conhecimento', icon: 'mdi-book-open-page-variant-outline', to: '/documents' },
-  { title: 'Integrações MCP', icon: 'mdi-connection', to: '/mcp' },
+  { title: 'Integraes MCP', icon: 'mdi-connection', to: '/mcp' },
   { title: 'Criador de Skills', icon: 'mdi-star-shooting-outline', to: '/skills' },
-  { title: 'Bases de Informações', icon: 'mdi-database-search', to: '/information-bases' },
+  { title: 'Bases de Informaes', icon: 'mdi-database-search', to: '/information-bases' },
   { title: 'Base VFS (RAG 3.0)', icon: 'mdi-file-document-multiple-outline', to: '/vfs-knowledge' },
-  { title: 'Gerenciar Memórias', icon: 'mdi-memory', to: '/memory' },
+  { title: 'Gerenciar Memrias', icon: 'mdi-memory', to: '/memory' },
   { title: 'Banco de Dados', icon: 'mdi-database-outline', to: '/database' },
-  { title: 'Configurações de IA', icon: 'mdi-cog-box', to: '/ia-settings' }
+  { title: 'Configuraes de IA', icon: 'mdi-cog-box', to: '/ia-settings' },
+  { title: 'Backup & Restore', icon: 'mdi-database-export-outline', to: '/backup-restore' }
 ]
 
 const pageTitleMap = {
-  '/': 'Olá, Fernando 👋',
+  '/': 'Ol, Fernando ',
   '/workflows': 'Workflows Visuais',
   '/acompanhamento': 'Acompanhamento',
   '/chat': 'Chat IA',
   '/agents': 'Meus Agentes',
   '/documents': 'Base de Conhecimento',
-  '/mcp': 'Integrações MCP',
+  '/mcp': 'Integraes MCP',
   '/skills': 'Criador de Skills',
-  '/information-bases': 'Bases de Informações',
+  '/information-bases': 'Bases de Informaes',
   '/vfs-knowledge': 'Base VFS (RAG 3.0)',
-  '/memory': 'Gerenciar Memórias',
+  '/memory': 'Gerenciar Memrias',
   '/database': 'Banco de Dados',
-  '/ia-settings': 'Configurações de IA'
+  '/ia-settings': 'Configuraes de IA',
+  '/backup-restore': 'Backup & Restore'
 }
 
 const currentPageTitle = computed(() => pageTitleMap[route.path] || 'Basile IA')

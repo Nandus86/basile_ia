@@ -22,7 +22,7 @@ for _mod in ("app.services.mcp_tools", "app.orchestrator.agent_factory",
 # ─────────────────────────────────────────────────────────────────────────────
 
 from app.database import engine, Base
-from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control
+from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control, backup
 from app.api.endpoints import ai_providers, webhooks_config, tracking
 from app.weaviate_client import weaviate_client
 from app.redis_client import redis_client
@@ -98,6 +98,7 @@ app.include_router(memory.router, prefix="/memory", tags=["Memory Management"])
 app.include_router(skill_groups.router, prefix="/skill-groups", tags=["Skill Groups"])
 app.include_router(agent_groups.router, prefix="/agent-groups", tags=["Agent Groups"])
 app.include_router(agent_control.router, prefix="/agent-control", tags=["Agent Control"])
+app.include_router(backup.router, prefix="/backup", tags=["Backup"])
 
 
 @app.get("/")

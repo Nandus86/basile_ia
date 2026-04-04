@@ -51,6 +51,21 @@ const routes = [
         component: () => import('@/views/IASettings.vue')
       },
       {
+        path: 'backup-restore',
+        name: 'BackupRestore',
+        component: () => import('@/views/BackupRestore.vue')
+      },
+      {
+        path: 'acompanhamento',
+        name: 'Acompanhamento',
+        component: () => import('@/views/Acompanhamento.vue')
+      },
+      {
+        path: 'backup-restore',
+        name: 'BackupRestore',
+        component: () => import('@/views/BackupRestore.vue')
+      },
+      {
         path: 'acompanhamento',
         name: 'Acompanhamento',
         component: () => import('@/views/Acompanhamento.vue')
