@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, HTTPException
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import Response, StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -37,47 +37,14 @@ async def create_backup(db: AsyncSession = Depends(get_db)):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"basile_backup_{timestamp}.json"
         
-        def _generate_json():
-            yield '{'
-            
-            yield '"metadata": '
-            yield json.dumps(backup_data["metadata"], default=str)
-            yield ","
-            
-            yield '"tables": {'
-            first_table = True
-            for table_name, rows in backup_data["tables"].items():
-                if not first_table:
-                    yield ","
-                yield f'"{table_name}": {json.dumps(rows, default=str)}'
-                first_table = False
-            yield "},"
-            
-            yield '"weaviate": {'
-            first_coll = True
-            for coll_name, objects in backup_data["weaviate"].items():
-                if not first_coll:
-                    yield ","
-                yield f'"{coll_name}": {json.dumps(objects, default=str)}'
-                first_coll = False
-            yield "},"
-            
-            yield '"files": {'
-            first_file_type = True
-            for file_type, files in backup_data["files"].items():
-                if not first_file_type:
-                    yield ","
-                yield f'"{file_type}": {json.dumps(files, default=str)}'
-                first_file_type = False
-            yield "}"
-            
-            yield "}"
+        json_bytes = json.dumps(backup_data, default=str, ensure_ascii=False).encode("utf-8")
         
-        return StreamingResponse(
-            _generate_json(),
+        return Response(
+            content=json_bytes,
             media_type="application/json",
             headers={
-                "Content-Disposition": f'attachment; filename="{filename}"'
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(json_bytes)),
             }
         )
     
