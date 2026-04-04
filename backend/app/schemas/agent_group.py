@@ -28,13 +28,11 @@ class AgentGroupResponse(AgentGroupBase):
     agent_count: int = 0
     children_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class AgentGroupTree(AgentGroupResponse):
     """Recursive tree node with children"""
     children: List["AgentGroupTree"] = []
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

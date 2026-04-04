@@ -23,5 +23,4 @@ class MCPGroupResponse(MCPGroupBase):
     # Can contain `mcps` array dynamically
     # mcps: Optional[List[Any]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

@@ -160,7 +160,7 @@ async def _export_weaviate_collection(weaviate_client, collection_name: str) -> 
         
         cursor = None
         while True:
-            result = collection.iterator(include_vector=True, return_metadata=True)
+            result = collection.iterator(include_vector=True)
             for obj in result:
                 objects.append({
                     "uuid": str(obj.uuid),

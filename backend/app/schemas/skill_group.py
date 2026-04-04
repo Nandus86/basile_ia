@@ -25,5 +25,4 @@ class SkillGroupResponse(SkillGroupBase):
     updated_at: datetime
     skill_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

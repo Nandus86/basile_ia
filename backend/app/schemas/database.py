@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any, List
 class PostgresTableInfo(BaseModel):
     """Table information"""
     name: str
-    schema: str = "public"
+    schema_name: str = Field("public", alias="schema")
     row_count: Optional[int] = None
     size_bytes: Optional[int] = None
 

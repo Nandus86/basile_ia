@@ -28,8 +28,7 @@ class InformationBaseResponse(InformationBaseBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class InformationBaseSummary(BaseModel):
     id: UUID4
@@ -37,8 +36,7 @@ class InformationBaseSummary(BaseModel):
     code: str
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class InformationBaseList(BaseModel):
     information_bases: List[InformationBaseSummary]

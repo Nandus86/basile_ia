@@ -36,8 +36,7 @@ class WebhookConfigResponse(WebhookConfigBase):
     # Optionally return the token or just a boolean indicating it exists
     has_token: bool = Field(..., description="Whether a token is configured")
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class WebhookConfigList(BaseModel):

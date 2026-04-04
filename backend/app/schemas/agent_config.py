@@ -78,8 +78,7 @@ class AgentConfigResponse(AgentConfigBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class PendingApprovalResponse(BaseModel):
@@ -95,8 +94,7 @@ class PendingApprovalResponse(BaseModel):
     created_at: datetime
     expires_at: Optional[datetime]
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ApprovalAction(BaseModel):

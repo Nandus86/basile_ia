@@ -17,5 +17,4 @@ class JobLogSchema(BaseModel):
     completed_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

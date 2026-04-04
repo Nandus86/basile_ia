@@ -70,8 +70,7 @@ class DocumentResponse(DocumentBase):
     updated_at: datetime
     processed_at: Optional[datetime]
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class DocumentSummary(BaseModel):
@@ -85,8 +84,7 @@ class DocumentSummary(BaseModel):
     is_active: bool
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class DocumentList(BaseModel):

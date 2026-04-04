@@ -42,8 +42,7 @@ class VFSFileResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class VFSKnowledgeBaseResponse(BaseModel):
     id: str
@@ -56,8 +55,7 @@ class VFSKnowledgeBaseResponse(BaseModel):
     updated_at: Optional[str] = None
     files: List[VFSFileResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class VFSFileUpdate(BaseModel):
     title: Optional[str] = None
