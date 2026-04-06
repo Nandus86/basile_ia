@@ -334,21 +334,37 @@ const createBackup = async () => {
   backupError.value = ''
   
   try {
-    // Use native browser download - bypasses axios/blob/CORS issues entirely
+    // Use fetch API directly - bypasses Vue Router and axios interceptors
+    const response = await fetch('/api/backup/create')
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.detail || `HTTP ${response.status}`)
+    }
+    
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = '/api/backup/create'
-    link.setAttribute('download', '')
+    link.href = url
+    
+    // Extract filename from Content-Disposition or use fallback
+    const cd = response.headers.get('content-disposition')
+    let filename = `basile_backup_${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.json`
+    if (cd && cd.includes('filename=')) {
+      const match = cd.match(/filename="?([^";\s]+)"?/)
+      if (match) filename = match[1]
+    }
+    
+    link.download = filename
     document.body.appendChild(link)
     link.click()
     link.remove()
+    URL.revokeObjectURL(url)
     
-    // Give browser a moment to start the download
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    showMessage('Download do backup iniciado!')
+    showMessage('Backup gerado e download iniciado com sucesso!')
   } catch (error) {
     console.error('Error creating backup:', error)
-    backupError.value = 'Erro ao iniciar download. Tente novamente.'
+    backupError.value = error.message || 'Erro ao criar backup. Tente novamente.'
     showMessage(backupError.value, 'error')
   } finally {
     backupLoading.value = false

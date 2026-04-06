@@ -39,6 +39,13 @@ class AgentConfig(Base):
     # Human-in-the-loop Configuration
     human_approval_enabled = Column(Boolean, default=False, nullable=False)
     human_approval_timeout_seconds = Column(Integer, default=300)  # 5 min default
+    
+    # Conversational HITL Configuration
+    hitl_user_approval_enabled = Column(Boolean, default=False, nullable=False)
+    hitl_admin_approval_enabled = Column(Boolean, default=False, nullable=False)
+    hitl_admin_contact = Column(String(255), nullable=True)  # supports templates like {{ $request.admin_phone }}
+    hitl_message_template = Column(Text, nullable=True)      # supports {{ $AIresponse }}
+    
     # JSON list of node names that require human approval before execution
     interrupt_before_nodes = Column(JSON, default=list)  # e.g., ["tool_execution", "external_api"]
     # JSON list of node names that require human approval after execution
@@ -79,6 +86,10 @@ class AgentConfig(Base):
             "checkpoint_ttl_seconds": self.checkpoint_ttl_seconds,
             "human_approval_enabled": self.human_approval_enabled,
             "human_approval_timeout_seconds": self.human_approval_timeout_seconds,
+            "hitl_user_approval_enabled": self.hitl_user_approval_enabled,
+            "hitl_admin_approval_enabled": self.hitl_admin_approval_enabled,
+            "hitl_admin_contact": self.hitl_admin_contact,
+            "hitl_message_template": self.hitl_message_template,
             "interrupt_before_nodes": self.interrupt_before_nodes or [],
             "interrupt_after_nodes": self.interrupt_after_nodes or [],
             "require_approval_for": self.require_approval_for or [],

@@ -30,6 +30,10 @@ class AgentConfigBase(BaseModel):
     # Human in the loop
     human_approval_enabled: bool = Field(default=False, description="Require human approval")
     human_approval_timeout_seconds: int = Field(default=300, ge=30, description="Approval timeout")
+    hitl_user_approval_enabled: bool = Field(default=False, description="Require user interactive approval")
+    hitl_admin_approval_enabled: bool = Field(default=False, description="Require admin interactive approval")
+    hitl_admin_contact: Optional[str] = Field(default=None, description="Admin contact reference or number")
+    hitl_message_template: Optional[str] = Field(default=None, description="Template for the HITL pausing question")
     interrupt_before_nodes: List[str] = Field(default_factory=list, description="Nodes to pause before")
     interrupt_after_nodes: List[str] = Field(default_factory=list, description="Nodes to pause after")
     require_approval_for: List[str] = Field(default_factory=list, description="Actions requiring approval: tool_call, mcp_execution")
@@ -62,6 +66,10 @@ class AgentConfigUpdate(BaseModel):
     checkpoint_ttl_seconds: Optional[int] = None
     human_approval_enabled: Optional[bool] = None
     human_approval_timeout_seconds: Optional[int] = None
+    hitl_user_approval_enabled: Optional[bool] = None
+    hitl_admin_approval_enabled: Optional[bool] = None
+    hitl_admin_contact: Optional[str] = None
+    hitl_message_template: Optional[str] = None
     interrupt_before_nodes: Optional[List[str]] = None
     interrupt_after_nodes: Optional[List[str]] = None
     require_approval_for: Optional[List[str]] = None

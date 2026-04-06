@@ -1450,11 +1450,65 @@
                   </v-expand-transition>
                 </v-card>
 
-                <h3 class="text-subtitle-1 font-weight-bold mt-4 mb-2">Human-in-the-loop</h3>
+                <h3 class="text-subtitle-1 font-weight-bold mt-4 mb-2">Conversational HITL (WhatsApp / Webhook)</h3>
+                <v-card variant="outlined" class="pa-3 mb-4">
+                  <p class="text-caption text-medium-emphasis mb-3">Pausa o LLM e envia pergunta direta via mensageria aguardando a resposta humana no chat.</p>
+                  
+                  <v-row>
+                    <v-col cols="12" md="6">
+                      <v-switch
+                        v-model="resilienceData.hitl_user_approval_enabled"
+                        label="Aprovação do Usuário Ativo"
+                        color="success"
+                        hide-details
+                      ></v-switch>
+                    </v-col>
+                    <v-col cols="12" md="6">
+                      <v-switch
+                        v-model="resilienceData.hitl_admin_approval_enabled"
+                        label="Aprovação de Administrador"
+                        color="secondary"
+                        hide-details
+                      ></v-switch>
+                    </v-col>
+                  </v-row>
+
+                  <v-expand-transition>
+                    <div v-if="resilienceData.hitl_user_approval_enabled || resilienceData.hitl_admin_approval_enabled" class="mt-4">
+                      <v-divider class="mb-4"></v-divider>
+                      <v-row>
+                        <v-col cols="12" v-if="resilienceData.hitl_admin_approval_enabled">
+                          <v-text-field
+                            v-model="resilienceData.hitl_admin_contact"
+                            label="Contato do Admin (Telefone ou Variável)"
+                            placeholder="Ex: {{ $request.admin_phone }}"
+                            hint="Para quem a requisição de aprovação será enviada"
+                            persistent-hint
+                            variant="outlined"
+                            density="compact"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="12">
+                          <v-textarea
+                            v-model="resilienceData.hitl_message_template"
+                            label="Template da Mensagem de Pausa"
+                            placeholder="Ex: {{ $AIresponse }} ou 'Aguarde aprovação'"
+                            hint="A mensagem de pausa manual do grafo. Use {{ $AIresponse }} para o LLM perguntar."
+                            persistent-hint
+                            rows="2"
+                            variant="outlined"
+                          ></v-textarea>
+                        </v-col>
+                      </v-row>
+                    </div>
+                  </v-expand-transition>
+                </v-card>
+
+                <h3 class="text-subtitle-1 font-weight-bold mt-4 mb-2">Painel de Aprovação (Dashboard)</h3>
                 <v-card variant="outlined" class="pa-3">
                   <v-switch
                     v-model="resilienceData.human_approval_enabled"
-                    label="Requer Aprovação Humana"
+                    label="Requer Aprovação Humana no Painel"
                     color="error"
                     hide-details
                   ></v-switch>
@@ -2217,6 +2271,10 @@ const resilienceData = reactive({
   fallback_temperature: 0.7,
   human_approval_enabled: false,
   human_approval_timeout_seconds: 300,
+  hitl_user_approval_enabled: false,
+  hitl_admin_approval_enabled: false,
+  hitl_admin_contact: '',
+  hitl_message_template: '',
   interrupt_before_nodes: [],
   verbose_logging: false
 })

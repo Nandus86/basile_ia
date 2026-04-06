@@ -90,6 +90,23 @@ def _serialize_row(row: dict) -> dict:
     return {k: _serialize_value(v) for k, v in row.items()}
 
 
+def _deserialize_row(row: dict) -> dict:
+    deserialized = {}
+    for k, v in row.items():
+        if isinstance(v, str):
+            if len(v) >= 19 and "T" in v and ("+" in v or "-" in v or "Z" in v):
+                try:
+                    deserialized[k] = datetime.fromisoformat(v.replace("Z", "+00:00"))
+                    continue
+                except ValueError:
+                    pass
+        elif isinstance(v, (dict, list)):
+            deserialized[k] = json.dumps(v, ensure_ascii=False)
+            continue
+        deserialized[k] = v
+    return deserialized
+
+
 async def create_full_backup(db: AsyncSession) -> Dict[str, Any]:
     logger.info("[Backup] Starting full system backup...")
     
@@ -258,26 +275,37 @@ async def restore_full_backup(
             continue
         
         try:
-            columns = rows[0].keys()
             for row in rows:
                 if table_name in SENSITIVE_FIELDS:
                     for field in SENSITIVE_FIELDS[table_name]:
                         if field in row and row[field] is None:
-                            row.pop(field, None)
+                            if field == "api_key":
+                                row[field] = "RESTORED_DUMMY_KEY"
+                            elif field == "access_token" or field == "key_hash":
+                                row[field] = "RESTORED_DUMMY_TOKEN"
+                            else:
+                                row[field] = "RESTORED_DUMMY_VALUE"
+
+            columns = rows[0].keys()
+            for row in rows:
+                deserialized_row = _deserialize_row(row)
                 
                 column_names = ", ".join(columns)
                 placeholders = ", ".join([f":{col}" for col in columns])
                 await db.execute(
                     text(f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"),
-                    row
+                    deserialized_row
                 )
             
+            await db.commit()
             stats["tables"][table_name] = len(rows)
             logger.info(f"[Restore] Restored {len(rows)} rows to {table_name}")
         except Exception as e:
+            await db.rollback()
             logger.error(f"[Restore] Failed to restore {table_name}: {e}")
             stats["warnings"].append(f"Failed to restore {table_name}: {str(e)}")
 
+    # Ensure transaction is clear for next steps
     await db.commit()
 
     weaviate_data = backup_data.get("weaviate", {})
@@ -359,10 +387,19 @@ async def _restore_weaviate_collection(weaviate_client, collection_name: str, ob
                 if collection.data.exists(uuid):
                     collection.data.delete_by_id(uuid)
                 
-                if vector:
-                    collection.data.insert(properties=properties, uuid=uuid, vector=vector)
-                else:
-                    collection.data.insert(properties=properties, uuid=uuid)
+                try:
+                    if vector:
+                        if isinstance(vector, dict) and "default" in vector:
+                            vector = vector["default"]
+                        collection.data.insert(properties=properties, uuid=uuid, vector=vector)
+                    else:
+                        collection.data.insert(properties=properties, uuid=uuid)
+                except Exception as inner_e:
+                    if "vector with length" in str(inner_e) or "500" in str(inner_e):
+                        logger.warning(f"[Restore] Vector mismatch for {uuid}, falling back to auto-vectorization")
+                        collection.data.insert(properties=properties, uuid=uuid)
+                    else:
+                        raise inner_e
             except Exception as e:
                 logger.warning(f"[Restore] Failed to restore Weaviate object {uuid}: {e}")
     
