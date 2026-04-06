@@ -335,10 +335,10 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             # Standard text response
                             final_result = response_data["response"]
                         else:
-                            # Other structured formats
-                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data"]}
+                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data", "is_hitl_pause"]}
                             
                         agent_used = response_data.get("agent_used")
+                        is_hitl_pause = response_data.get("is_hitl_pause", False)
                         
                         # If execution succeeded, break retry loop
                         break
@@ -363,7 +363,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 "job_id": job_id,
                 "status": "completed",
                 "result": final_result,
-                "agent_used": agent_used
+                "agent_used": agent_used,
+                "is_hitl_pause": is_hitl_pause
             }
             if transition_data:
                 job_data["transition_data"] = transition_data
@@ -389,7 +390,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "status": "completed",
                             "job_id": job_id,
                             "result": final_result if not isinstance(final_result, dict) else final_result.get("output", final_result.get("response", str(final_result))),
-                            "agent_used": agent_used
+                            "agent_used": agent_used,
+                            "is_hitl_pause": is_hitl_pause
                         }
                         if transition_data:
                             full_response_data["transition_data"] = transition_data
@@ -420,8 +422,14 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "status": "completed",
                             "job_id": job_id,
                             "result": final_result,
-                            "agent_used": agent_used
+                            "agent_used": agent_used,
+                            "is_hitl_pause": is_hitl_pause
                         }
+                        
+                        # Retrieve admin contact configuration if HITL admin is required
+                        if is_hitl_pause and agent and agent.resilience_config:
+                            if agent.resilience_config.hitl_admin_approval_enabled:
+                                response_data["hitl_admin_contact"] = agent.resilience_config.hitl_admin_contact
                         
                         if transition_data:
                             response_data["transition_data"] = transition_data

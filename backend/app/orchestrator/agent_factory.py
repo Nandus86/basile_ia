@@ -391,6 +391,21 @@ class AgentFactory:
             if context_section:
                 system_prompt += context_section
         
+        # Inject HITL Sentinel Rules
+        if agent_config.get("resilience"):
+            res_cfg = agent_config["resilience"]
+            hitl_user = res_cfg.get("hitl_user_approval_enabled", False)
+            hitl_admin = res_cfg.get("hitl_admin_approval_enabled", False)
+            
+            if hitl_user or hitl_admin:
+                hitl_msg = res_cfg.get("hitl_message_template") or ""
+                system_prompt += "\n\n## 🛑 INTERVENÇÃO HUMANA OBRIGATÓRIA (HITL ATIVO)\n"
+                system_prompt += "Você **DEVE** interromper sua execução e aguardar a aprovação ou resposta de um humano antes de tomar a ação final desta tarefa.\n"
+                system_prompt += "Para solicitar esta aprovação, você deve formular sua pergunta para o humano e OBRIGATORIAMENTE incluir a tag `{{ $HITL }}` ao final de sua fala.\n"
+                if hitl_msg:
+                    system_prompt += f"Template sugerido para sua pergunta (Adapte conforme o contexto, mas mantenha o sentido da aprovação): \"{hitl_msg}\"\n"
+                system_prompt += "REGRA CRÍTICA: Se a resposta do humano já foi fornecida acima no histórico (ex: você já fez a pergunta e ele acabou de responder aprovando), NÃO PARE. Vá em frente e execute a ação utilizando a tag `[FIM_DE_INTERACAO]` caso não haja mais o que fazer após a ação.\n"
+
         # Inject RLHF Training Rules
         system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
         

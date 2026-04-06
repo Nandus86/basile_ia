@@ -1556,12 +1556,29 @@ async def process_message_task(
 
                 # Interceptar FIM DE INTERACAO
                 if "[FIM_DE_INTERACAO]" in output_text:
-                    output_text = ""
-                    if isinstance(final_result, dict):
-                        final_result["output"] = ""
+                    output_text = output_text.replace("[FIM_DE_INTERACAO]", "").strip()
+                    if not output_text:
+                        if isinstance(final_result, dict):
+                            final_result["output"] = ""
+                        else:
+                            final_result = ""
                     else:
-                        final_result = ""
+                        if isinstance(final_result, dict):
+                            final_result["output"] = output_text
+                        else:
+                            final_result = output_text
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
+
+                # Limpar Tag de HITL caso exista
+                is_hitl_pause = False
+                if "{{ $HITL }}" in output_text:
+                    output_text = output_text.replace("{{ $HITL }}", "").strip()
+                    is_hitl_pause = True
+                    if isinstance(final_result, dict):
+                        final_result["output"] = output_text
+                    else:
+                        final_result = output_text
+                    print(f"[Task] 🛑 Intervenção Humana (HITL) solicitada pelo agente {agent_used}")
 
                 # Validação (Guardrail)
                 is_guardrail_active = agent_config.get("is_guardrail_active", False)
@@ -1598,6 +1615,7 @@ async def process_message_task(
                     "status": "completed",
                     "agent_used": agent_used,
                     "processing_time_ms": processing_time,
+                    "is_hitl_pause": is_hitl_pause,
                 }
                 
                 if isinstance(final_result, dict):
