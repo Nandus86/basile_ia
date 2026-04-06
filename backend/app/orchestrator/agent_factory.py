@@ -232,6 +232,12 @@ class AgentFactory:
         else:
             # OpenAI direct
             kwargs["api_key"] = settings.OPENAI_API_KEY
+            
+        # Apply resilience timeout 
+        resilience_cfg = agent_config.get("resilience", {})
+        timeout_seconds = resilience_cfg.get("timeout_seconds")
+        if timeout_seconds:
+            kwargs["timeout"] = float(timeout_seconds)
         
         # Inject cost-tracking callbacks (only when LangSmith tracing is active)
         if settings.LANGCHAIN_TRACING_V2:
