@@ -1444,9 +1444,24 @@ async def process_message_task(
                 await _save_mtm_message(db, agent_id, session_id, "user", message)
 
             # Build LangChain messages
+            user_tz_name = _resolve_tz_name(transition_data)
             messages = []
             for msg in history:
                 timestamp = msg.get("created_at") or msg.get("timestamp")
+                # Convert timestamp to user's local timezone for display
+                if timestamp:
+                    try:
+                        from datetime import datetime as _dt
+                        try:
+                            from zoneinfo import ZoneInfo as _ZI
+                        except ImportError:
+                            import pytz
+                            _ZI = pytz.timezone
+                        parsed = _dt.fromisoformat(timestamp)
+                        local_dt = parsed.astimezone(_ZI(user_tz_name))
+                        timestamp = local_dt.strftime('%d/%m/%Y %H:%M:%S')
+                    except Exception:
+                        pass  # keep original string on any parse error
                 prefix = f"[CONTEXTO_TEMPORAL: {timestamp}] " if timestamp else ""
                 
                 if msg.get("role") == "user":
