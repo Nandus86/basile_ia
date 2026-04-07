@@ -8,6 +8,25 @@ import json
 from app.config import settings
 
 
+def _resolve_now(tz_name: str = None):
+    """Return current datetime in the given IANA timezone, fallback to UTC."""
+    from datetime import datetime, timezone
+    if not tz_name:
+        return datetime.now(timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        import pytz
+        try:
+            return datetime.now(pytz.timezone(tz_name))
+        except Exception:
+            return datetime.now(timezone.utc)
+    try:
+        return datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
 class RedisClient:
     """Async Redis client wrapper"""
     
@@ -58,7 +77,7 @@ class RedisClient:
         client = await self.connect()
         await client.delete(key)
     
-    async def add_message(self, session_id: str, role: str, content: str, ttl_seconds: int = 86400):
+    async def add_message(self, session_id: str, role: str, content: str, ttl_seconds: int = 86400, tz_name: str = None):
         """Add message to conversation history with configurable TTL"""
         from datetime import datetime, timezone
         client = await self.connect()
@@ -66,7 +85,7 @@ class RedisClient:
         message = json.dumps({
             "role": role,
             "content": content,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": _resolve_now(tz_name).isoformat()
         })
         await client.rpush(key, message)
         await client.expire(key, ttl_seconds)
@@ -90,10 +109,9 @@ class RedisClient:
         agent_id: str,
         agent_name: str,
         ttl_seconds: int = 86400,
+        tz_name: str = None,
     ):
         """Save agent session context for continuity across interactions."""
-        from datetime import datetime, timezone
-
         client = await self.connect()
         key = f"session_context:{session_id}"
 
@@ -114,7 +132,7 @@ class RedisClient:
             "last_agent_id": agent_id,
             "last_agent_name": agent_name,
             "agents_used": agents_used,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": _resolve_now(tz_name).isoformat(),
         })
         await client.setex(key, ttl_seconds, payload)
 

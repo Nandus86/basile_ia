@@ -19,8 +19,29 @@ from app.worker.status_monitor import StatusMonitor
 
 
 # ─────────────────────────────────────────────────────────────
-# Shared enrichment helper
+# Shared helpers
 # ─────────────────────────────────────────────────────────────
+
+def _resolve_tz_name(transition_data: Optional[Dict[str, Any]] = None) -> str:
+    """Extract IANA timezone name from transition_data payload.
+    Falls back to 'America/Sao_Paulo' if not found."""
+    tz_name = 'America/Sao_Paulo'
+    if not transition_data:
+        return tz_name
+    # Direct top-level key
+    if isinstance(transition_data.get('zoneName'), str):
+        return transition_data['zoneName']
+    # Nested: church -> address -> timezone -> zoneName
+    church_dict = transition_data.get('church', {})
+    if isinstance(church_dict, dict):
+        address_dict = church_dict.get('address', {})
+        if isinstance(address_dict, dict):
+            timezone_dict = address_dict.get('timezone', {})
+            if isinstance(timezone_dict, dict):
+                zone_val = timezone_dict.get('zoneName')
+                if zone_val and isinstance(zone_val, str):
+                    return zone_val
+    return tz_name
 
 async def _enrich_agent_prompt(
     db,
@@ -48,23 +69,8 @@ async def _enrich_agent_prompt(
     """
     rag_context = None
 
-    # Resolve dynamically provided timezone from transition_data if available
-    tz_name = 'America/Sao_Paulo'
-    if transition_data:
-        # Check direct top-level string first for simplicity
-        if isinstance(transition_data.get('zoneName'), str):
-            tz_name = transition_data.get('zoneName')
-        else:
-            # Fallback to nested safely: church -> address -> timezone -> zoneName
-            church_dict = transition_data.get('church', {})
-            if isinstance(church_dict, dict):
-                address_dict = church_dict.get('address', {})
-                if isinstance(address_dict, dict):
-                    timezone_dict = address_dict.get('timezone', {})
-                    if isinstance(timezone_dict, dict):
-                        zone_val = timezone_dict.get('zoneName')
-                        if zone_val and isinstance(zone_val, str):
-                            tz_name = zone_val
+    # Resolve dynamically provided timezone from transition_data
+    tz_name = _resolve_tz_name(transition_data)
 
     # Inject CURRENT DATETIME as the very first contextual item
     from datetime import datetime
@@ -1334,7 +1340,8 @@ async def process_message_task(
                 # STM: get history
                 history = await redis_client.get_conversation(session_id)
                 await redis_client.add_message(
-                    session_id=session_id, role="user", content=message, ttl_seconds=86400
+                    session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                    tz_name=_resolve_tz_name(transition_data)
                 )
 
                 # MTM: fallback logic for fallback path (using nil uuid for agent_id if no agent was resolved)
@@ -1365,7 +1372,8 @@ async def process_message_task(
                 if str(final_result).strip():
                     await redis_client.add_message(
                         session_id=session_id, role="assistant",
-                        content=str(final_result), ttl_seconds=86400
+                        content=str(final_result), ttl_seconds=86400,
+                        tz_name=_resolve_tz_name(transition_data)
                     )
                     
                     # MTM: save assistant response
@@ -1400,7 +1408,8 @@ async def process_message_task(
                 
                 await redis_client.add_message(
                     session_id=session_id, role="user",
-                    content=message, ttl_seconds=stm_ttl_seconds
+                    content=message, ttl_seconds=stm_ttl_seconds,
+                    tz_name=_resolve_tz_name(transition_data)
                 )
 
             # Build context notes based on STM/MTM history
@@ -1604,7 +1613,8 @@ async def process_message_task(
                     if stm_enabled:
                         await redis_client.add_message(
                             session_id=session_id, role="assistant",
-                            content=output_text, ttl_seconds=stm_ttl_seconds
+                            content=output_text, ttl_seconds=stm_ttl_seconds,
+                            tz_name=_resolve_tz_name(transition_data)
                         )
                     # MTM: save assistant response
                     if agent_id and session_id:
@@ -1637,6 +1647,7 @@ async def process_message_task(
                     agent_id=str(agent_id),
                     agent_name=agent_used,
                     ttl_seconds=stm_ttl_seconds,
+                    tz_name=_resolve_tz_name(transition_data),
                 )
                 response_data["last_agent"] = agent_used
                 print(f"[Task] 💾 Session context saved: last_agent='{agent_used}'")
@@ -1677,7 +1688,8 @@ async def process_message_task(
         try:
             await redis_client.add_message(
                 session_id=session_id, role="assistant",
-                content=friendly_message, ttl_seconds=86400
+                content=friendly_message, ttl_seconds=86400,
+                tz_name=_resolve_tz_name(transition_data) if 'transition_data' in locals() and transition_data else None
             )
         except Exception:
             pass
