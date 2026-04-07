@@ -180,16 +180,26 @@ async def train_dual_memory(payload: DualTrainRequest):
 @router.get("/stm/keys")
 async def list_stm_keys(
     pattern: str = Query("conversation:*", description="Redis key pattern to scan"),
-    cursor: int = Query(0, description="Scan cursor for pagination"),
-    count: int = Query(100, description="Number of keys per scan"),
+    count: int = Query(500, description="Hint for keys per scan iteration"),
 ):
-    """List all Redis keys matching pattern (STM conversations + jobs)"""
+    """List all Redis keys matching pattern (STM conversations + jobs).
+    Iterates SCAN fully so no keys are lost due to cursor pagination."""
     client = await redis_client.connect()
     
-    next_cursor, keys = await client.scan(cursor=cursor, match=pattern, count=count)
+    # Full scan: loop until cursor returns to 0
+    all_keys = []
+    cur = 0
+    while True:
+        cur, keys = await client.scan(cursor=cur, match=pattern, count=count)
+        all_keys.extend(keys)
+        if cur == 0:
+            break
+    
+    # Deduplicate (SCAN may return duplicates across iterations)
+    all_keys = sorted(set(all_keys))
     
     results = []
-    for key in sorted(keys):
+    for key in all_keys:
         key_type = await client.type(key)
         ttl = await client.ttl(key)
         
@@ -210,9 +220,7 @@ async def list_stm_keys(
     
     return {
         "keys": results,
-        "cursor": next_cursor,
         "total_returned": len(results),
-        "has_more": next_cursor != 0,
     }
 
 
