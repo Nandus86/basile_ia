@@ -1369,6 +1369,12 @@ async def process_message_task(
                     final_result = ""
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo supervisor")
 
+                # Strip internal metadata tags
+                import re
+                _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
+                if isinstance(final_result, str):
+                    final_result = _ctx_re.sub('', final_result).strip()
+
                 if str(final_result).strip():
                     await redis_client.add_message(
                         session_id=session_id, role="assistant",
@@ -1624,6 +1630,14 @@ async def process_message_task(
 
                 # Se chegou aqui, a resposta é válida, o limite foi atingido, é o primeiro contato, ou é fim de interação
                 print(f"[Task] ✅ {agent_used} responded on try {retry_count+1}")
+
+                # Strip internal metadata tags that may leak into the response
+                import re
+                _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
+                output_text = _ctx_re.sub('', output_text).strip()
+                if isinstance(final_result, str):
+                    final_result = _ctx_re.sub('', final_result).strip()
+
                 if output_text.strip():
                     if stm_enabled:
                         await redis_client.add_message(
