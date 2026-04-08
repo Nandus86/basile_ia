@@ -122,30 +122,19 @@ class AgentFactory:
             "2. NUNCA inclua esses carimbos de data, horários ou quaisquer prefixos de metadados de tempo no início ou em qualquer parte de sua resposta final.\n"
             "Sua resposta deve ser natural e focada apenas no conteúdo solicitado pelo usuário.\n"
         )
-
+        
         skills_summary = []
         greeting_config = {"initial": "", "normal": ""}
 
         if hasattr(agent, 'skills') and agent.skills:
             active_skills = [s for s in agent.skills if s.is_active]
             if active_skills:
-                skills_parts = []
                 from app.schemas.skill import get_skill_capability_description, get_skills_capabilities_summary
                 import re
                 import json
 
                 for skill in active_skills:
                     capabilities = get_skills_capabilities_summary(skill)
-                    if capabilities:
-                        caps_lines = []
-                        for cap in capabilities:
-                            kw_text = f" (keywords: {', '.join(cap['keywords'])})" if cap['keywords'] else ""
-                            caps_lines.append(f"- **{cap['header']}**: {cap['description']}{kw_text}")
-                        capabilities_text = "\n".join(caps_lines)
-                    else:
-                        capabilities_text = skill.intent or "Sem capabilities definidas"
-                    
-                    skills_parts.append(f"### {skill.name}\n{capabilities_text}")
                     
                     summary_text = get_skill_capability_description(skill)
                     skills_summary.append({
@@ -157,7 +146,6 @@ class AgentFactory:
                     # [GREETING CONFIG SCAN] Look for JSON with "greeting" key in skills
                     content = skill.content_md or ""
                     try:
-                        # Find ```json ... ``` blocks
                         json_matches = re.findall(r'```json\s*(.*?)\s*```', content, re.DOTALL)
                         for j_str in json_matches:
                             data = json.loads(j_str)
@@ -169,14 +157,18 @@ class AgentFactory:
                                     logger.info(f"[AgentFactory] 🎯 Encontrou config de saudação na skill '{skill.name}'")
                     except Exception as e:
                         logger.debug(f"[AgentFactory] Erro ao processar JSON na skill '{skill.name}': {e}")
-                skills_section = (
-                    "\n\n## ⚠️ SKILLS ATIVAS — CAPABILITIES DISPONÍVEIS ⚠️\n\n"
-                    "Você tem acesso às seguintes capabilities resumidas. O sistema injetará automaticamente "
-                    "a skill completa quando detectar que você precisa de uma capability específica.\n\n"
-                    + "\n\n---\n\n".join(skills_parts)
-                )
-                system_prompt += skills_section
-                logger.info(f"[AgentFactory] 📌 Injetou resumo de {len(active_skills)} skill(s) em '{agent.name}'")
+                
+                skills_instruction = """
+## 🎯 Como as Skills Funcionam
+
+Você não tem acesso às skills por padrão. Quando o usuário solicitar uma ação, 
+o sistema injetará automaticamente o FLUXO DE EXECUÇÃO necessário.
+
+Siga as etapas do fluxo NA ORDEM EXATA, sem pular. Se uma etapa tem {{ $HITL }},
+você DEVE aguardar a resposta do usuário antes de continuar para a próxima etapa.
+"""
+                system_prompt += skills_instruction
+                logger.info(f"[AgentFactory] 📌 {len(active_skills)} skill(s) disponíveis para '{agent.name}' (injetadas sob demanda)")
         
         config = {
             "id": agent_id,

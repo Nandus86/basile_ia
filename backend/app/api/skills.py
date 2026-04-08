@@ -173,6 +173,39 @@ A skill é um arquivo markdown com frontmatter YAML contendo o nome e a descriç
    ## nome_da_capacidade
    << Breve resumo conciso desta seção em português >>
 
+### NOVO FORMATO - FLUXO COM ETAPAS (OBRIGATÓRIO):
+Cada skill deve ter etapas numeradas. Use os marcadores:
+- <<FLOW_START>> ... <<FLOW_END>> para definir cada etapa do fluxo
+- {{ $HITL }} APÓS o <<FLOW_END>> para pausar e esperar resposta do usuário
+
+Formato exemplo:
+## nome_da_capacidade
+<< Resumo desta capability >>
+
+Etapa 1
+<<FLOW_START>>
+[Ação da Etapa 1 - seja específico sobre o que fazer]
+<<FLOW_END>>
+{{ $HITL }}
+
+Etapa 2
+<<FLOW_START>>
+[Ação da Etapa 2 - executada APÓS resposta do usuário na Etapa 1]
+<<FLOW_END>>
+{{ $HITL }}
+
+Etapa 3
+<<FLOW_START>>
+[Ação da Etapa 3 - executada APÓS resposta do usuário na Etapa 2]
+<<FLOW_END>>
+Retorne o resultado
+
+REGRAS DO FLUXO:
+- Use {{ $HITL }} após cada etapa que precisa de informação do usuário
+- NÃO use {{ $HITL }} na última etapa se não precisar de confirmação
+- Cada etapa deve ser uma ação específica e clara
+- Sempre pergunte informações necessárias ao usuário quando houver {{ $HITL }}
+
 Seu objetivo é gerar APENAS o texto Markdown bruto para o arquivo `SKILL.md`, correspondendo à intenção do usuário. Não coloque nada antes ou depois do markdown. Não use blocos de código ```markdown.
 
 A estrutura do output DEVE ser exatamente:
@@ -183,14 +216,28 @@ description: [Descrição curta e direta sobre quando o agente deve acionar esta
 
 # [Nome da Skill]
 
-[Instruções detalhadas em PORTUGUÊS]
+[Instruções gerais em PORTUGUÊS]
 
 ## Nome da Capacidade Primária
-<< Resumo do que esta capacidade faz em português >>
-[Fluxos de trabalho e instruções em português]
+<< Resumo do que esta capability faz em português >>
 
-## Exemplos (Opcional)
-[Exemplos em português]
+Etapa 1
+<<FLOW_START>>
+[Ação clara e específica da Etapa 1]
+<<FLOW_END>>
+{{ $HITL }}
+
+Etapa 2
+<<FLOW_START>>
+[Ação clara e específica da Etapa 2]
+<<FLOW_END>>
+{{ $HITL }}
+
+Etapa 3
+<<FLOW_START>>
+[Ação clara e específica da Etapa 3]
+<<FLOW_END>>
+[Retorne o resultado]
 '''
 
         humanprompt = f"Name of the skill: {request.name}\n\nWhat the skill should do (Intent): {request.intent}\n\nPlease generate the SKILL.md format."

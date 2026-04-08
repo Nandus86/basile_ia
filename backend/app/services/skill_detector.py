@@ -80,6 +80,48 @@ def detect_skill_needed(
     return None
 
 
+def extract_all_flows(skill) -> list:
+    """
+    Extrai todas as etapas de fluxo de uma skill.
+    Cada etapa tem: flow_content, has_hitl, etapa_number
+    
+    Args:
+        skill: Objeto Skill
+    
+    Returns:
+        List[dict] - Lista de etapas com formato:
+        [
+            {"etapa": 1, "flow": "...", "has_hitl": True/False},
+            {"etapa": 2, "flow": "...", "has_hitl": False},
+            ...
+        ]
+    """
+    content = skill.content_md or ""
+    if not content:
+        return []
+    
+    flows = []
+    
+    pattern = r'<<FLOW_START>>(.*?)<<FLOW_END>>'
+    matches = re.finditer(pattern, content, re.DOTALL)
+    
+    for i, match in enumerate(matches, 1):
+        flow_content = match.group(1).strip()
+        
+        end_pos = match.end()
+        remaining = content[end_pos:end_pos+1000]
+        
+        has_hitl = bool(re.search(r'\{\{\s*\$HITL\s*\}\}', remaining))
+        
+        flows.append({
+            "etapa": i,
+            "flow": flow_content,
+            "has_hitl": has_hitl
+        })
+    
+    return flows
+
+
 def get_skill_content_for_capability(skill: Skill, capability_header: str) -> str:
     """
     Extrai o conteúdo completo de uma capability específica de uma skill.
