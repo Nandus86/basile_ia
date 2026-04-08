@@ -835,30 +835,42 @@ function showSnackbar(message, color = 'success') {
   snackbar.show = true
 }
 
-function validateHeaders() {
+function isValidJsonOrTemplate(text) {
+  if (!text || !text.trim()) {
+    return true
+  }
+  if (/\{\{.*\}\}/.test(text)) {
+    return true
+  }
   try {
-    JSON.parse(headersJson.value)
-    headersError.value = ''
-  } catch (e) {
+    JSON.parse(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function validateHeaders() {
+  if (!isValidJsonOrTemplate(headersJson.value)) {
     headersError.value = 'JSON inválido'
+  } else {
+    headersError.value = ''
   }
 }
 
 function validateBody() {
-  try {
-    JSON.parse(bodyJson.value)
-    bodyError.value = ''
-  } catch (e) {
+  if (!isValidJsonOrTemplate(bodyJson.value)) {
     bodyError.value = 'JSON inválido'
+  } else {
+    bodyError.value = ''
   }
 }
 
 function validateQueryTemplate() {
-  try {
-    JSON.parse(queryTemplateJson.value)
-    queryTemplateError.value = ''
-  } catch (e) {
+  if (!isValidJsonOrTemplate(queryTemplateJson.value)) {
     queryTemplateError.value = 'JSON inválido'
+  } else {
+    queryTemplateError.value = ''
   }
 }
 

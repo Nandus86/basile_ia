@@ -25,13 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_request_paths(text: str) -> set:
-    """Extrai todos os caminhos de {{ $request.path }} em um texto, ignorando filtros."""
+    """Extrai todos os caminhos de {{ $request.path }} em um texto, ignorando filtros e JSONStringify."""
     if not text:
         return set()
     matches = re.finditer(r'\{\{\s*\$request\.(.*?)\s*\}\}', text)
     paths = set()
     for m in matches:
         raw = m.group(1).strip()
+        # Remove JSONStringify wrapper if present
+        if raw.startswith('JSONStringify'):
+            inner_match = re.match(r'JSONStringify\s*\(\s*\$request\.(.+?)\s*\)$', raw)
+            if inner_match:
+                raw = inner_match.group(1).strip()
         # Pega apenas a parte antes do pipe '|'
         path = raw.split('|')[0].strip()
         paths.add(path)
@@ -87,24 +92,33 @@ def _inject_request_params(text: str, context_data: dict) -> str:
     """
     Substitui {{ $request.path }} por valores reais do context_data.
     Suporta filtros: {{ $request.path | truncate(150) }} ou {{ $request.path.truncate(150) }}
+    Suporta JSONStringify: {{ JSONStringify($request.path) }} para converter objetos em string JSON
     """
     if not text or not context_data:
         return text
     
     def replacer(match):
+        full_match = match.group(0)
         raw = match.group(1).strip()
+        
+        # Detecta JSONStringify: {{ JSONStringify($request.path) }}
+        stringify_match = re.match(r'JSONStringify\s*\(\s*\$request\.(.+?)\s*\)$', raw)
+        is_stringify = stringify_match is not None
+        if is_stringify:
+            path = stringify_match.group(1).strip()
+        else:
+            path = raw
         
         # Suporta tanto 'path | truncate(N)' quanto 'path.truncate(N)'
         limit = None
-        path = raw
         
         # Regex para capturar | truncate(N) ou .truncate(N) no final da string
         # Aceita 'truncate' ou 'limit'
-        filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', raw)
+        filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', path)
         if filter_match:
             try:
                 limit = int(filter_match.group(1))
-                path = raw[:filter_match.start()].strip()
+                path = path[:filter_match.start()].strip()
             except:
                 pass
         
@@ -120,9 +134,13 @@ def _inject_request_params(text: str, context_data: dict) -> str:
             res = json.dumps(val, ensure_ascii=False)
         else:
             res = str(val)
-            
+        
+        # Se JSONStringify foi usado, o resultado já é string JSON (json.dumps já foi aplicado)
+        # Não precisamos de tratamento adicional pois já está em formato string
+        # O json.dumps já retorna string com aspas duplas internas escapadas
+        
         # Aplica limite se extraído
-        if limit is not None:
+        if limit is not None and not is_stringify:
             if len(res) > limit:
                 res = res[:limit].strip() + "..."
         
