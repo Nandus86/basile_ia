@@ -31,6 +31,7 @@ class Skill(Base):
     intent = Column(Text, nullable=True)        # The user's original request/description
     content_md = Column(Text, nullable=False)   # The generated SKILL.md payload
     is_active = Column(Boolean, default=True)
+    always_active = Column(Boolean, default=False)  # Skill sempre considerada pelo router
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

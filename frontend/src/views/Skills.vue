@@ -217,6 +217,14 @@
                       hide-details
                     ></v-switch>
                   </v-col>
+                  <v-col cols="12" md="4">
+                    <v-switch
+                      v-model="formData.always_active"
+                      label="Sempre Ativa"
+                      color="warning"
+                      hide-details
+                    ></v-switch>
+                  </v-col>
                 </v-row>
 
                 <v-select
@@ -407,6 +415,7 @@ const formData = reactive({
   intent: '',
   content_md: '',
   is_active: true,
+  always_active: false,
   group_id: null
 })
 
@@ -456,6 +465,7 @@ function resetForm() {
     intent: '',
     content_md: '',
     is_active: true,
+    always_active: false,
     group_id: currentFolder.value?.id || null
   })
   activeTab.value = 'generator'
@@ -488,6 +498,7 @@ function openDialog(skill = null) {
       intent: skill.intent || '',
       content_md: skill.content_md || '',
       is_active: skill.is_active ?? true,
+      always_active: skill.always_active ?? false,
       group_id: skill.group_id || null
     })
     activeTab.value = 'editor' // Se for edição, assume que quer ver o MD pronto
@@ -528,6 +539,7 @@ async function saveSkill() {
       intent: formData.intent,
       content_md: formData.content_md,
       is_active: formData.is_active,
+      always_active: formData.always_active,
       group_id: formData.group_id || null
     }
     

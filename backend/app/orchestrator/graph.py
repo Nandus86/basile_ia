@@ -403,12 +403,15 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
                     if active_skills_for_detection:
                         print(f"[Response] 🎯 Found {len(active_skills_for_detection)} active skills for detection")
                         
-                        from app.services.skill_detector import detect_skill_needed, get_skill_content_for_capability, extract_all_flows
-                        skill_detection = detect_skill_needed(state["message"], active_skills_for_detection)
+                        from app.orchestrator.skill_router import SkillRouter
+                        from app.services.skill_detector import get_skill_content_for_capability, extract_all_flows
                         
-                        if skill_detection:
-                            skill = skill_detection["skill"]
-                            capability = skill_detection["capability"]
+                        router = SkillRouter()
+                        skill_route = await router.analyze(state["message"], active_skills_for_detection)
+                        
+                        if skill_route:
+                            skill = skill_route["skill"]
+                            capability = skill_route["capability"]
                             
                             all_flows = extract_all_flows(skill)
                             
@@ -432,7 +435,7 @@ Siga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:
 ---
 """
                                 system_prompt += flow_injection
-                                print(f"[Response] 🎯 Injected {len(all_flows)} flow(s) from skill '{skill.name}'")
+                                print(f"[Response] 🎯 Injected {len(all_flows)} flow(s) from skill '{skill.name}' (via Skill Router)")
                             else:
                                 capability_content = get_skill_content_for_capability(skill, capability["header"])
                                 if capability_content:

@@ -13,6 +13,7 @@ class SkillBase(BaseModel):
     intent: Optional[str] = None
     content_md: str
     is_active: bool = True
+    always_active: bool = False
 
 
 class SkillCreate(SkillBase):
@@ -26,6 +27,7 @@ class SkillUpdate(BaseModel):
     intent: Optional[str] = None
     content_md: Optional[str] = None
     is_active: Optional[bool] = None
+    always_active: Optional[bool] = None
     group_id: Optional[UUID] = None
 
 
@@ -36,6 +38,7 @@ class SkillResponse(BaseModel):
     intent: Optional[str] = None
     content_md: str
     is_active: bool
+    always_active: bool = False
     group_id: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
@@ -48,6 +51,7 @@ class SkillSummary(BaseModel):
     id: UUID
     name: str
     is_active: bool
+    always_active: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
