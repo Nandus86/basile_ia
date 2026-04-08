@@ -28,15 +28,19 @@ def _extract_request_paths(text: str) -> set:
     """Extrai todos os caminhos de {{ $request.path }} em um texto, ignorando filtros e JSONStringify."""
     if not text:
         return set()
-    matches = re.finditer(r'\{\{\s*\$request\.(.*?)\s*\}\}', text)
+    matches = re.finditer(r'\{\{\s*(.*?)\s*\}\}', text)
     paths = set()
     for m in matches:
         raw = m.group(1).strip()
-        # Remove JSONStringify wrapper if present
+        # Processa apenas placeholders suportados
         if raw.startswith('JSONStringify'):
             inner_match = re.match(r'JSONStringify\s*\(\s*\$request\.(.+?)\s*\)$', raw)
             if inner_match:
                 raw = inner_match.group(1).strip()
+        elif raw.startswith('$request.'):
+            pass  # já é o formato correto
+        else:
+            continue  # pula não suportados
         # Pega apenas a parte antes do pipe '|'
         path = raw.split('|')[0].strip()
         paths.add(path)
@@ -96,22 +100,30 @@ def _inject_request_params(text: str, context_data: dict) -> str:
     """
     if not text or not context_data:
         return text
-    
+
     def replacer(match):
         full_match = match.group(0)
         raw = match.group(1).strip()
-        
+
+        # Detect supported patterns only
+        if not (raw.startswith('JSONStringify(') or raw.startswith('$request.')):
+            return match.group(0)  # Skip unsupported placeholders
+
         # Detecta JSONStringify: {{ JSONStringify($request.path) }}
         stringify_match = re.match(r'JSONStringify\s*\(\s*\$request\.(.+?)\s*\)$', raw)
         is_stringify = stringify_match is not None
         if is_stringify:
             path = stringify_match.group(1).strip()
         else:
-            path = raw
-        
+            # Assume $request.path
+            path_match = re.match(r'\$request\.(.+)', raw)
+            if not path_match:
+                return match.group(0)
+            path = path_match.group(1).strip()
+
         # Suporta tanto 'path | truncate(N)' quanto 'path.truncate(N)'
         limit = None
-        
+
         # Regex para capturar | truncate(N) ou .truncate(N) no final da string
         # Aceita 'truncate' ou 'limit'
         filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', path)
@@ -121,12 +133,12 @@ def _inject_request_params(text: str, context_data: dict) -> str:
                 path = path[:filter_match.start()].strip()
             except:
                 pass
-        
+
         val = _get_value_by_path(context_data, path)
-        
+
         if val is None:
             return match.group(0)  # Mantém o placeholder se não encontrar
-            
+
         # Converte para string base
         if isinstance(val, bool):
             res = "true" if val else "false"
@@ -134,19 +146,19 @@ def _inject_request_params(text: str, context_data: dict) -> str:
             res = json.dumps(val, ensure_ascii=False)
         else:
             res = str(val)
-        
+
         # Se JSONStringify foi usado, o resultado já é string JSON (json.dumps já foi aplicado)
         # Não precisamos de tratamento adicional pois já está em formato string
         # O json.dumps já retorna string com aspas duplas internas escapadas
-        
+
         # Aplica limite se extraído
         if limit is not None and not is_stringify:
             if len(res) > limit:
                 res = res[:limit].strip() + "..."
-        
+
         return res
-            
-    return re.sub(r'\{\{\s*\$request\.(.*?)\s*\}\}', replacer, text)
+
+    return re.sub(r'\{\{\s*(.*?)\s*\}\}', replacer, text)
 
 def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     """Replace {{ $fromAI(...) }} with real values from kwargs"""
