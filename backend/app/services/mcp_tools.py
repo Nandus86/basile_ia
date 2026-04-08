@@ -100,25 +100,17 @@ def _inject_request_params(text: str, context_data: dict) -> str:
         return text
     
     def replacer(match):
-        raw = match.group(1).strip()
+        # O regex tem dois grupos de captura possíveis:
+        # group(1) = path para $request.xxx (ex: "message")
+        # group(2) = path para JSONStringify($request.xxx) (ex: "data")
+        path = match.group(1) or match.group(2)
+        if not path:
+            return match.group(0)
         
-        # raw pode ser:
-        # - "message" (path normal)
-        # - "JSONStringify($request.data)" (wrapper JSONStringify)
-        # - "JSONStringify($request.user.name)" (path com JSONStringify)
+        path = path.strip()
         
-        if raw.startswith('JSONStringify('):
-            # Extrai o path de dentro do JSONStringify
-            stringify_match = re.match(r'JSONStringify\s*\(\s*\$request\.(.+?)\s*\)$', raw)
-            if stringify_match:
-                path = stringify_match.group(1).strip()
-                is_stringify = True
-            else:
-                return match.group(0)
-        else:
-            # raw é o path normal
-            path = raw
-            is_stringify = False
+        # Verifica se é JSONStringify olhando o match completo
+        full_match = match.group(0)
         
         val = _get_value_by_path(context_data, path)
         
@@ -135,7 +127,7 @@ def _inject_request_params(text: str, context_data: dict) -> str:
         
         return res
             
-    return re.sub(r'\{\{\s*(?:\$request\.|JSONStringify\(\$request\.).*?\}\}', replacer, text)
+    return re.sub(r'\{\{\s*(?:\$request\.(.+?)|JSONStringify\(\$request\.(.+?)\))\s*\}\}', replacer, text)
 
 def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     """Replace {{ $fromAI(...) }} with real values from kwargs"""
