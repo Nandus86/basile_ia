@@ -1143,28 +1143,10 @@ function openExecuteDialog(mcp) {
   const textToScan = pieces.join('\n')
 
   // ── Extract $fromAI params ──
+  // NÃO adicionamos automaticamente - o usuário deve fornecer esses valores manualmente
+  // Isso evita sobrescrever os valores do body_template com strings vazias
   const extractedParams = {}
-  const fromAIRegex = /\{\{\s*\$fromAI\(([^)]+)\)\s*\}\}/g
-  let match
-  while ((match = fromAIRegex.exec(textToScan)) !== null) {
-    try {
-      const argsStr = match[1]
-      const firstArgMatch = argsStr.match(/^\s*['"]([^'"]+)['"]/)
-      if (firstArgMatch && firstArgMatch[1]) {
-        const name = firstArgMatch[1]
-        const allArgs = argsStr.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-        let defaultValue = ''
-        if (allArgs.length >= 4 && allArgs[3] !== 'null' && allArgs[3] !== 'undefined' && allArgs[3] !== '') {
-          defaultValue = allArgs[3]
-        }
-        if (!extractedParams[name]) {
-          extractedParams[name] = defaultValue || ''
-        }
-      }
-    } catch (e) { /* ignore */ }
-  }
-  const mergedParams = { ...(mcp.body_template || {}), ...extractedParams }
-  executeParamsJson.value = JSON.stringify(mergedParams, null, 2)
+  executeParamsJson.value = JSON.stringify(mcp.body_template || {}, null, 2)
 
   // ── Extract ALL unique $request paths ──
   // Scan every piece individually so URL-encoding or JSON escaping doesn't hide any match
