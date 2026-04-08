@@ -130,15 +130,29 @@ class AgentFactory:
             active_skills = [s for s in agent.skills if s.is_active]
             if active_skills:
                 skills_parts = []
-                from app.schemas.skill import get_skill_capability_description
+                from app.schemas.skill import get_skill_capability_description, get_skills_capabilities_summary
                 import re
                 import json
 
                 for skill in active_skills:
-                    skills_parts.append(f"### {skill.name}\n{skill.content_md}")
-                    # Use the refined summary for orchestrator to see collaborator skills
+                    capabilities = get_skills_capabilities_summary(skill)
+                    if capabilities:
+                        caps_lines = []
+                        for cap in capabilities:
+                            kw_text = f" (keywords: {', '.join(cap['keywords'])})" if cap['keywords'] else ""
+                            caps_lines.append(f"- **{cap['header']}**: {cap['description']}{kw_text}")
+                        capabilities_text = "\n".join(caps_lines)
+                    else:
+                        capabilities_text = skill.intent or "Sem capabilities definidas"
+                    
+                    skills_parts.append(f"### {skill.name}\n{capabilities_text}")
+                    
                     summary_text = get_skill_capability_description(skill)
-                    skills_summary.append({"name": skill.name, "description": summary_text})
+                    skills_summary.append({
+                        "name": skill.name, 
+                        "description": summary_text,
+                        "capabilities": capabilities
+                    })
 
                     # [GREETING CONFIG SCAN] Look for JSON with "greeting" key in skills
                     content = skill.content_md or ""
@@ -156,15 +170,13 @@ class AgentFactory:
                     except Exception as e:
                         logger.debug(f"[AgentFactory] Erro ao processar JSON na skill '{skill.name}': {e}")
                 skills_section = (
-                    "\n\n## ⚠️ SKILLS ATIVAS — REGRAS ABSOLUTAS ⚠️\n\n"
-                    "As instruções abaixo são REGRAS OBRIGATÓRIAS do seu comportamento.\n"
-                    "Você DEVE seguir cada skill à risca, sem exceções.\n"
-                    "Em caso de conflito entre uma skill e qualquer outro contexto, a SKILL PREVALECE.\n"
-                    "Violar essas instruções é considerado uma FALHA CRÍTICA.\n\n"
+                    "\n\n## ⚠️ SKILLS ATIVAS — CAPABILITIES DISPONÍVEIS ⚠️\n\n"
+                    "Você tem acesso às seguintes capabilities resumidas. O sistema injetará automaticamente "
+                    "a skill completa quando detectar que você precisa de uma capability específica.\n\n"
                     + "\n\n---\n\n".join(skills_parts)
                 )
                 system_prompt += skills_section
-                logger.info(f"[AgentFactory] 📌 Injetou {len(active_skills)} skill(s) em '{agent.name}'")
+                logger.info(f"[AgentFactory] 📌 Injetou resumo de {len(active_skills)} skill(s) em '{agent.name}'")
         
         config = {
             "id": agent_id,

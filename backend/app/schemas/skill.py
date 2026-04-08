@@ -118,3 +118,43 @@ def get_skill_capability_description(skill_obj) -> str:
         description = description[:297] + "..."
         
     return f"{description}{tools_text}".strip()
+
+
+def get_skills_capabilities_summary(skill_obj) -> List[dict]:
+    """
+    Extrai headers ## com resumo << >> de uma skill E gera palavras-chave automáticas.
+    Usado para injeção resumida de skills no system prompt e detecção por keywords.
+    
+    Returns:
+        List[dict] - Lista de capabilities com header, description e keywords
+    """
+    import re
+    
+    content = getattr(skill_obj, "content_md", "") or ""
+    if not content:
+        return []
+    
+    capabilities = []
+    
+    pattern = r'##\s*([^\n]+)\s*(?:<<\s*(.*?)\s*>>)?'
+    matches = re.findall(pattern, content)
+    
+    stop_words = {'a', 'an', 'the', 'para', 'para', 'de', 'da', 'do', 'um', 'uma', 'e', 'ou', 'que', 'qual', 'quais'}
+    
+    for name, description in matches:
+        name = name.strip()
+        desc = description.strip() if description else ""
+        
+        header_words = name.lower().split()
+        desc_words = desc.lower().split() if desc else []
+        
+        all_words = set(header_words + desc_words)
+        keywords = [w for w in all_words if w not in stop_words and len(w) > 2]
+        
+        capabilities.append({
+            "header": name,
+            "description": desc,
+            "keywords": keywords
+        })
+    
+    return capabilities

@@ -387,6 +387,49 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             except Exception as e:
                 print(f"[Response] Failed to load MCP tools: {e}")
         
+        # Dynamic Skill Detection - inject skill if needed based on user message
+        active_skills_for_detection = []
+        if agent_id and db:
+            try:
+                from app.models.agent import Agent
+                from sqlalchemy import select
+                from sqlalchemy.orm import selectinload
+                result = await db.execute(
+                    select(Agent).options(selectinload(Agent.skills)).where(Agent.id == agent_id)
+                )
+                agent_obj = result.scalar_one_or_none()
+                if agent_obj and agent_obj.skills:
+                    active_skills_for_detection = [s for s in agent_obj.skills if s.is_active]
+                    if active_skills_for_detection:
+                        print(f"[Response] 🎯 Found {len(active_skills_for_detection)} active skills for detection")
+                        
+                        from app.services.skill_detector import detect_skill_needed, get_skill_content_for_capability
+                        skill_detection = detect_skill_needed(state["message"], active_skills_for_detection)
+                        
+                        if skill_detection:
+                            skill = skill_detection["skill"]
+                            capability = skill_detection["capability"]
+                            capability_content = get_skill_content_for_capability(skill, capability["header"])
+                            
+                            if capability_content:
+                                skill_injection = f"""
+
+---
+
+## 🔹 CAPABILITY ATIVADA: {capability['header']}
+
+{capability_content}
+
+---
+
+"""
+                                system_prompt += skill_injection
+                                print(f"[Response] 🎯 Injected skill capability '{capability['header']}' from skill '{skill.name}'")
+            except Exception as e:
+                import traceback
+                print(f"[Response] Failed to detect and inject skills: {e}")
+                traceback.print_exc()
+        
         # Generate response with or without tools
         if tools:
             # Use ReAct agent with tools
