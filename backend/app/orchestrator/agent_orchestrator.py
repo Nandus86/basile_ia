@@ -323,18 +323,10 @@ Responda APENAS em JSON válido com este formato exato:
             print(f"[Orchestrator] ❌ Error checking trigger MCPs for collaborator '{agent.name}': {e}")
             traceback.print_exc()
 
-        # Include collaborator's own skills in the delegation message
-        skills_section = ""
-        if hasattr(agent, 'skills') and agent.skills:
-            active_skills = [s for s in agent.skills if s.is_active]
-            if active_skills:
-                skills_parts = []
-                for skill in active_skills:
-                    skills_parts.append(f"### {skill.name}\n{skill.content_md}")
-                skills_section = (
-                    "\n\n[SUAS CAPACIDADES ATIVAS]:\n"
-                    + "\n---\n".join(skills_parts)
-                )
+        # Skills are injected on-demand by graph.py when detected
+        skills_section = """
+[CAPACIDADES]: Você tem skills disponíveis que serão injetadas automaticamente 
+quando detectar que precisa executar uma ação específica. Siga o fluxo injetado."""
 
         # To strictly place: skills -> orientation -> context data in the final human turn:
         # Labeled as a system delegation
