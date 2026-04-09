@@ -12,6 +12,9 @@ const isSaving = ref(false)
 const isDeleting = ref(false)
 const configToDelete = ref(null)
 
+const webhookDialog = ref(false)
+const webhookConfig = ref(null)
+
 const agents = ref([])
 
 const defaultItem = {
@@ -164,6 +167,54 @@ const toggleActive = async (item) => {
   }
 }
 
+const openWebhookInfo = (item) => {
+  webhookConfig.value = item
+  webhookDialog.value = true
+}
+
+const copyPayload = async () => {
+  try {
+    await navigator.clipboard.writeText(generatedPayload.value)
+    showSnackbar('JSON copiado com sucesso!')
+  } catch {
+    showSnackbar('Erro ao copiar', 'error')
+  }
+}
+
+const webhookUrlStr = computed(() => {
+  const origin = window.location.origin
+  const path = webhookConfig.value?.path || 'slug_da_campanha'
+  if (origin.includes('localhost')) {
+    return 'http://localhost:8010/webhook/' + path
+  }
+  // Substitute the frontend subdomain for the disparador subdomain if applicable
+  const disparadorHost = origin.replace('painel.', 'disparador.').replace('app.', 'disparador.')
+  return disparadorHost + '/webhook/' + path
+})
+
+const generatedPayload = computed(() => {
+  const cfg = webhookConfig.value
+  if (!cfg) return '{}'
+  
+  const payload = {
+    system: {
+      apikey: cfg.api_key || "sua-api-key-se-configurada"
+    },
+    messages: [
+      {
+        connection_id: "instancia_whatsapp_id",
+        user_name: "Nome do Cliente",
+        number: "5511999999999",
+        variables: {
+          "exemplo_variavel": "Valor opcional para substituir no prompt"
+        }
+      }
+    ]
+  }
+  
+  return JSON.stringify(payload, null, 2)
+})
+
 onMounted(() => {
   fetchConfigs()
   fetchAgents()
@@ -260,10 +311,21 @@ onMounted(() => {
               icon
               variant="text"
               size="small"
+              color="info"
+              @click="openWebhookInfo(item)"
+            >
+              <v-icon icon="mdi-web"></v-icon>
+              <v-tooltip activator="parent" location="top">Integração</v-tooltip>
+            </v-btn>
+            <v-btn
+              icon
+              variant="text"
+              size="small"
               color="primary"
               @click="editConfig(item)"
             >
               <v-icon :icon="mdiPencilOutline"></v-icon>
+              <v-tooltip activator="parent" location="top">Editar</v-tooltip>
             </v-btn>
             <v-btn
               icon
@@ -273,6 +335,7 @@ onMounted(() => {
               @click="confirmDelete(item)"
             >
               <v-icon :icon="mdiTrashCanOutline"></v-icon>
+              <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
             </v-btn>
           </div>
         </template>
@@ -546,6 +609,53 @@ onMounted(() => {
             Excluir
           </v-btn>
         </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Webhook Info Dialog -->
+    <v-dialog v-model="webhookDialog" max-width="700">
+      <v-card class="glass-card">
+        <v-card-title class="d-flex align-center px-6 py-4 bg-info">
+          <v-icon class="mr-2" color="white">mdi-web</v-icon>
+          <span class="text-white">Instruções de Integração</span>
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" color="white" @click="webhookDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        
+        <v-card-text class="pa-6">
+          <p class="mb-4">Envie os dados de lote (Batch) para a campanha <strong>{{ webhookConfig?.name }}</strong> utilizando a URL do seu serviço Disparador:</p>
+          
+          <v-sheet
+            class="pa-4 mb-4 rounded bg-surface-variant text-body-2"
+            elevation="1"
+            style="font-family: monospace; overflow-x: auto;"
+          >
+            POST {{ webhookUrlStr }}
+          </v-sheet>
+
+          <div class="d-flex align-center justify-space-between mb-2">
+            <p class="text-subtitle-2 mb-0">JSON Payload pronto para copiar:</p>
+            <v-btn size="small" variant="tonal" color="primary" @click="copyPayload">
+              <v-icon start size="16">mdi-content-copy</v-icon>
+              Copiar JSON
+            </v-btn>
+          </div>
+          <v-sheet
+            class="pa-4 mb-4 rounded bg-surface-variant text-body-2"
+            elevation="1"
+            style="font-family: monospace; white-space: pre; overflow-x: auto; max-height: 400px; overflow-y: auto;"
+          >
+{{ generatedPayload }}
+          </v-sheet>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+            A lista <code>messages</code> recebe um array de contatos. O sistema processará o disparo respeitando a configuração de lotes ({{"{{"}} webhookConfig?.messages_per_batch {{"}}"}} por vez).
+          </v-alert>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+            A chave <code>variables</code> pode conter metadados extras dos contatos que você quer injetar no prompt do agente para fins de personalização na mensagem.
+          </v-alert>
+        </v-card-text>
       </v-card>
     </v-dialog>
 
