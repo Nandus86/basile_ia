@@ -89,6 +89,11 @@ const routes = [
         path: 'workflows/:id',
         name: 'WorkflowEditor',
         component: () => import('@/views/WorkflowEditor.vue')
+      },
+      {
+        path: 'disparador',
+        name: 'Disparador',
+        component: () => import('@/views/Disparador.vue')
       }
     ]
   },

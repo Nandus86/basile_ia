@@ -1,0 +1,8 @@
+import asyncio
+import logging
+from app.worker.consumer import start_consumer
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+if __name__ == "__main__":
+    asyncio.run(start_consumer())

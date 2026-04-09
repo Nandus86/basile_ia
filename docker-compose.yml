@@ -138,6 +138,49 @@ services:
     networks:
       - basile-network
 
+  basile-disparador:
+    build:
+      context: ./disparador
+      dockerfile: Dockerfile
+    container_name: basile_disparador
+    restart: always
+    ports:
+      - "8010:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://basile:basile123@basile-postgres:5432/basile_db
+      - REDIS_URL=redis://basile-redis:6379
+      - RABBITMQ_URL=amqp://basile:basile_secret@basile-rabbitmq:5672/
+      - BASILE_API_URL=http://basile-backend:8000
+    depends_on:
+      - basile-redis
+      - basile-postgres
+      - basile-rabbitmq
+    volumes:
+      - ./disparador:/app
+    networks:
+      - basile-network
+
+  basile-disparador-worker:
+    build:
+      context: ./disparador
+      dockerfile: Dockerfile
+    container_name: basile_disparador_worker
+    restart: always
+    command: ["python", "run_worker.py"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://basile:basile123@basile-postgres:5432/basile_db
+      - REDIS_URL=redis://basile-redis:6379
+      - RABBITMQ_URL=amqp://basile:basile_secret@basile-rabbitmq:5672/
+      - BASILE_API_URL=http://basile-backend:8000
+    depends_on:
+      - basile-redis
+      - basile-postgres
+      - basile-rabbitmq
+    volumes:
+      - ./disparador:/app
+    networks:
+      - basile-network
+
 volumes:
   basile_redis_data:
   basile_postgres_data:

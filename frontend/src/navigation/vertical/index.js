@@ -1,4 +1,4 @@
-import { mdiFileOutline, mdiHomeOutline, mdiChartTimelineVariant } from '@mdi/js'
+import { mdiFileOutline, mdiHomeOutline, mdiChartTimelineVariant, mdiRocketLaunchOutline } from '@mdi/js'
 
 export default [
   {
@@ -15,5 +15,10 @@ export default [
     title: 'Agents',
     icon: mdiFileOutline,
     to: { name: 'Agents' },
+  },
+  {
+    title: 'Disparador',
+    icon: mdiRocketLaunchOutline,
+    to: { name: 'Disparador' },
   },
 ]

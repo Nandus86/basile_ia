@@ -26,6 +26,14 @@
       </div>
     </div>
 
+    <!-- Tabs Header -->
+    <v-tabs v-model="activeTab" color="primary" class="mb-6">
+      <v-tab value="webhooks">Webhooks</v-tab>
+      <v-tab value="disparador">Disparador</v-tab>
+    </v-tabs>
+
+    <v-window v-model="activeTab">
+      <v-window-item value="webhooks">
     <!-- Charts Section -->
     <v-row class="mb-6">
       <v-col cols="12" md="6">
@@ -397,6 +405,86 @@
         </v-card-text>
       </v-card>
     </v-dialog>
+      </v-window-item>
+
+      <v-window-item value="disparador">
+        <v-row class="mb-6 mt-2">
+          <v-col cols="12" md="3">
+            <v-card class="glass-card"><v-card-text><div class="text-overline">ATIVAS / PAUSADAS</div><div class="text-h4 text-primary">{{ dispStats.active_campaigns }}</div></v-card-text></v-card>
+          </v-col>
+          <v-col cols="12" md="3">
+            <v-card class="glass-card"><v-card-text><div class="text-overline">ENVIADAS HOJE</div><div class="text-h4 text-success">{{ dispStats.total_sent }}</div></v-card-text></v-card>
+          </v-col>
+          <v-col cols="12" md="3">
+            <v-card class="glass-card"><v-card-text><div class="text-overline">COMPLETAS</div><div class="text-h4 text-info">{{ dispStats.completed_campaigns }}</div></v-card-text></v-card>
+          </v-col>
+          <v-col cols="12" md="3">
+            <v-card class="glass-card"><v-card-text><div class="text-overline">FALHAS (DLQ)</div><div class="text-h4 text-error">{{ dispStats.total_failed }}</div></v-card-text></v-card>
+          </v-col>
+        </v-row>
+        
+        <div class="d-flex align-center mb-4">
+            <h3 class="text-subtitle-1 font-weight-bold">Campanhas em Execução</h3>
+            <v-spacer></v-spacer>
+            <v-btn color="primary" variant="tonal" prepend-icon="mdi-refresh" size="small" @click="fetchDisparadorData" :loading="dispLoading">Atualizar</v-btn>
+        </div>
+
+        <v-card class="glass-card">
+          <v-data-table :headers="dispHeaders" :items="dispCampaigns" :loading="dispLoading" hover>
+            <template #item.service_id="{ item }"><v-chip size="small" variant="outlined">{{ item.service_id }}</v-chip></template>
+            <template #item.status="{ item }">
+              <v-chip :color="item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'info'" size="small">
+                {{ item.status.toUpperCase() }}
+              </v-chip>
+            </template>
+            <template #item.percent="{ item }">
+              <div class="d-flex align-center w-100">
+                <v-progress-linear :model-value="item.percent" color="primary" height="8" rounded></v-progress-linear>
+                <span class="text-caption ml-2 min-w-[40px]">{{ item.percent }}%</span>
+              </div>
+            </template>
+            <template #item.actions="{ item }">
+               <v-btn size="small" variant="text" icon="mdi-magnify" color="primary" @click="openDispDetails(item)"></v-btn>
+            </template>
+          </v-data-table>
+        </v-card>
+        
+        <v-dialog v-model="dispDialog" max-width="700">
+          <v-card v-if="dispSelected" class="glass-card">
+             <v-card-title class="pa-6 border-b">
+                Campanha: {{ dispSelected.service_id }}
+                <v-chip size="small" class="ml-2" :color="dispSelected.status === 'running' ? 'success' : dispSelected.status === 'paused' ? 'warning' : 'info'">{{ dispSelected.status.toUpperCase() }}</v-chip>
+             </v-card-title>
+             <v-card-text class="pa-6">
+                <v-row>
+                  <v-col cols="4"><div class="text-caption text-medium-emphasis">Total</div><div class="text-h6">{{ dispSelected.total }}</div></v-col>
+                  <v-col cols="4"><div class="text-caption text-medium-emphasis">Enviados</div><div class="text-h6 text-success">{{ dispSelected.sent }}</div></v-col>
+                  <v-col cols="4"><div class="text-caption text-medium-emphasis">Falhas</div><div class="text-h6 text-error">{{ dispSelected.failed }}</div></v-col>
+                </v-row>
+                <div class="my-6">
+                    <div class="text-caption mb-1">Progresso ({{ dispSelected.percent }}%)</div>
+                    <v-progress-linear :model-value="dispSelected.percent" color="primary" height="12" rounded></v-progress-linear>
+                </div>
+                <div v-if="dispReport">
+                   <v-divider class="mb-4"></v-divider>
+                   <div class="text-subtitle-2 mb-2 text-info">Relatório Final Disponível</div>
+                   <div class="d-flex flex-wrap gap-4 mb-4">
+                     <v-chip variant="outlined" color="success">Taxa Sucesso: {{ dispReport.success_rate }}%</v-chip>
+                     <v-chip variant="outlined" color="error">DLQ: {{ dispReport.dlq_count }} contatos</v-chip>
+                   </div>
+                </div>
+             </v-card-text>
+             <v-card-actions class="pa-4 border-t">
+                <v-btn v-if="dispSelected.status === 'running'" color="warning" prepend-icon="mdi-pause" variant="flat" @click="dispAction('pause')" :loading="dispActionLoading">Pausar</v-btn>
+                <v-btn v-if="dispSelected.status === 'paused'" color="success" prepend-icon="mdi-play" variant="flat" @click="dispAction('resume')" :loading="dispActionLoading">Retomar</v-btn>
+                <v-btn v-if="dispReport && dispReport.dlq_count > 0" color="error" prepend-icon="mdi-refresh" variant="flat" @click="dispAction('retry-dlq')" :loading="dispActionLoading">Reprocessar DLQ</v-btn>
+                <v-spacer></v-spacer>
+                <v-btn variant="text" @click="dispDialog = false">Fechar</v-btn>
+             </v-card-actions>
+          </v-card>
+        </v-dialog>
+      </v-window-item>
+    </v-window>
     
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.text }}
@@ -411,6 +499,75 @@ import VueApexCharts from 'vue3-apexcharts'
 import ApexCharts from 'apexcharts'
 
 const apexchart = VueApexCharts
+
+const activeTab = ref('webhooks')
+
+const dispStats = ref({ total_campaigns: 0, active_campaigns: 0, completed_campaigns: 0, total_sent: 0, total_failed: 0 })
+const dispCampaigns = ref([])
+const dispLoading = ref(false)
+const dispDialog = ref(false)
+const dispSelected = ref(null)
+const dispReport = ref(null)
+const dispActionLoading = ref(false)
+
+const dispHeaders = [
+  { title: 'SERVICE ID', key: 'service_id' },
+  { title: 'STATUS', key: 'status' },
+  { title: 'TOTAL', key: 'total' },
+  { title: 'ENVIADAS', key: 'sent' },
+  { title: 'FALHAS', key: 'failed' },
+  { title: 'PROGRESSO', key: 'percent' },
+  { title: 'AÇÕES', key: 'actions', sortable: false, align: 'end' }
+]
+
+const fetchDisparadorData = async () => {
+    dispLoading.value = true
+    try {
+       const [resStats, resCamp] = await Promise.all([
+           axiosInstance.get('/api/disparador/dashboard/stats'),
+           axiosInstance.get('/api/disparador/dashboard/campaigns')
+       ])
+       dispStats.value = resStats.data
+       dispCampaigns.value = resCamp.data
+    } catch (e) {
+       console.error(e)
+    } finally {
+       dispLoading.value = false
+    }
+}
+
+const openDispDetails = async (item) => {
+    dispSelected.value = item
+    dispReport.value = null
+    dispDialog.value = true
+    if (item.status === 'completed') {
+        try {
+            const res = await axiosInstance.get(`/api/disparador/dashboard/campaigns/${item.service_id}/report`)
+            dispReport.value = res.data
+        } catch (e) {}
+    }
+}
+
+const dispAction = async (action) => {
+    if (!dispSelected.value) return
+    dispActionLoading.value = true
+    try {
+        await axiosInstance.post(`/api/disparador/campaigns/${dispSelected.value.service_id}/${action}`)
+        if (action === 'retry-dlq') {
+            dispReport.value.dlq_count = 0
+            snackbar.value = { show: true, text: 'Contatos falhados reenfileirados.', color: 'success' }
+        }
+        await fetchDisparadorData()
+        if (action !== 'retry-dlq') {
+           const updated = dispCampaigns.value.find(c => c.service_id === dispSelected.value.service_id)
+           if (updated) dispSelected.value = updated
+        }
+    } catch (e) {
+        snackbar.value = { show: true, text: 'Erro ao executar ação.', color: 'error' }
+    } finally {
+        dispActionLoading.value = false
+    }
+}
 
 // Loading
 const loading = ref(false)
@@ -854,6 +1011,7 @@ const showSnackbar = (text, color = 'success') => { snackbar.value = { show: tru
 
 onMounted(() => { 
   fetchData()
+  fetchDisparadorData()
   connectSSE()
 })
 

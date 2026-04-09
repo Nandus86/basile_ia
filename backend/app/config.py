@@ -26,9 +26,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     
     # OpenAI
-    OPENAI_API_KEY: str = ""
+    VFS_STORAGE_PATH: str = "./storage/vfs"
     
-    # OpenRouter
+    # Disparador Module
+    DISPARADOR_SERVICE_URL: str = "http://basile-disparador:8000"
+    
+    # Weaviate configuration
     OPENROUTER_API_KEY: str = ""
     
     # LangSmith (Optional - for observability)

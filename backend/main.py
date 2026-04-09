@@ -23,7 +23,19 @@ for _mod in ("app.services.mcp_tools", "app.orchestrator.agent_factory",
 
 from app.database import engine, Base
 from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control, backup
-from app.api.endpoints import ai_providers, webhooks_config, tracking
+from app.api.endpoints import (
+    api_keys,
+    mcp,
+    skills,
+    information_bases,
+    vfs_knowledge_base,
+    workflows,
+    ai_providers,
+    webhooks_config,
+    tracking,
+    dispatcher_config,
+    dispatcher_proxy,
+)
 from app.weaviate_client import weaviate_client
 from app.redis_client import redis_client
 from app.services.rabbitmq_service import rabbitmq_client
@@ -90,8 +102,10 @@ app.include_router(information_bases.router, prefix="/information-bases", tags=[
 app.include_router(database.router, prefix="/database", tags=["Database"])
 app.include_router(models.router, tags=["Models"])
 app.include_router(ai_providers.router, prefix="/ai-providers", tags=["AI Providers"])
-app.include_router(webhooks_config.router, prefix="/webhooks-config", tags=["Webhook Configs"])
-app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"])
+app.include_router(webhooks_config.router, prefix="/api/webhooks-config", tags=["Webhooks Config"])
+app.include_router(tracking.router, prefix="/api/tracking", tags=["Tracking e Acompanhamento"])
+app.include_router(dispatcher_config.router, prefix="/api/disparador-configs", tags=["Dispatcher Configs"])
+app.include_router(dispatcher_proxy.router, prefix="/api/disparador", tags=["Dispatcher Proxy"])
 app.include_router(workflows.router, prefix="/workflows", tags=["Workflows"])
 app.include_router(vfs.router, prefix="/vfs-knowledge-bases", tags=["VFS Knowledge Bases"])
 app.include_router(memory.router, prefix="/memory", tags=["Memory Management"])
