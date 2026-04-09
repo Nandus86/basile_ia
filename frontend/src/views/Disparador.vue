@@ -650,7 +650,7 @@ onMounted(() => {
 {{ generatedPayload }}
           </v-sheet>
           <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            A lista <code>messages</code> recebe um array de contatos. O sistema processará o disparo respeitando a configuração de lotes ({{"{{"}} webhookConfig?.messages_per_batch {{"}}"}} por vez).
+            A lista <code>messages</code> recebe um array de contatos. O sistema processará o disparo respeitando a configuração de lotes ({{ webhookConfig?.messages_per_batch }} por vez).
           </v-alert>
           <v-alert type="info" variant="tonal" density="compact" class="mb-3">
             A chave <code>variables</code> pode conter metadados extras dos contatos que você quer injetar no prompt do agente para fins de personalização na mensagem.
