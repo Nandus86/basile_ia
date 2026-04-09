@@ -411,7 +411,7 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
                         
                         if skill_route:
                             skill = skill_route["skill"]
-                            capability = skill_route["capability"]
+                            forced = skill_route.get("forced", False)
                             
                             all_flows = extract_all_flows(skill)
                             
@@ -426,7 +426,7 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
 
 ---
 
-## 🎯 FLUXO DE EXECUÇÃO - {capability['header']}
+## 🎯 FLUXO DE EXECUÇÃO - {skill.name}
 
 Siga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:
 
@@ -437,9 +437,48 @@ Siga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:
                                 system_prompt += flow_injection
                                 print(f"[Response] 🎯 Injected {len(all_flows)} flow(s) from skill '{skill.name}' (via Skill Router)")
                             else:
-                                capability_content = get_skill_content_for_capability(skill, capability["header"])
-                                if capability_content:
-                                    skill_injection = f"""
+                                if forced:
+                                    capabilities = skill_route.get("capabilities", [])
+                                    injected_count = 0
+                                    for cap in capabilities:
+                                        cap_content = get_skill_content_for_capability(skill, cap["header"])
+                                        if cap_content:
+                                            skill_injection = f"""
+
+---
+
+## 🔹 CAPABILITY ATIVADA: {cap['header']}
+
+{cap_content}
+
+---
+
+"""
+                                            system_prompt += skill_injection
+                                            injected_count += 1
+                                    
+                                    # Fallback caso não existam headers válidos na skill Sempre Ativa
+                                    if injected_count == 0 and skill.content_md:
+                                        skill_injection = f"""
+
+---
+
+## 🔹 CAPABILITIES DA SKILL ATIVA: {skill.name}
+
+{skill.content_md}
+
+---
+
+"""
+                                        system_prompt += skill_injection
+                                        
+                                    print(f"[Response] 🎯 Injected ALL capabilities ({injected_count}) from always_active skill '{skill.name}'")
+                                else:
+                                    capability = skill_route.get("capability")
+                                    if capability:
+                                        capability_content = get_skill_content_for_capability(skill, capability["header"])
+                                        if capability_content:
+                                            skill_injection = f"""
 
 ---
 
@@ -450,8 +489,8 @@ Siga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:
 ---
 
 """
-                                    system_prompt += skill_injection
-                                    print(f"[Response] 🎯 Injected skill capability '{capability['header']}' from skill '{skill.name}'")
+                                            system_prompt += skill_injection
+                                            print(f"[Response] 🎯 Injected skill capability '{capability['header']}' from skill '{skill.name}'")
             except Exception as e:
                 import traceback
                 print(f"[Response] Failed to detect and inject skills: {e}")

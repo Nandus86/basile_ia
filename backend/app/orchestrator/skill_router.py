@@ -54,12 +54,11 @@ class SkillRouter:
         if always_active_skills:
             skill = always_active_skills[0]
             caps = get_skills_capabilities_summary(skill)
-            if caps:
-                return {
-                    "skill": skill,
-                    "capability": caps[0],
-                    "forced": True
-                }
+            return {
+                "skill": skill,
+                "capabilities": caps,
+                "forced": True
+            }
         
         # Se não tem regular skills, retorna None
         if not regular_skills:
