@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class ContactItem(BaseModel):
-    phone: str
+    number: str
     name: str
 
 class SystemInfo(BaseModel):

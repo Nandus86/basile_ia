@@ -10,7 +10,7 @@ from app.services.rabbitmq_service import disparador_rmq
 
 router = APIRouter()
 
-@router.post("/{path:path}", response_model=DispatchAcceptedResponse)
+@router.post("/trigger/personalizado/{path:path}", response_model=DispatchAcceptedResponse)
 async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession = Depends(get_db)):
     query = select(DispatcherConfig).where(DispatcherConfig.path == path)
     result = await db.execute(query)

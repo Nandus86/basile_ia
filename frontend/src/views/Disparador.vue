@@ -185,11 +185,11 @@ const webhookUrlStr = computed(() => {
   const origin = window.location.origin
   const path = webhookConfig.value?.path || 'slug_da_campanha'
   if (origin.includes('localhost')) {
-    return 'http://localhost:8010/webhook/' + path
+    return 'http://localhost:8010/webhook/trigger/personalizado/' + path
   }
   // Substitute the frontend subdomain for the disparador subdomain if applicable
   const disparadorHost = origin.replace('painel.', 'disparador.').replace('app.', 'disparador.')
-  return disparadorHost + '/webhook/' + path
+  return disparadorHost + '/webhook/trigger/personalizado/' + path
 })
 
 const generatedPayload = computed(() => {
@@ -197,19 +197,25 @@ const generatedPayload = computed(() => {
   if (!cfg) return '{}'
   
   const payload = {
+    type_id: "id_do_tipo",
+    queue_id: "id_da_fila",
+    service_id: "seu_id_do_servico_123",
+    contacts: [
+      {
+        number: "5511999999999",
+        name: "Nome do Cliente"
+      }
+    ],
+    timestamp_create: new Date().toISOString(),
+    callback_url: "https://seu-sistema.com.br/disparador/callback",
+    context_data: {
+      connection_id: "instancia_whatsapp_id_abobora123",
+      "variavel_extra": "qualquer outra variavel pro prompt"
+    },
+    transition_data: {},
     system: {
       apikey: cfg.api_key || "sua-api-key-se-configurada"
-    },
-    messages: [
-      {
-        connection_id: "instancia_whatsapp_id",
-        user_name: "Nome do Cliente",
-        number: "5511999999999",
-        variables: {
-          "exemplo_variavel": "Valor opcional para substituir no prompt"
-        }
-      }
-    ]
+    }
   }
   
   return JSON.stringify(payload, null, 2)
@@ -650,10 +656,10 @@ onMounted(() => {
 {{ generatedPayload }}
           </v-sheet>
           <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            A lista <code>messages</code> recebe um array de contatos. O sistema processará o disparo respeitando a configuração de lotes ({{ webhookConfig?.messages_per_batch }} por vez).
+            A lista <code>contacts</code> recebe um array de contatos. O sistema processará o disparo respeitando a configuração de lotes ({{ webhookConfig?.messages_per_batch }} por vez).
           </v-alert>
           <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            A chave <code>variables</code> pode conter metadados extras dos contatos que você quer injetar no prompt do agente para fins de personalização na mensagem.
+            O bloco <code>context_data</code> deve conter metadados extras (como connection_id) para ser injetado no prompt de personalização e enviar ao Weni/Evolution.
           </v-alert>
         </v-card-text>
       </v-card>

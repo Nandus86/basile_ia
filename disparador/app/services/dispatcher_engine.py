@@ -54,9 +54,9 @@ async def send_progress(url: str, service_id: str, total: int, sent: int, failed
 
 async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, service_id: str, context_data: dict, transition_data: dict, callback_url: str, batch_position: int, batch_total: int):
     # Rate Limit
-    is_allowed = await disparador_redis.check_rate_limit(contact["phone"])
+    is_allowed = await disparador_redis.check_rate_limit(contact["number"])
     if not is_allowed:
-        logger.info(f"Rate limit skipped dispatch for {contact['phone']} in {service_id}")
+        logger.info(f"Rate limit skipped dispatch for {contact['number']} in {service_id}")
         await disparador_redis.increment_failed(service_id)
         await disparador_redis.add_to_dlq(service_id, contact, "Rate limit: Disparo muito recente para este número")
         return
@@ -67,12 +67,12 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     # ProcessRequest Payload
     agent_payload = {
         "message": "DISPARADOR_START", # Placeholder ou pode ser configurável
-        "session_id": f"{contact['phone']}_{service_id}",
+        "session_id": f"{contact['number']}_{service_id}",
         "agent_id": str(config.agent_id) if config.agent_id else None,
         "context_data": {
             **(context_data or {}),
             "contact_name": contact["name"],
-            "contact_phone": contact["phone"],
+            "contact_phone": contact["number"],
             "dispatcher_index": index,
             "dispatcher_triggers": config.triggers,
             "dispatcher_buttons": config.buttons if config.buttons_enabled else [],
