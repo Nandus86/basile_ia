@@ -60,7 +60,7 @@ const headers = [
 const fetchConfigs = async () => {
   loading.value = true
   try {
-    const res = await axios.get('/api/disparador-configs')
+    const res = await axios.get('/disparador-configs')
     configs.value = res.data.configs
     totalConfigs.value = res.data.total
   } catch (err) {
@@ -72,7 +72,7 @@ const fetchConfigs = async () => {
 
 const fetchAgents = async () => {
   try {
-    const res = await axios.get('/api/agents')
+    const res = await axios.get('/agents')
     agents.value = res.data.agents
   } catch (err) {
     console.error('Erro ao carregar agentes', err)
@@ -106,7 +106,7 @@ const deleteConfig = async () => {
   if (!configToDelete.value) return
   isDeleting.value = true
   try {
-    await axios.delete(`/api/disparador-configs/${configToDelete.value.id}`)
+    await axios.delete(`/disparador-configs/${configToDelete.value.id}`)
     showSnackbar('Configuração excluída com sucesso')
     await fetchConfigs()
   } catch (err) {
@@ -122,10 +122,10 @@ const saveConfig = async () => {
   isSaving.value = true
   try {
     if (isEditing.value) {
-      await axios.put(`/api/disparador-configs/${editedItem.value.id}`, editedItem.value)
+      await axios.put(`/disparador-configs/${editedItem.value.id}`, editedItem.value)
       showSnackbar('Configuração atualizada com sucesso')
     } else {
-      await axios.post('/api/disparador-configs', editedItem.value)
+      await axios.post('/disparador-configs', editedItem.value)
       showSnackbar('Configuração criada com sucesso')
     }
     closeDialog()
@@ -156,7 +156,7 @@ const generateApiKey = () => {
 
 const toggleActive = async (item) => {
   try {
-    await axios.put(`/api/disparador-configs/${item.id}`, { is_active: item.is_active })
+    await axios.put(`/disparador-configs/${item.id}`, { is_active: item.is_active })
     showSnackbar(item.is_active ? 'Endpoint ativado' : 'Endpoint desativado')
   } catch (error) {
     item.is_active = !item.is_active

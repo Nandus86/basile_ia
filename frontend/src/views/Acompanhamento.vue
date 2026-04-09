@@ -524,8 +524,8 @@ const fetchDisparadorData = async () => {
     dispLoading.value = true
     try {
        const [resStats, resCamp] = await Promise.all([
-           axiosInstance.get('/api/disparador/dashboard/stats'),
-           axiosInstance.get('/api/disparador/dashboard/campaigns')
+           axiosInstance.get('/disparador/dashboard/stats'),
+           axiosInstance.get('/disparador/dashboard/campaigns')
        ])
        dispStats.value = resStats.data
        dispCampaigns.value = resCamp.data
@@ -542,7 +542,7 @@ const openDispDetails = async (item) => {
     dispDialog.value = true
     if (item.status === 'completed') {
         try {
-            const res = await axiosInstance.get(`/api/disparador/dashboard/campaigns/${item.service_id}/report`)
+            const res = await axiosInstance.get(`/disparador/dashboard/campaigns/${item.service_id}/report`)
             dispReport.value = res.data
         } catch (e) {}
     }
@@ -552,7 +552,7 @@ const dispAction = async (action) => {
     if (!dispSelected.value) return
     dispActionLoading.value = true
     try {
-        await axiosInstance.post(`/api/disparador/campaigns/${dispSelected.value.service_id}/${action}`)
+        await axiosInstance.post(`/disparador/campaigns/${dispSelected.value.service_id}/${action}`)
         if (action === 'retry-dlq') {
             dispReport.value.dlq_count = 0
             snackbar.value = { show: true, text: 'Contatos falhados reenfileirados.', color: 'success' }
