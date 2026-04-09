@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     
     # OpenAI
+    OPENAI_API_KEY: str = ""
     VFS_STORAGE_PATH: str = "./storage/vfs"
     
     # Disparador Module
