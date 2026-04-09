@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import axios from '@axios'
+import axios from '@/plugins/axios'
 import { mdiRocketLaunchOutline, mdiPlus, mdiTrashCanOutline, mdiPencilOutline } from '@mdi/js'
 
 const configs = ref([])
