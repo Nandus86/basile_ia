@@ -297,6 +297,81 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             logger.error(f"[AgentFactory] Error fetching training memory rules: {e}")
             
         return system_prompt
+
+    async def _inject_dynamic_skills(self, agent_config: Dict[str, Any], messages: List[Any], system_prompt: str) -> str:
+        """Inject skills dynamically based on user intent."""
+        from langchain_core.messages import HumanMessage
+        
+        last_user_content = ""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage) and msg.content:
+                last_user_content = str(msg.content)
+                break
+                
+        if not last_user_content:
+            return system_prompt
+            
+        agent = agent_config.get("agent_model")
+        if not agent or not getattr(agent, "skills", None):
+            return system_prompt
+            
+        active_skills_for_detection = [s for s in agent.skills if s.is_active]
+        if not active_skills_for_detection:
+            return system_prompt
+            
+        try:
+            from app.orchestrator.skill_router import SkillRouter
+            from app.services.skill_detector import get_skill_content_for_capability, extract_all_flows
+            
+            router = SkillRouter()
+            skill_route = await router.analyze(last_user_content, active_skills_for_detection)
+            
+            if skill_route:
+                skill = skill_route["skill"]
+                forced = skill_route.get("forced", False)
+                
+                all_flows = extract_all_flows(skill)
+                
+                if all_flows:
+                    flows_text = "\n\n".join([
+                        f"### Etapa {f['etapa']}\n{f['flow']}\n" + 
+                        ("⚠️ **AGUARDE RESPOSTA DO USUÁRIO ANTES DE CONTINUAR**\n" if f['has_hitl'] else "")
+                        for f in all_flows
+                    ])
+                    
+                    flow_injection = f"\n---\n\n## 🎯 FLUXO DE EXECUÇÃO - {skill.name}\n\nSiga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:\n\n{flows_text}\n\n---\n"
+                    system_prompt += flow_injection
+                    logger.info(f"[AgentFactory] 🎯 Injected {len(all_flows)} flow(s) from skill '{skill.name}' (via Skill Router)")
+                else:
+                    if forced:
+                        capabilities = skill_route.get("capabilities", [])
+                        injected_count = 0
+                        for cap in capabilities:
+                            cap_content = get_skill_content_for_capability(skill, cap["header"])
+                            if cap_content:
+                                skill_injection = f"\n---\n\n## 🔹 CAPABILITY ATIVADA: {cap['header']}\n\n{cap_content}\n\n---\n"
+                                system_prompt += skill_injection
+                                injected_count += 1
+                        
+                        if injected_count == 0 and skill.content_md:
+                            skill_injection = f"\n---\n\n## 🔹 CAPABILITIES DA SKILL ATIVA: {skill.name}\n\n{skill.content_md}\n\n---\n"
+                            system_prompt += skill_injection
+                            
+                        logger.info(f"[AgentFactory] 🎯 Injected ALL capabilities ({injected_count}) from always_active skill '{skill.name}'")
+                    else:
+                        capability = skill_route.get("capability")
+                        if capability:
+                            capability_content = get_skill_content_for_capability(skill, capability["header"])
+                            if capability_content:
+                                skill_injection = f"\n---\n\n## 🔹 CAPABILITY ATIVADA: {capability['header']}\n\n{capability_content}\n\n---\n"
+                                system_prompt += skill_injection
+                                logger.info(f"[AgentFactory] 🎯 Injected skill capability '{capability['header']}' from skill '{skill.name}'")
+        except Exception as e:
+            import traceback
+            logger.error(f"[AgentFactory] Failed to detect and inject skills: {e}")
+            traceback.print_exc()
+            
+        return system_prompt
     
     async def invoke_agent(
         self,
@@ -418,6 +493,9 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         # Inject RLHF Training Rules
         system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
+        
+        # Inject Dynamic Skills (using new LLM-based router)
+        system_prompt = await self._inject_dynamic_skills(agent_config, messages, system_prompt)
         
         # Add RAG context if available
         if rag_context:
@@ -596,6 +674,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 
         # Inject RLHF Training Rules
         system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
+        
+        # Inject Dynamic Skills (using new LLM-based router)
+        system_prompt = await self._inject_dynamic_skills(agent_config, messages, system_prompt)
         
         # Add RAG context if available
         if rag_context:
