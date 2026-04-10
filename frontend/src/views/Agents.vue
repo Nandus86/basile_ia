@@ -2149,6 +2149,7 @@ const formData = reactive({
   transition_output_schema: null,
   trigger_keywords: [],
   entity_memory_path: null,
+  provider_id: null,
   config: {
     is_reasoning_model: false,
     reasoning_effort: 'medium',
@@ -2328,6 +2329,7 @@ const savingCollab = ref(false)
 
 // Agent Groups / Folders
 const agentGroups = ref([])
+const customProviders = ref([])
 const currentFolder = ref(null)
 const breadcrumb = ref([])
 const groupDialog = ref(false)
@@ -2374,10 +2376,23 @@ const loadingModels = ref(false)
 const allModels = ref([])
 
 const activeProvider = ref('openai')
-const providerOptions = [
-  { title: '🟢 OpenAI', value: 'openai' },
-  { title: '🔵 OpenRouter', value: 'openrouter' }
-]
+const providerOptions = computed(() => {
+  const options = [
+    { title: '🟢 OpenAI', value: 'openai' },
+    { title: '🔵 OpenRouter', value: 'openrouter' }
+  ]
+  
+  customProviders.value.forEach(p => {
+    options.push({
+      title: `🌐 ${p.name}`,
+      value: p.id,
+      isCustom: true,
+      default_model: p.default_model
+    })
+  })
+  
+  return options
+})
 
 const modelOptions = computed(() => {
   return allModels.value
@@ -2580,7 +2595,8 @@ function resetForm() {
       max_completion_tokens: 16384,
       short_term_memory_enabled: true,
       short_term_memory_ttl_hours: 24
-    }
+    },
+    provider_id: null
   })
   outputSchemaJson.value = ''
   outputSchemaError.value = ''
@@ -2688,6 +2704,15 @@ async function fetchModels() {
     ]
   } finally {
     loadingModels.value = false
+  }
+}
+
+async function fetchCustomProviders() {
+  try {
+    const response = await axios.get('/ai-providers')
+    customProviders.value = response.data.providers || []
+  } catch (error) {
+    console.error('Error fetching custom providers:', error)
   }
 }
 
@@ -2850,6 +2875,7 @@ async function openDialog(agent = null) {
         transition_output_schema: fullAgent.transition_output_schema || null,
         trigger_keywords: fullAgent.trigger_keywords || [],
         entity_memory_path: fullAgent.entity_memory_path || null,
+        provider_id: fullAgent.provider_id || null,
         config: {
           is_reasoning_model: fullAgent.config?.is_reasoning_model ?? false,
           reasoning_effort: fullAgent.config?.reasoning_effort || 'medium',
@@ -2868,8 +2894,9 @@ async function openDialog(agent = null) {
         }
       })
       
-      const foundModel = allModels.value.find(m => m.id === fullAgent.model)
-      if (foundModel) {
+      if (fullAgent.provider_id) {
+        activeProvider.value = fullAgent.provider_id
+      } else if (foundModel) {
         activeProvider.value = foundModel.provider
       } else if (fullAgent.model?.includes('/')) {
         activeProvider.value = 'openrouter'
@@ -2926,7 +2953,8 @@ async function openDialog(agent = null) {
         fetchAgentBases(fullAgent.id),
         fetchAllVFSBases(),
         fetchAgentVFSBases(fullAgent.id),
-        fetchEmotionalProfiles()
+        fetchEmotionalProfiles(),
+        fetchCustomProviders()
       ])
     } catch (error) {
       console.error('Error fetching agent details:', error)
@@ -2939,6 +2967,19 @@ async function openDialog(agent = null) {
   }
   dialog.value = true
 }
+
+watch(activeProvider, (newValue) => {
+  const custom = providerOptions.value.find(p => p.value === newValue && p.isCustom)
+  if (custom) {
+    formData.provider_id = custom.value
+    // Auto-preencher modelo se estiver vazio e o provedor tiver um default
+    if (!formData.model && custom.default_model) {
+      formData.model = custom.default_model
+    }
+  } else {
+    formData.provider_id = null
+  }
+})
 
 async function saveData() {
   saving.value = true
@@ -3463,6 +3504,7 @@ onMounted(() => {
   fetchModels()
   fetchAllMcpGroups()
   fetchGroups()
+  fetchCustomProviders()
 })
 </script>
 
