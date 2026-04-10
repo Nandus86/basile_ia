@@ -416,7 +416,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
 
             if callback_url:
                 import httpx
+                import random
                 try:
+                    # ═══════════════════════════════════════════════════════
+                    # LOAD BALANCER: Organic delay for natural response timing
+                    # ═══════════════════════════════════════════════════════
+                    lb_delay = random.uniform(0.8, 2.5)
+                    logger.info(f"[LoadBalance] Organic delay applied: {lb_delay:.2f}s before callback")
+                    await asyncio.sleep(lb_delay)
+
                     async with httpx.AsyncClient() as client:
                         response_data = {
                             "status": "completed",

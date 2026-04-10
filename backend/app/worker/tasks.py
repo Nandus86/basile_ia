@@ -1250,6 +1250,87 @@ async def _check_trigger_mcps(
 # Main task: process_message_task
 # ─────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────
+# Anti-Bot Guard — detect AI/bot interlocutors
+# ─────────────────────────────────────────────────────────────
+
+async def _check_anti_bot_guard(session_id: str, history: list) -> bool:
+    """
+    Anti-Bot Guard: every 5 user messages, analyze if interlocutor is a bot.
+    Returns True if the session should be BLOCKED (bot detected), False otherwise.
+    """
+    try:
+        # Increment counter
+        count = await redis_client.increment_antibot_counter(session_id)
+
+        # Only check every 5 messages
+        if count % 5 != 0:
+            return False
+
+        # Collect only user messages from history (last 5)
+        user_messages = [
+            msg.get("content", "") for msg in history
+            if msg.get("role") == "user"
+        ][-5:]
+
+        if len(user_messages) < 5:
+            return False
+
+        # Build analysis prompt
+        messages_block = "\n".join([f"MSG {i+1}: {m}" for i, m in enumerate(user_messages)])
+
+        detection_prompt = (
+            "Você é um sistema de detecção de bots/IA. Analise as 5 mensagens abaixo de um suposto HUMANO "
+            "conversando via WhatsApp e determine se ele parece ser outra IA/bot ou um humano real.\n\n"
+            "INDICADORES DE BOT/IA:\n"
+            "- Respostas perfeitamente estruturadas com bullet points, headers ou formatação markdown\n"
+            "- Ausência total de erros de digitação, gírias, abreviações ou informalidade\n"
+            "- Respostas excessivamente longas e completas para uma conversa casual de WhatsApp\n"
+            "- Padrão repetitivo de estrutura (todas as respostas seguem o mesmo molde)\n"
+            "- Uso excessivo de emojis de forma pré-formatada/mecânica\n"
+            "- Linguagem que parece instruções a um assistente ou respostas de assistente\n\n"
+            "INDICADORES DE HUMANO:\n"
+            "- Erros de digitação, abreviações (vc, tb, pq, blz)\n"
+            "- Mensagens curtas e diretas típicas de WhatsApp\n"
+            "- Variação natural no tamanho e estilo das mensagens\n"
+            "- Gírias, informalidade, expressões coloquiais\n"
+            "- Respostas que fazem sentido no contexto de uma conversa real\n\n"
+            f"MENSAGENS DO SUPOSTO HUMANO:\n{messages_block}\n\n"
+            "Responda EXCLUSIVAMENTE com uma destas duas palavras:\n"
+            "BOT_DETECTED — se parecer ser uma IA/bot\n"
+            "HUMAN_OK — se parecer ser um humano real"
+        )
+
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0,
+            api_key=settings.OPENAI_API_KEY,
+            max_tokens=20,
+        )
+
+        response = await llm.ainvoke([
+            SystemMessage(content="You are a bot detection system. Reply only with BOT_DETECTED or HUMAN_OK."),
+            HumanMessage(content=detection_prompt),
+        ])
+
+        verdict = response.content.strip().upper()
+        print(f"[AntiBot] 🔍 Session {session_id}: message count={count}, verdict={verdict}")
+
+        if "BOT_DETECTED" in verdict:
+            await redis_client.set_antibot_blocked(session_id, ttl=3600)
+            print(f"[AntiBot] 🚫 Session {session_id} BLOCKED — bot detected! TTL=1h")
+            return True
+
+        return False
+
+    except Exception as e:
+        print(f"[AntiBot] ⚠️ Error in anti-bot guard: {e}")
+        return False  # Never block on error — fail open
+
+
 async def process_message_task(
     ctx: dict,
     message: str,
@@ -1448,6 +1529,33 @@ async def process_message_task(
             # MTM: save user message to PostgreSQL
             if agent_id and session_id:
                 await _save_mtm_message(db, agent_id, session_id, "user", message)
+
+            # ═══════════════════════════════════════════════════════
+            # GUARD: Anti-Bot Detection
+            # ═══════════════════════════════════════════════════════
+            if session_id:
+                # Fast path: check if already blocked
+                if await redis_client.is_antibot_blocked(session_id):
+                    print(f"[AntiBot] 🚫 Session {session_id} is BLOCKED (bot). Returning silence.")
+                    processing_time = (time.time() - start_time) * 1000
+                    return {
+                        "status": "completed",
+                        "response": "",
+                        "agent_used": "AntiBot Guard",
+                        "processing_time_ms": processing_time,
+                    }
+
+                # Periodic check every 5 messages
+                is_bot = await _check_anti_bot_guard(session_id, history)
+                if is_bot:
+                    print(f"[AntiBot] 🚫 Session {session_id} just got BLOCKED. Returning silence.")
+                    processing_time = (time.time() - start_time) * 1000
+                    return {
+                        "status": "completed",
+                        "response": "",
+                        "agent_used": "AntiBot Guard",
+                        "processing_time_ms": processing_time,
+                    }
 
             # Build LangChain messages
             user_tz_name = _resolve_tz_name(transition_data)

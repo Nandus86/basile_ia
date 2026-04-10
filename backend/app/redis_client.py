@@ -218,6 +218,35 @@ class RedisClient:
         client = await self.connect()
         await client.delete(f"agent_pause:{session_id}")
 
+    # ─── Anti-Bot Guard ───────────────────────────────────────
+
+    async def increment_antibot_counter(self, session_id: str) -> int:
+        """Increment the anti-bot message counter for a session. Returns new count."""
+        client = await self.connect()
+        key = f"antibot:count:{session_id}"
+        count = await client.incr(key)
+        # Auto-expire counter after 24h of inactivity
+        await client.expire(key, 86400)
+        return count
+
+    async def set_antibot_blocked(self, session_id: str, ttl: int = 3600):
+        """Block a session flagged as bot. Default 1h TTL."""
+        client = await self.connect()
+        await client.setex(f"antibot:blocked:{session_id}", ttl, "blocked")
+
+    async def is_antibot_blocked(self, session_id: str) -> bool:
+        """Check if a session is currently blocked by anti-bot guard."""
+        client = await self.connect()
+        return await client.exists(f"antibot:blocked:{session_id}") > 0
+
+    async def reset_antibot(self, session_id: str):
+        """Clear anti-bot counter and blocked flag for a session."""
+        client = await self.connect()
+        pipe = client.pipeline(transaction=True)
+        pipe.delete(f"antibot:count:{session_id}")
+        pipe.delete(f"antibot:blocked:{session_id}")
+        await pipe.execute()
+
 
 # Global instance
 redis_client = RedisClient()
