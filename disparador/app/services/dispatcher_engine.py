@@ -69,6 +69,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "message": "DISPARADOR_START", # Placeholder ou pode ser configurável
         "session_id": f"{contact['number']}_{service_id}",
         "agent_id": str(config.agent_id) if config.agent_id else None,
+        "callback_url": callback_url,
         "context_data": {
             **(context_data or {}),
             "contact_name": contact["name"],
@@ -89,27 +90,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         await disparador_redis.add_to_dlq(service_id, contact, str(e))
         await disparador_redis.increment_failed(service_id)
         return
-        
-    # Callback Payload
-    callback_payload = {
-        "status": "completed",
-        "service_id": service_id,
-        "contact": contact,
-        "dispatcher_index": index,
-        "dispatcher_triggers": config.triggers,
-        "dispatcher_buttons": config.buttons if config.buttons_enabled else [],
-        "dispatcher_image_enabled": config.image_enabled,
-        "agent_response": agent_response,
-    }
     
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(callback_url, json=callback_payload)
-            resp.raise_for_status()
-    except Exception as e:
-        logger.error(f"Failed to send result to callback URL {callback_url}: {e}")
-        # Not adding to DLQ as the message was already sent by the agent, just the logging failed to system.
-        
     await disparador_redis.increment_sent(service_id)
     
     # Delay
