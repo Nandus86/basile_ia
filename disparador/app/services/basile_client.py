@@ -18,8 +18,10 @@ class BasileClient:
         await self.client.aclose()
 
     async def post_to_agent(self, webhook_path: str, payload: dict) -> dict:
-        """Posts a ProcessRequest directly to the Basile endpoint. Retries 3 times on failure."""
-        url = f"/webhook/{webhook_path}"
+        """Posts a ProcessRequest directly to the Basile /webhook/process endpoint.
+        The payload must include agent_id and session_id.
+        Retries 3 times on failure."""
+        url = "/webhook/process"
         max_retries = 3
         backoff = 2.0
         
