@@ -148,6 +148,9 @@ class Agent(Base):
     emotional_profile_id = Column(UUID(as_uuid=True), ForeignKey("emotional_profiles.id", ondelete="SET NULL"), nullable=True)
     emotional_intensity = Column(String(20), default="medium")  # low, medium, high
 
+    # AI Provider configuration
+    provider_id = Column(UUID(as_uuid=True), ForeignKey("ai_providers.id", ondelete="SET NULL"), nullable=True)
+
     # Folder group (hierarchical)
     group_id = Column(UUID(as_uuid=True), ForeignKey("agent_groups.id", ondelete="SET NULL"), nullable=True)
 
@@ -225,6 +228,12 @@ class Agent(Base):
     # Emotional profile relationship
     emotional_profile = relationship(
         "EmotionalProfile",
+        lazy="selectin"
+    )
+    
+    # AI Provider relationship
+    provider = relationship(
+        "AIProvider",
         lazy="selectin"
     )
     

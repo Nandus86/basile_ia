@@ -50,6 +50,7 @@ class AgentFactory:
                 selectinload(Agent.skills),
                 selectinload(Agent.information_bases),
                 selectinload(Agent.vfs_knowledge_bases),
+                selectinload(Agent.provider),
             )
             .where(Agent.is_active == True)
         )
@@ -73,6 +74,7 @@ class AgentFactory:
                 selectinload(Agent.information_bases),
                 selectinload(Agent.vfs_knowledge_bases),
                 selectinload(Agent.collaborator_settings),
+                selectinload(Agent.provider),
             )
             .where(Agent.id == agent_id, Agent.is_active == True)
         )
@@ -193,6 +195,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             "agent_model": agent,  # Keep reference for collaboration
             "skills_summary": skills_summary,  # For orchestrator to see collaborator skills
             "greeting_config": greeting_config,
+            "provider": agent.provider if hasattr(agent, "provider") else None,
         }
         
         self._agent_cache[agent_id] = config
@@ -224,18 +227,27 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             kwargs["temperature"] = agent_config.get("temperature", 0.7)
             kwargs["max_tokens"] = agent_config.get("max_tokens", 2048)
         
-        # Determina se o modelo deve ser roteado pelo OpenRouter
-        # Modelos OpenRouter normalmente têm '/' em seu ID, mas adicionamos exceções para os requests manuais do usuário
-        openrouter_specials = ["sambanova", "groq"]
-        is_openrouter = "/" in model_id or model_id in openrouter_specials
+        # Determina o provedor e as credenciais
+        provider = agent_config.get("provider")
         
-        if is_openrouter:
-            # OpenRouter model
-            kwargs["api_key"] = settings.OPENROUTER_API_KEY
-            kwargs["base_url"] = "https://openrouter.ai/api/v1"
+        if provider and provider.is_active:
+            # Custom AI Provider (Ollama, Anthropic, etc.)
+            kwargs["api_key"] = provider.api_key
+            if provider.base_url:
+                kwargs["base_url"] = provider.base_url
+            logger.info(f"[AgentFactory] 🌐 Usando provedor customizado '{provider.name}' para o modelo '{model_id}'")
         else:
-            # OpenAI direct
-            kwargs["api_key"] = settings.OPENAI_API_KEY
+            # Fallback para lógica padrão (OpenRouter/OpenAI)
+            openrouter_specials = ["sambanova", "groq"]
+            is_openrouter = "/" in model_id or model_id in openrouter_specials
+            
+            if is_openrouter:
+                # OpenRouter model
+                kwargs["api_key"] = settings.OPENROUTER_API_KEY
+                kwargs["base_url"] = "https://openrouter.ai/api/v1"
+            else:
+                # OpenAI direct
+                kwargs["api_key"] = settings.OPENAI_API_KEY
             
         # Apply resilience timeout 
         resilience_cfg = agent_config.get("resilience", {})

@@ -90,6 +90,7 @@ async def list_agents(
             mcp_count=len(agent.mcps) if agent.mcps else 0,
             collaborator_count=len(agent.collaborator_settings) if agent.collaborator_settings else 0,
             group_id=agent.group_id,
+            provider_id=agent.provider_id,
             created_at=agent.created_at
         ))
     
@@ -110,7 +111,8 @@ async def get_agent(
             selectinload(Agent.skills),
             selectinload(Agent.information_bases),
             selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator),
-            selectinload(Agent.emotional_profile)
+            selectinload(Agent.emotional_profile),
+            selectinload(Agent.provider)
         )
         .where(Agent.id == agent_id)
     )
@@ -172,6 +174,7 @@ async def get_agent(
         status_updates_enabled=agent.status_updates_enabled,
         status_updates_config=agent.status_updates_config,
         trigger_keywords=agent.trigger_keywords or [],
+        provider_id=agent.provider_id,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
@@ -200,6 +203,9 @@ async def create_agent(
     # Remove None FK values to avoid constraint issues
     if agent_dict.get("emotional_profile_id") is None:
         agent_dict.pop("emotional_profile_id", None)
+    
+    if agent_dict.get("provider_id") is None:
+        agent_dict.pop("provider_id", None)
     
     agent = Agent(**agent_dict)
     
