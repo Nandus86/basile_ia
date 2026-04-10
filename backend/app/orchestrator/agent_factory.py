@@ -234,8 +234,16 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             # Custom AI Provider (Ollama, Anthropic, etc.)
             kwargs["api_key"] = provider.api_key
             if provider.base_url:
-                kwargs["base_url"] = provider.base_url
-            logger.info(f"[AgentFactory] 🌐 Usando provedor customizado '{provider.name}' para o modelo '{model_id}'")
+                base_url = provider.base_url
+                # Heurística: Se não tem /v1 e parece ser uma URL de base, adiciona /v1
+                # Isso resolve o problema comum de 404 no Ollama (que exige /v1 para compatibilidade OpenAI)
+                if "/v1" not in base_url and "/api" not in base_url:
+                    base_url = base_url.rstrip("/") + "/v1"
+                
+                kwargs["base_url"] = base_url
+                logger.info(f"[AgentFactory] 🌐 Usando provedor customizado '{provider.name}' na URL '{base_url}' para o modelo '{model_id}'")
+            else:
+                logger.info(f"[AgentFactory] 🌐 Usando provedor customizado '{provider.name}' (sem base_url) para o modelo '{model_id}'")
         else:
             # Fallback para lógica padrão (OpenRouter/OpenAI)
             openrouter_specials = ["sambanova", "groq"]
