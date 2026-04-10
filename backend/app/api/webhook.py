@@ -22,6 +22,7 @@ from app.models.job_log import JobLog
 
 import httpx
 from fastapi import Request
+from fastapi.responses import JSONResponse
 from app.config import settings
 
 router = APIRouter()
