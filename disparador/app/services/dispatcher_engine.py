@@ -123,17 +123,51 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     lb_delay = random.uniform(0.5, 1.2)
     await asyncio.sleep(lb_delay)
 
-async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str):
+async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, timestamp_create: str = None):
     total = len(contacts)
     if total == 0:
         return
         
+    triplet_key = f"{type_id}:{queue_id}:{service_id}"
     await disparador_redis.init_campaign(service_id, total, str(config.id), config.path)
     
-    if config.start_delay_seconds > 0:
-        await asyncio.sleep(config.start_delay_seconds)
+    # 1. Dynamic Start Delay
+    wait_time = config.start_delay_seconds
+    if timestamp_create and config.start_delay_seconds > 0:
+        try:
+            # Assumes ISO format from worker/consumer or previous re-queue
+            created_at = datetime.fromisoformat(timestamp_create.replace("Z", "+00:00"))
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            
+            now = datetime.now(timezone.utc)
+            elapsed = (now - created_at).total_seconds()
+            wait_time = max(0, config.start_delay_seconds - elapsed)
+            logger.info(f"Campaign {service_id} dynamic wait: {wait_time:.1f}s (Original: {config.start_delay_seconds}s, Elapsed: {elapsed:.1f}s)")
+        except Exception as e:
+            logger.warning(f"Failed to calculate dynamic delay for {service_id}: {e}")
+            wait_time = config.start_delay_seconds
+
+    if wait_time > 0:
+        await disparador_redis.set_dispatch_status(triplet_key, "waiting")
+        try:
+            # We use a simple sleep for now, but consumer can cancel the task
+            await asyncio.sleep(wait_time)
+        except asyncio.CancelledError:
+            logger.info(f"Dispatch task for {triplet_key} CANCELLED during wait.")
+            # Status will be cleaned up by the consumer or signal
+            raise
+
+    # 2. Check if we should still proceed (idempotency check)
+    # If the status is no longer waiting (e.g. was cancelled or replaced), we might be in trouble
+    # but the consumer handles the 'sending' block.
+    await disparador_redis.set_dispatch_status(triplet_key, "sending")
         
     for i, contact in enumerate(contacts):
+        # 3. Check for cancellation/interruption mid-batch (optional but good)
+        # In this specific requirement, if it's already "sending", new ones are ignored.
+        # But if the user manually pauses/stops, we check that too.
+        
         # Pause Check
         while await disparador_redis.is_paused(service_id):
             logger.info(f"Campaign {service_id} is paused. Waiting 5s...")
@@ -152,11 +186,13 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                     "context_data": context_data,
                     "transition_data": transition_data,
                     "callback_url": callback_url,
-                    "timestamp_create": datetime.now(ZoneInfo("UTC")).isoformat()
+                    "timestamp_create": timestamp_create or datetime.now(ZoneInfo("UTC")).isoformat()
                 }
                 # Publish individual missing messages
-                queue_name = f"disp_{type_id}_{queue_id}"
                 await disparador_rmq.publish_contact(type_id, queue_id, requeue_payload)
+            
+            # Since we are re-queuing, we clear status so it can be picked up later in the right window
+            await disparador_redis.delete_dispatch_status(triplet_key)
             break
             
         await dispatch_contact(config, type_id, queue_id, contact, service_id, context_data, transition_data, callback_url, i, total)
@@ -170,10 +206,12 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                 failed = campaign.get("failed", 0) if campaign else 0
                 await send_progress(config.progress_callback_url, service_id, total, sent, failed)
                 
-    # Loop Finished
+    # 4. Loop Finished
+    await disparador_redis.set_dispatch_status(triplet_key, "completed")
     campaign = await disparador_redis.get_campaign(service_id)
     if campaign:
         if campaign.get("sent", 0) + campaign.get("failed", 0) >= campaign.get("total", 0):
             await disparador_redis.complete_campaign(service_id)
             if config.progress_callback_url:
                 await send_progress(config.progress_callback_url, service_id, campaign["total"], campaign["sent"], campaign["failed"], status="completed")
+

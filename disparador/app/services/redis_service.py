@@ -197,4 +197,28 @@ class DisparadorRedis:
         result = await self.client.set(key, "1", nx=True, ex=cooldown_seconds)
         return result is True
 
+    # -- Dispatch Status and Cancellation --
+    async def get_dispatch_status(self, triplet_key: str) -> Optional[str]:
+        """Returns waiting, sending, completed or None"""
+        await self.ensure_connected()
+        key = f"disp:status:{triplet_key}"
+        return await self.client.get(key)
+
+    async def set_dispatch_status(self, triplet_key: str, status: str, ttl: int = 86400):
+        """Sets dispatch status (waiting, sending, completed)"""
+        await self.ensure_connected()
+        key = f"disp:status:{triplet_key}"
+        await self.client.set(key, status, ex=ttl)
+
+    async def delete_dispatch_status(self, triplet_key: str):
+        await self.ensure_connected()
+        await self.client.delete(f"disp:status:{triplet_key}")
+
+    async def signal_cancel(self, triplet_key: str):
+        """Sends a cancellation signal for a triplet via PubSub"""
+        await self.ensure_connected()
+        channel = f"disp:cancel-chan:{triplet_key}"
+        await self.client.publish(channel, "cancel")
+
 disparador_redis = DisparadorRedis()
+
