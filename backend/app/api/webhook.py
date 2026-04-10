@@ -20,8 +20,29 @@ from app.schemas.webhook import (
 from app.orchestrator import run_orchestrator_v2
 from app.models.job_log import JobLog
 
+import httpx
+from fastapi import Request
+from app.config import settings
+
 router = APIRouter()
 
+@router.post("/trigger/personalizado/{path:path}")
+async def proxy_disparador_trigger(path: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+        
+    disparador_url = f"{settings.DISPARADOR_SERVICE_URL}/webhook/trigger/personalizado/{path}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(disparador_url, json=body)
+            # Retorna o exato status_code e conteudo JSON devolvido pelo microserviço
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=resp.status_code, content=resp.json() if resp.text else {})
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Erro ao contatar o microserviço Disparador: {e}")
 
 @router.post("/receive", response_model=WebhookResponse)
 async def receive_webhook(
