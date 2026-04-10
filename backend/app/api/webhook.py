@@ -38,9 +38,12 @@ async def proxy_disparador_trigger(path: str, request: Request):
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(disparador_url, json=body)
-            # Retorna o exato status_code e conteudo JSON devolvido pelo microserviço
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=resp.status_code, content=resp.json() if resp.text else {})
+            try:
+                content = resp.json()
+            except ValueError:
+                content = {"detail": "Proxy received an invalid JSON response from the Disparador service. This usually means a DB connection error or unexpected crash in the container.", "raw_error": resp.text}
+            
+            return JSONResponse(status_code=resp.status_code, content=content)
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Erro ao contatar o microserviço Disparador: {e}")
 
