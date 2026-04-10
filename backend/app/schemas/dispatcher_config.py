@@ -34,6 +34,7 @@ class DispatcherConfigBase(BaseModel):
     index_max: int = Field(default=5)
     
     progress_callback_url: Optional[str] = Field(None)
+    target_endpoint: Optional[str] = Field(None, description="Dynamic endpoint to post the dispatch request")
     is_active: bool = True
 
 class DispatcherConfigCreate(DispatcherConfigBase):
@@ -57,6 +58,7 @@ class DispatcherConfigUpdate(BaseModel):
     triggers: Optional[List[str]] = None
     index_max: Optional[int] = None
     progress_callback_url: Optional[str] = None
+    target_endpoint: Optional[str] = None
     is_active: Optional[bool] = None
 
 

@@ -42,6 +42,7 @@ async def list_dispatcher_configs(skip: int = 0, limit: int = 20, db: Session = 
             triggers=c.triggers,
             index_max=c.index_max,
             progress_callback_url=c.progress_callback_url,
+            target_endpoint=c.target_endpoint,
             is_active=c.is_active,
             has_api_key=bool(c.api_key),
             agent_name=agent_name,
@@ -77,6 +78,7 @@ async def create_dispatcher_config(config: DispatcherConfigCreate, db: Session =
         triggers=config.triggers,
         index_max=config.index_max,
         progress_callback_url=config.progress_callback_url,
+        target_endpoint=config.target_endpoint,
         is_active=config.is_active
     )
     db.add(db_config)
@@ -102,6 +104,7 @@ async def create_dispatcher_config(config: DispatcherConfigCreate, db: Session =
         triggers=db_config.triggers,
         index_max=db_config.index_max,
         progress_callback_url=db_config.progress_callback_url,
+        target_endpoint=db_config.target_endpoint,
         is_active=db_config.is_active,
         has_api_key=bool(db_config.api_key),
         agent_name=agent_name,
@@ -138,6 +141,7 @@ async def get_dispatcher_config_by_path(path: str, db: Session = Depends(get_db)
         triggers=c.triggers,
         index_max=c.index_max,
         progress_callback_url=c.progress_callback_url,
+        target_endpoint=c.target_endpoint,
         is_active=c.is_active,
         has_api_key=bool(c.api_key),
         agent_name=agent_name,
@@ -174,6 +178,7 @@ async def get_dispatcher_config(config_id: UUID, db: Session = Depends(get_db)):
         triggers=c.triggers,
         index_max=c.index_max,
         progress_callback_url=c.progress_callback_url,
+        target_endpoint=c.target_endpoint,
         is_active=c.is_active,
         has_api_key=bool(c.api_key),
         agent_name=agent_name,
@@ -225,6 +230,7 @@ async def update_dispatcher_config(config_id: UUID, config_update: DispatcherCon
         triggers=db_config.triggers,
         index_max=db_config.index_max,
         progress_callback_url=db_config.progress_callback_url,
+        target_endpoint=db_config.target_endpoint,
         is_active=db_config.is_active,
         has_api_key=bool(db_config.api_key),
         agent_name=agent_name,

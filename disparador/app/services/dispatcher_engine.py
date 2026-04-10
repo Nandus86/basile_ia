@@ -81,8 +81,10 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "transition_data": transition_data,
     }
     
+    target_url = getattr(config, 'target_endpoint', None)
+    
     try:
-        agent_response = await basile_client.post_to_agent(config.path, agent_payload)
+        agent_response = await basile_client.post_to_agent(config.path, agent_payload, custom_url=target_url)
     except Exception as e:
         await disparador_redis.add_to_dlq(service_id, contact, str(e))
         await disparador_redis.increment_failed(service_id)

@@ -45,6 +45,7 @@ class DispatcherConfig(Base):
     
     # Progress callback (opcional)
     progress_callback_url = Column(String(500), nullable=True)
+    target_endpoint = Column(String(500), nullable=True)
     
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

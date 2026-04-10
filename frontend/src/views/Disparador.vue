@@ -34,6 +34,7 @@ const defaultItem = {
   triggers: [],
   index_max: 5,
   progress_callback_url: '',
+  target_endpoint: '',
   is_active: true
 }
 
@@ -550,12 +551,20 @@ onMounted(() => {
               </v-col>
             </v-row>
             <v-row>
-              <v-col cols="12">
+              <v-col cols="12" md="6">
                 <v-text-field
                   v-model="editedItem.progress_callback_url"
                   label="Progress Callback URL (Opcional)"
                   variant="outlined"
                   hint="Recebe webhooks com progresso do lote"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="editedItem.target_endpoint"
+                  label="Endpoint de Destino (Opcional)"
+                  variant="outlined"
+                  hint="URL completa ou path relativo (ex: /webhook/meu-custom)"
                 ></v-text-field>
               </v-col>
             </v-row>
