@@ -1650,6 +1650,38 @@ async def process_message_task(
                 print(f"[Task] ❌ Error checking trigger MCPs: {e}")
                 traceback.print_exc()
 
+            # [THINKER PLANNING] Check if any linked thinkers should be called
+            thinker_plan = None
+            try:
+                from app.services.thinker_service import execute_thinker_planning
+                agent_model = agent_config.get("agent_model")
+                if agent_model:
+                    thinker_plan = await execute_thinker_planning(
+                        db=db,
+                        agent=agent_model,
+                        message=message,
+                        context_data=context_data,
+                        history=history
+                    )
+                    if thinker_plan:
+                        plan_passes = thinker_plan.get("passos", [])
+                        thinkers_called = thinker_plan.get("thinkers_chamados", [])
+                        if plan_passes:
+                            # Add thinker plan to the agent prompt for guidance
+                            import json
+                            plan_json = json.dumps(thinker_plan, ensure_ascii=False)
+                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                                f"\n\n## 📋 PLANO DE EXECUÇÃO GERADO POR Thinker(s)\n\n"
+                                f"Os thinkers [{', '.join(thinkers_called)}] geraram o seguinte plano:\n"
+                                f"```json\n{plan_json}\n```\n\n"
+                                f"SIGA este plano ao executar as tarefas. Os passos estão listados em ordem.\n"
+                            )
+                            print(f"[Task] 🧠 Thinker planning enabled: {len(plan_passes)} steps from {thinkers_called}")
+            except Exception as e:
+                import traceback
+                print(f"[Task] ⚠️ Error in thinker planning: {e}")
+                traceback.print_exc()
+
             # ── Execute agent ──
             resilience_cfg = agent_config.get("resilience", {}) if agent_config else {}
             max_retries = resilience_cfg.get("max_retries", 2)

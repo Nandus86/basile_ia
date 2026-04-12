@@ -27,6 +27,16 @@ agent_mcp_group_access = Table(
     Column("mcp_group_id", UUID(as_uuid=True), ForeignKey("mcp_groups.id", ondelete="CASCADE"), primary_key=True)
 )
 
+# Association table for agents <-> thinkers (many-to-many)
+# A thinker can be linked to multiple agents, and an agent can have multiple thinkers
+agent_thinker_links = Table(
+    "agent_thinker_links",
+    Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("thinker_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("is_active", Boolean, default=True, nullable=False)
+)
+
 
 class AccessLevel(str, enum.Enum):
     """Vertical access levels for agents - hierarchical permission system"""
@@ -111,6 +121,11 @@ class Agent(Base):
     is_guardrail_active = Column(Boolean, default=False, nullable=False)
     guardrail_prompt = Column(Text, nullable=True)
     guardrail_model = Column(String(100), nullable=True)
+    
+    # Thinker mode - strategic planning with global visibility
+    is_thinker = Column(Boolean, default=False, nullable=False)
+    thinker_prompt = Column(Text, nullable=True)  # Custom strategic prompt
+    thinker_model = Column(String(100), nullable=True)  # Override model for thinker
     
     # New status configuration for long-running jobs
     status_updates_enabled = Column(Boolean, default=False)
@@ -251,3 +266,20 @@ class Agent(Base):
     def get_available_collaborators(self):
         """Get all non-blocked collaborators (enabled + neutral)"""
         return [c.collaborator for c in self.collaborator_settings if c.status != CollaborationStatus.BLOCKED]
+    
+    def get_linked_thinkers(self, db):
+        """Get thinkers linked to this agent via agent_thinker_links"""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        
+        result = db.execute(
+            select(Agent)
+            .join(agent_thinker_links, Agent.id == agent_thinker_links.c.thinker_id)
+            .where(
+                agent_thinker_links.c.agent_id == self.id,
+                agent_thinker_links.c.is_active == True,
+                Agent.is_active == True,
+                Agent.is_thinker == True
+            )
+        )
+        return result.scalars().all()

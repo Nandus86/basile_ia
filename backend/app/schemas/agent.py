@@ -91,36 +91,17 @@ class AgentCreate(AgentBase):
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
     mcp_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos MCPs com acesso")
-    mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
+mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
     skill_ids: Optional[List[UUID]] = Field(default=[], description="IDs das Skills com acesso")
+    thinker_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Thinkers vinculados a este agente")
     is_orchestrator: bool = False
     is_planner: bool = False
-    emotional_profile_id: Optional[UUID] = None
-    emotional_intensity: str = "medium"
-    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON personalizado para saída estruturada")
-    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON que define os campos de context_data esperados na entrada")
-    transition_output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON de metadados a serem anexados inalterados na resposta")
-    transition_input_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON de metadados de sessão recebidos na entrada e preservados")
-
-
-class AgentUpdate(BaseModel):
-    """Schema for updating an agent"""
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    system_prompt: Optional[str] = None
-    model: Optional[str] = None
-    temperature: Optional[str] = None
-    max_tokens: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
-    is_active: Optional[bool] = None
-    access_level: Optional[AccessLevelEnum] = None
-    collaboration_enabled: Optional[bool] = None
-    mcp_ids: Optional[List[UUID]] = None
-    mcp_group_ids: Optional[List[UUID]] = None
-    skill_ids: Optional[List[UUID]] = None
-    is_orchestrator: Optional[bool] = None
-    is_planner: Optional[bool] = None
-    response_style: Optional[str] = None
+    is_guardrail_active: bool = False
+    guardrail_prompt: Optional[str] = None
+    guardrail_model: Optional[str] = None
+    is_thinker: bool = False  # NEW
+    thinker_prompt: Optional[str] = None  # NEW
+    thinker_model: Optional[str] = None  # NEW
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
@@ -173,6 +154,9 @@ class AgentResponse(BaseModel):
     is_guardrail_active: bool = False
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
+    is_thinker: bool = False  # NEW
+    thinker_prompt: Optional[str] = None  # NEW
+    thinker_model: Optional[str] = None  # NEW
     trigger_keywords: List[str] = []
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None

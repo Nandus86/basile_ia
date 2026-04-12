@@ -9,7 +9,7 @@ from typing import Optional, List
 from uuid import UUID
 
 from app.database import get_db
-from app.models.agent import Agent, AgentCollaborator, CollaborationStatus, AccessLevel
+from app.models.agent import Agent, AgentCollaborator, CollaborationStatus, AccessLevel, agent_thinker_links
 from app.models.mcp import MCP
 from app.models.mcp_group import MCPGroup
 from app.models.skill import Skill
@@ -195,7 +195,8 @@ async def create_agent(
     mcp_ids = agent_data.mcp_ids or []
     mcp_group_ids = agent_data.mcp_group_ids or []
     skill_ids = agent_data.skill_ids or []
-    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids", "skill_ids"})
+    thinker_ids = agent_data.thinker_ids or []  # NEW
+    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids", "skill_ids", "thinker_ids"})
     
     # Convert enum to model enum
     agent_dict["access_level"] = AccessLevel(agent_dict["access_level"].value)
@@ -232,6 +233,18 @@ async def create_agent(
         )
         skills = skill_result.scalars().all()
         agent.skills = list(skills)
+    
+    # Link Thinkers if provided
+    if thinker_ids:
+        for thinker_id in thinker_ids:
+            await db.execute(
+                agent_thinker_links.insert().values(
+                    agent_id=agent.id,
+                    thinker_id=thinker_id,
+                    is_active=True
+                )
+            )
+        print(f"[API] Linked {len(thinker_ids)} thinkers to new agent")
     
     db.add(agent)
     await db.commit()
@@ -301,6 +314,24 @@ async def update_agent(
         )
         bases = ib_result.scalars().all()
         agent.information_bases = list(bases)
+    
+    # Update Thinker links if provided
+    if hasattr(agent_data, 'thinker_ids') and agent_data.thinker_ids is not None:
+        # First, delete existing links
+        await db.execute(
+            agent_thinker_links.delete().where(agent_thinker_links.c.agent_id == agent_id)
+        )
+        # Then insert new links
+        if agent_data.thinker_ids:
+            for thinker_id in agent_data.thinker_ids:
+                await db.execute(
+                    agent_thinker_links.insert().values(
+                        agent_id=agent_id,
+                        thinker_id=thinker_id,
+                        is_active=True
+                    )
+                )
+        print(f"[API] Updated {len(agent_data.thinker_ids)} thinker links for agent {agent_id}")
     
     await db.commit()
     await db.refresh(agent)
