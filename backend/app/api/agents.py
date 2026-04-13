@@ -274,7 +274,7 @@ async def update_agent(
         )
     
     # Update only provided fields
-    update_data = agent_data.model_dump(exclude_unset=True, exclude={"mcp_ids", "mcp_group_ids"})
+    update_data = agent_data.model_dump(exclude_unset=True, exclude={"mcp_ids", "mcp_group_ids", "skill_ids", "thinker_ids"})
     
     # Handle access_level enum conversion
     if "access_level" in update_data and update_data["access_level"] is not None:
