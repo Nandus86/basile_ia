@@ -96,31 +96,15 @@ class AgentCreate(AgentBase):
     thinker_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Thinkers vinculados a este agente")
     is_orchestrator: bool = False
     is_planner: bool = False
-    is_guardrail_active: bool = False
-    guardrail_prompt: Optional[str] = None
-    guardrail_model: Optional[str] = None
-    is_thinker: bool = False  # NEW
-    thinker_prompt: Optional[str] = None  # NEW
-    thinker_model: Optional[str] = None  # NEW
+    is_thinker: bool = False
+    thinker_prompt: Optional[str] = None
+    thinker_model: Optional[str] = None
     emotional_profile_id: Optional[UUID] = None
-    emotional_intensity: Optional[str] = None
-    output_schema: Optional[Dict[str, Any]] = None
-    input_schema: Optional[Dict[str, Any]] = None
-    transition_output_schema: Optional[Dict[str, Any]] = None
-    transition_input_schema: Optional[Dict[str, Any]] = None
-    vector_memory_enabled: Optional[bool] = None
-    training_memory_enabled: Optional[bool] = None
-    status_updates_enabled: Optional[bool] = None
-    status_updates_config: Optional[Dict[str, Any]] = None
-    planner_prompt: Optional[str] = None
-    planner_model: Optional[str] = None
-    is_guardrail_active: Optional[bool] = None
-    guardrail_prompt: Optional[str] = None
-    guardrail_model: Optional[str] = None
-    trigger_keywords: Optional[List[str]] = None
-    entity_memory_path: Optional[str] = None
-    group_id: Optional[UUID] = None
-    provider_id: Optional[UUID] = None
+    emotional_intensity: str = "medium"
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON personalizado para saída estruturada")
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON que define os campos de context_data esperados na entrada")
+    transition_output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON de metadados a serem anexados inalterados na resposta")
+    transition_input_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON de metadados de sessão recebidos na entrada e preservados")
 
 
 class AgentUpdate(BaseModel):
