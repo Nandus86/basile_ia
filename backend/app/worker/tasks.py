@@ -1650,59 +1650,71 @@ async def process_message_task(
                 print(f"[Task] ❌ Error checking trigger MCPs: {e}")
                 traceback.print_exc()
 
-            # [THINKER PLANNING] Check if any linked thinkers should be called
-            thinker_plan = None
+            # [THINKER] Internal thinking step - no external agent needed
+            thinker_enabled = False
             try:
-                from app.services.thinker_service import execute_thinker_planning
                 agent_model = agent_config.get("agent_model")
+                
                 if agent_model:
-                    thinker_plan = await execute_thinker_planning(
-                        db=db,
-                        agent=agent_model,
-                        message=message,
-                        context_data=context_data,
-                        history=history
-                    )
-                    if thinker_plan:
-                        plan_passes = thinker_plan.get("passos", [])
-                        thinkers_called = thinker_plan.get("thinkers_chamados", [])
-                        
-                        # Check if thinker_restrictive is enabled
+                    # Check if Thinker is enabled on this agent
+                    is_thinker = getattr(agent_model, 'is_thinker', False)
+                    thinker_always_active = getattr(agent_model, 'thinker_always_active', False)
+                    thinker_keywords = getattr(agent_model, 'thinker_keywords', None) or []
+                    trigger_keywords = getattr(agent_model, 'trigger_keywords', None) or []
+                    
+                    # Check if Thinker should be activated
+                    if is_thinker:
+                        if thinker_always_active:
+                            thinker_enabled = True
+                            print(f"[Task] 🧠 Thinker always active for agent '{agent_model.name}'")
+                        else:
+                            # Check keywords
+                            message_lower = message.lower()
+                            all_keywords = list(thinker_keywords) + list(trigger_keywords)
+                            for kw in all_keywords:
+                                if kw.lower() in message_lower:
+                                    thinker_enabled = True
+                                    print(f"[Task] 🧠 Thinker activated by keyword: '{kw}'")
+                                    break
+                    
+                    # If Thinker is enabled, inject thinking instruction
+                    if thinker_enabled:
+                        thinker_prompt = getattr(agent_model, 'thinker_prompt', None) or (
+                            "Você é um assistente de IA estratégico. Antes de responder, analise a solicitação do usuário "
+                            "e identifique os passos necessários para resolver a tarefa de forma eficaz. "
+                            "Considere as ferramentas disponíveis (colaboradores, MCPs) e monte um plano de execução."
+                        )
                         is_restrictive = getattr(agent_model, 'thinker_restrictive', False)
                         
-                        if plan_passes:
-                            # Add thinker plan to the agent prompt for guidance
-                            import json
-                            plan_json = json.dumps(thinker_plan, ensure_ascii=False)
+                        if is_restrictive:
+                            thinking_instruction = (
+                                f"\n\n## 🧠 MODO THINKER ATIVADO - ANÁLISE OBRIGATÓRIA\n\n"
+                                f"⚠️ **IMPORTANTE**: Antes de responder, você DEVE analisar a solicitação e seguir estas regras:\n\n"
+                                f"1. Analise a solicitação do usuário com cuidado\n"
+                                f"2. Identifique os passos necessários para executar a tarefa\n"
+                                f"3. Considere usar os colaboradores/tools disponíveis\n"
+                                f"4. Execute APENAS o que for necessário\n"
+                                f"5. NÃO invente informações ou execute tarefas não solicitadas\n\n"
+                                f"📝 Instrução do Thinker: {thinker_prompt}\n"
+                            )
+                        else:
+                            thinking_instruction = (
+                                f"\n\n## 🧠 THINKER ATIVADO\n\n"
+                                f"Antes de responder, considere: {thinker_prompt}\n"
+                            )
+                        
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                        print(f"[Task] 🧠 Thinker enabled for agent '{agent_model.name}' (restrictive={is_restrictive})")
+                        
+                        # Optional: Use different model for thinking if specified
+                        thinker_model = getattr(agent_model, 'thinker_model', None)
+                        if thinker_model:
+                            agent_config["model"] = thinker_model
+                            print(f"[Task] 🧠 Using thinker model: {thinker_model}")
                             
-                            if is_restrictive:
-                                # RESTRICTIVE MODE: Force to follow only the plan
-                                restrictive_instruction = (
-                                    f"\n\n## 📋 PLANO DE EXECUÇÃO GERADO POR Thinker(s) - **MODO RESTRITIVO**\n\n"
-                                    f"⚠️ **IMPORTANTE**: Você DEVE seguir APENAS este plano. NÃO invente, NÃO adapte, NÃO execute nenhuma etapa que não esteja listada abaixo.\n\n"
-                                    f"Os thinkers [{', '.join(thinkers_called)}] geraram o seguinte plano:\n"
-                                    f"```json\n{plan_json}\n```\n\n"
-                                    f"📝 **INSTRUÇÕES OBRIGATÓRIAS**:\n"
-                                    f"1. Execute os passos NA ORDEM indicada\n"
-                                    f"2. NÃO adicione novas etapas\n"
-                                    f"3. NÃO modifique as ações definidas\n"
-                                    f"4. Se precisar de informação não disponível, responda que não possui\n"
-                                    f"5. Use APENAS os colaboradores/tools listados nos passos\n"
-                                )
-                            else:
-                                # NORMAL MODE: Suggest to follow the plan
-                                restrictive_instruction = (
-                                    f"\n\n## 📋 PLANO DE EXECUÇÃO GERADO POR Thinker(s)\n\n"
-                                    f"Os thinkers [{', '.join(thinkers_called)}] geraram o seguinte plano:\n"
-                                    f"```json\n{plan_json}\n```\n\n"
-                                    f"SIGA este plano ao executar as tarefas. Os passos estão listados em ordem.\n"
-                                )
-                            
-                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + restrictive_instruction
-                            print(f"[Task] 🧠 Thinker planning enabled: {len(plan_passes)} steps from {thinkers_called} (restrictive={is_restrictive})")
             except Exception as e:
                 import traceback
-                print(f"[Task] ⚠️ Error in thinker planning: {e}")
+                print(f"[Task] ⚠️ Error in thinker processing: {e}")
                 traceback.print_exc()
 
             # ── Execute agent ──
