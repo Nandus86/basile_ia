@@ -1313,6 +1313,22 @@
                 </p>
 
                 <div v-if="formData.is_thinker">
+                  <v-switch
+                    v-model="formData.thinker_restrictive"
+                    label="Execução Restritiva"
+                    color="orange"
+                    density="compact"
+                    hide-details
+                    class="mb-4"
+                  >
+                    <template v-slot:prepend>
+                      <v-icon color="orange">mdi-lock-outline</v-icon>
+                    </template>
+                  </v-switch>
+                  <p class="text-caption text-medium-emphasis mb-4">
+                    Quando ativado, o agente seguirá <strong>APENAS</strong> as instruções do Thinker, sem adaptar ou inventar novas etapas.
+                  </p>
+                  
                   <v-textarea
                     v-model="formData.thinker_prompt"
                     label="Prompt do Thinker"
@@ -2218,6 +2234,7 @@ const formData = reactive({
   thinker_prompt: '',
   thinker_model: 'gpt-4o-mini',
   thinker_ids: [],
+  thinker_restrictive: false,
   planner_prompt: '',
   planner_model: 'gpt-4o-mini',
   is_guardrail_active: false,
@@ -2672,6 +2689,7 @@ function resetForm() {
     thinker_prompt: '',
     thinker_model: 'gpt-4o-mini',
     thinker_ids: [],
+    thinker_restrictive: false,
     planner_prompt: '',
     planner_model: 'gpt-4o-mini',
     is_guardrail_active: false,
@@ -2962,6 +2980,7 @@ async function openDialog(agent = null) {
         thinker_prompt: fullAgent.thinker_prompt || '',
         thinker_model: fullAgent.thinker_model || 'gpt-4o-mini',
         thinker_ids: fullAgent.thinker_ids || [],
+        thinker_restrictive: fullAgent.thinker_restrictive ?? false,
         planner_prompt: fullAgent.planner_prompt || '',
         planner_model: fullAgent.planner_model || 'gpt-4o-mini',
         is_guardrail_active: fullAgent.is_guardrail_active ?? false,

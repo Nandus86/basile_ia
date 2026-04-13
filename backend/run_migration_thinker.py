@@ -85,6 +85,22 @@ async def run_migration():
                 """))
                 print("✅ Table 'agent_thinker_links' created")
             
+            # 5. Check and add thinker_restrictive column
+            check_restrictive = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='agents' AND column_name='thinker_restrictive';
+            """)
+            result = await conn.execute(check_restrictive)
+            exists = result.scalar() is not None
+            
+            if exists:
+                print("Column 'thinker_restrictive' already exists.")
+            else:
+                print("Adding 'thinker_restrictive' column to 'agents' table...")
+                await conn.execute(text("ALTER TABLE agents ADD COLUMN thinker_restrictive BOOLEAN DEFAULT FALSE NOT NULL;"))
+                print("✅ Column 'thinker_restrictive' added")
+            
             print("\n✅ Thinker migration completed successfully!")
     except Exception as e:
         print(f"\n❌ Error executing migration: {e}")

@@ -1666,17 +1666,40 @@ async def process_message_task(
                     if thinker_plan:
                         plan_passes = thinker_plan.get("passos", [])
                         thinkers_called = thinker_plan.get("thinkers_chamados", [])
+                        
+                        # Check if thinker_restrictive is enabled
+                        is_restrictive = getattr(agent_model, 'thinker_restrictive', False)
+                        
                         if plan_passes:
                             # Add thinker plan to the agent prompt for guidance
                             import json
                             plan_json = json.dumps(thinker_plan, ensure_ascii=False)
-                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                                f"\n\n## 📋 PLANO DE EXECUÇÃO GERADO POR Thinker(s)\n\n"
-                                f"Os thinkers [{', '.join(thinkers_called)}] geraram o seguinte plano:\n"
-                                f"```json\n{plan_json}\n```\n\n"
-                                f"SIGA este plano ao executar as tarefas. Os passos estão listados em ordem.\n"
-                            )
-                            print(f"[Task] 🧠 Thinker planning enabled: {len(plan_passes)} steps from {thinkers_called}")
+                            
+                            if is_restrictive:
+                                # RESTRICTIVE MODE: Force to follow only the plan
+                                restrictive_instruction = (
+                                    f"\n\n## 📋 PLANO DE EXECUÇÃO GERADO POR Thinker(s) - **MODO RESTRITIVO**\n\n"
+                                    f"⚠️ **IMPORTANTE**: Você DEVE seguir APENAS este plano. NÃO invente, NÃO adapte, NÃO execute nenhuma etapa que não esteja listada abaixo.\n\n"
+                                    f"Os thinkers [{', '.join(thinkers_called)}] geraram o seguinte plano:\n"
+                                    f"```json\n{plan_json}\n```\n\n"
+                                    f"📝 **INSTRUÇÕES OBRIGATÓRIAS**:\n"
+                                    f"1. Execute os passos NA ORDEM indicada\n"
+                                    f"2. NÃO adicione novas etapas\n"
+                                    f"3. NÃO modifique as ações definidas\n"
+                                    f"4. Se precisar de informação não disponível, responda que não possui\n"
+                                    f"5. Use APENAS os colaboradores/tools listados nos passos\n"
+                                )
+                            else:
+                                # NORMAL MODE: Suggest to follow the plan
+                                restrictive_instruction = (
+                                    f"\n\n## 📋 PLANO DE EXECUÇÃO GERADO POR Thinker(s)\n\n"
+                                    f"Os thinkers [{', '.join(thinkers_called)}] geraram o seguinte plano:\n"
+                                    f"```json\n{plan_json}\n```\n\n"
+                                    f"SIGA este plano ao executar as tarefas. Os passos estão listados em ordem.\n"
+                                )
+                            
+                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + restrictive_instruction
+                            print(f"[Task] 🧠 Thinker planning enabled: {len(plan_passes)} steps from {thinkers_called} (restrictive={is_restrictive})")
             except Exception as e:
                 import traceback
                 print(f"[Task] ⚠️ Error in thinker planning: {e}")
