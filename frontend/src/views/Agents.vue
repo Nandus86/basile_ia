@@ -1314,6 +1314,37 @@
 
                 <div v-if="formData.is_thinker">
                   <v-switch
+                    v-model="formData.thinker_always_active"
+                    label="Thinker Sempre Ativo"
+                    color="success"
+                    density="compact"
+                    hide-details
+                    class="mb-2"
+                  >
+                    <template v-slot:prepend>
+                      <v-icon color="success">mdi-lightning-bolt</v-icon>
+                    </template>
+                  </v-switch>
+                  <p class="text-caption text-medium-emphasis mb-4">
+                    Quando ativado, o Thinker será chamado em <strong>todas</strong> as mensagens, sem necessidade de palavras-chave.
+                  </p>
+                  
+                  <v-combobox
+                    v-if="!formData.thinker_always_active"
+                    v-model="formData.thinker_keywords"
+                    label="Palavras-Chave do Thinker"
+                    hint="Thinker será chamado quando a mensagem contiver estas palavras"
+                    persistent-hint
+                    multiple
+                    chips
+                    closable-chips
+                    prepend-inner-icon="mdi-key"
+                    variant="outlined"
+                    density="comfortable"
+                    class="mb-4"
+                  ></v-combobox>
+
+                  <v-switch
                     v-model="formData.thinker_restrictive"
                     label="Execução Restritiva"
                     color="orange"
@@ -1342,23 +1373,13 @@
                   <v-autocomplete
                     v-model="formData.thinker_model"
                     label="Modelo do Thinker"
-                    :items="modelOptions"
+                    :items="thinkerModelOptions"
                     item-title="title"
                     item-value="value"
                     :loading="loadingModels"
-                    placeholder="Selecione um modelo (ex: gpt-4o-mini)"
+                    placeholder="Selecione um modelo de qualquer provider"
                     class="mt-4"
-                  >
-                    <template v-slot:item="{ props, item }">
-                      <v-list-item v-bind="props">
-                        <template v-slot:prepend>
-                          <v-icon :color="item.raw.provider === 'openai' ? '#10a37f' : '#6366f1'" size="18">
-                            {{ item.raw.provider === 'openai' ? 'mdi-creation' : 'mdi-router-wireless' }}
-                          </v-icon>
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
+                  />
 
                   <v-autocomplete
                     v-model="formData.thinker_ids"
@@ -2235,6 +2256,8 @@ const formData = reactive({
   thinker_model: 'gpt-4o-mini',
   thinker_ids: [],
   thinker_restrictive: false,
+  thinker_always_active: false,
+  thinker_keywords: [],
   planner_prompt: '',
   planner_model: 'gpt-4o-mini',
   is_guardrail_active: false,
@@ -2503,6 +2526,15 @@ const modelOptions = computed(() => {
       provider: m.provider,
       context_length: m.context_length
     }))
+})
+
+const thinkerModelOptions = computed(() => {
+  return allModels.value.map(m => ({
+    title: m.name,
+    value: m.id,
+    provider: m.provider,
+    context_length: m.context_length
+  }))
 })
 
 function formatContextLength(length) {
@@ -2981,6 +3013,8 @@ async function openDialog(agent = null) {
         thinker_model: fullAgent.thinker_model || 'gpt-4o-mini',
         thinker_ids: fullAgent.thinker_ids || [],
         thinker_restrictive: fullAgent.thinker_restrictive ?? false,
+        thinker_always_active: fullAgent.thinker_always_active ?? false,
+        thinker_keywords: fullAgent.thinker_keywords || [],
         planner_prompt: fullAgent.planner_prompt || '',
         planner_model: fullAgent.planner_model || 'gpt-4o-mini',
         is_guardrail_active: fullAgent.is_guardrail_active ?? false,

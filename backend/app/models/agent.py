@@ -127,6 +127,8 @@ class Agent(Base):
     thinker_prompt = Column(Text, nullable=True)  # Custom strategic prompt
     thinker_model = Column(String(100), nullable=True)  # Override model for thinker
     thinker_restrictive = Column(Boolean, default=False, nullable=False)  # Force to follow plan strictly
+    thinker_always_active = Column(Boolean, default=False, nullable=False)  # Always active without keyword
+    thinker_keywords = Column(JSON, nullable=True)  # Custom keywords to activate thinker
     
     # New status configuration for long-running jobs
     status_updates_enabled = Column(Boolean, default=False)
