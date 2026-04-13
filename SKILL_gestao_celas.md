@@ -1,0 +1,301 @@
+---
+name: Gestão de Células
+description: Habilidade completa para gestão de células, incluindo consulta de membros, registro de presença, e manipulação de membros/visitantes.
+---
+
+# Gestão de Células
+
+Instruções obrigatórias para uso das ferramentas de células. Siga cada seção à risca.
+
+---
+
+## list_leader_cells
+<< Lista todas as células em que o membro é líder, incluindo membros e visitantes de cada uma. >>
+
+**Quando usar:**
+- Quando o usuário perguntar em qual célula atua como líder.
+- Quando a célula ainda não foi informada pelo usuário e é necessária para continuar o fluxo.
+- Quando a pergunta for genérica sobre as células do líder (ex: "minhas células", "quais células eu lidero").
+
+**Fluxo:**
+1. Executar a ferramenta MCP `list_leader_cells`.
+2. Retornar o resultado ao orquestrador.
+
+**Regra de desambiguação:**
+- Se retornar **uma única célula**, assumi-la como padrão sem perguntar ao usuário.
+- Se retornar **mais de uma célula**, aguardar o usuário informar qual deseja usar (comparar pelo campo `name`).
+
+**Exemplo de entrada:** `Qual a célula eu sou líder?`
+**Exemplo de saída:** `Líder das células 'Reino de Deus' e 'Paz Celestial'.`
+
+**Exemplo de entrada 2:** `Quais os membros e visitantes das minhas células?`
+**Exemplo de saída:**
+
+Pertencem à célula *Reino de Deus* os membros:
+1. Fernando da Silva
+2. João Neves
+3. Lucas Ramalho
+
+E os visitantes:
+4. Mário Zuck
+5. Eliana Oliveira
+
+Total: 5 pessoas
+
+Pertencem à célula *Paz Celestial* os membros:
+1. Luana Jaçanã
+2. Pairo Duarte
+
+E o visitante:
+3. Cátia da Silva
+
+Total: 3 pessoas
+
+---
+
+## get_members_cell
+<< Retorna os membros e visitantes de uma célula específica, identificada pelo _id. >>
+
+**Quando usar:**
+- Quando o líder solicitar membros de uma célula específica.
+- Quando for necessário obter a lista de membros para registrar presença.
+
+**Pré-requisito:** O `_id` da célula deve ser obtido previamente via `list_leader_cells`.
+
+**Fluxo:**
+1. Executar `list_leader_cells` para obter o `_id` da célula solicitada.
+2. Comparar o nome digitado pelo líder com o campo `name` das células retornadas.
+3. Enviar o `_id` e o `name` da célula ao subagente `get_members_cell`.
+4. Retornar EXATAMENTE a saída do subagente ao orquestrador. PROIBIDO modificar.
+
+**Caso de borda — múltiplas células:**
+Se o líder não informar qual célula e possuir mais de uma, retornar ao orquestrador o resultado de `list_leader_cells` e solicitar que escolha apenas uma.
+
+**Exemplo de entrada:** `Mostrar todos os membros pertencentes à minha célula`
+
+---
+
+## leader_cell_attendance_list
+<< Lista todas as presenças lançadas pelo líder em uma data específica. >>
+
+**Quando usar:**
+- Quando o líder quiser verificar ou consultar listas de presença já lançadas.
+
+**Pré-requisito:** Data de lançamento obrigatória no formato "yyyy-mm-dd".
+
+**Fluxo:**
+1. Se o usuário não informar a data, solicitar ao orquestrador que peça a data (dia e mês). Se não informado o ano, usar o ano vigente.
+2. Converter a data para o formato "yyyy-mm-dd".
+3. Enviar a data ao subagente `leader_cell_attendance_list`.
+4. Retornar EXATAMENTE a saída do subagente. PROIBIDO modificar.
+
+**Exemplo de entrada:** `Mostrar a presença do dia 05/03/2026`
+**Exemplo de saída:** Utilize EXATAMENTE o retorno do subagente.
+
+---
+
+## register_cell_attendance_list
+<< Registra uma nova lista de presença para a célula. >>
+
+**Quando usar:**
+- Quando o líder quiser inserir/iniciar o registro de presença.
+
+**Fluxo (dividido em três partes):**
+
+**Parte 1 - Identificação da célula:**
+1. Pegar a data de presença informada pelo líder.
+2. Executar `list_leader_cells` para obter as células.
+   - Se tiver **uma única célula**, usar diretamente.
+   - Se tiver **mais de uma**, aguardar o usuário informar qual célula, comparar pelo campo `name`.
+3. Obter o `_id` da célula e chamar o subagente `get_members_cell`.
+4. Retornar o resultado ao orquestrador e aguardar nova entrada para continuar.
+
+**Parte 2 - Listagem de presentes:**
+1. A partir da nova entrada do usuário, verificar:
+   - Os nomes de quem está presente, OU
+   - A palavra "todos" para indicar presença de todos.
+2. Reestruturar a lista no formato:
+
+```
+Membros presentes:
+1. Fernando da Silva
+2. João Neves
+3. Lucas Ramalho
+
+Visitantes presentes:
+4. Mário Zuck
+5. Eliana Oliveira
+
+Membros ausentes:
+1. Jota Jota
+
+Visitante ausente:
+Nenhum
+
+Total: 5 presentes e 1 ausente
+
+Confirme se está tudo certo para que eu possa registrar.
+```
+
+3. Se a entrada for "todos", reestruturar como: `Posso confirmar que todos os membros e visitantes estiverem presentes?`
+4. Retornar ao orquestrador e aguardar confirmação.
+
+**Parte 3 - Registro:**
+1. Após confirmação do líder, enviar ao subagente `register_cell_attendance_list`:
+   - `cell_id`: ID da célula
+   - `presence_date`: Data no formato "yyyy-mm-dd"
+   - `member_ids`: IDs dos membros presentes
+2. Retornar EXATAMENTE a saída do subagente. PROIBIDO modificar.
+
+**Exemplo de entrada:** `Quero inserir a presença do dia 05/03/2026`
+
+---
+
+## remove_cell_attendance_list
+<< Remove uma lista de presença já lançada, pela data. Não é possível remover apenas membros; remove-se a lista completa. >>
+
+**Quando usar:**
+- Quando o líder quiser excluir uma lista de presença já registrada.
+
+**Fluxo:**
+1. Pegar a data da presença a ser removida.
+2. Executar `list_leader_cells` para obter as células.
+   - Se tiver **uma única célula**, usar diretamente.
+   - Se tiver **mais de uma**, aguardar o usuário informar qual célula, comparar pelo campo `name`.
+3. Enviar ao subagente:
+   - `CELL_ID`: _id da célula
+   - `DATA_PRESENCA_CELULA`: data no formato "yyyy-mm-dd"
+4. Confirmar se o usuário deseja remover a lista de presença.
+5. Se confirmado, executar a remoção via subagente.
+
+---
+
+## add_visitant_cell
+<< Adiciona um membro ou visitante na célula. >>
+
+**Quando usar:**
+- Quando o líder quiser adicionar um membro ou visitante à sua célula.
+
+**Fluxo:**
+1. Pegar o nome do membro ou visitante enviado pelo líder.
+2. Executar a ferramenta `search_member_or_visitant` para pesquisar o ID.
+   - Se retornar **um único nome**, usar diretamente.
+   - Se retornar **mais de um**, apresentar ao líder respeitando LGPD (apenas primeiro e último nome aparentes, nomes do meio com iniciais). Exemplo: `Fernando D*** Oliveira`. Aguardar o líder escolher.
+3. Executar `list_leader_cells` para obter as células.
+   - Se tiver **uma única célula**, usar diretamente.
+   - Se tiver **mais de uma**, aguardar o usuário informar qual célula, comparar pelo campo `name`.
+4. Enviar ao subagente:
+   - `CELL_ID`: _id da célula
+   - `PHONE_MEMBER_VISITANT`: telefone do membro/visitante
+
+---
+
+## get_cells_member
+<< Obtém as células em que o membro ou visitante participa. >>
+
+**Quando usar:**
+- Quando precisar obter dados da célula em que o membro participa (ex: endereço).
+- Quando o nome da célula ainda não foi informada pelo usuário.
+
+**Fluxo:**
+1. Executar a ferramenta `get_cells_member` com os dados do membro/visitante.
+2. Retornar o resultado.
+
+**Regra de desambiguação:**
+- Se retornar **uma única célula**, assumi-la como padrão sem perguntar.
+- Se retornar **mais de uma**, aguardar o usuário informar qual deseja usar (comparar pelo campo `name`).
+
+---
+
+## remove_member_or_visitant_cell
+<< Remove um membro ou visitante da célula. >>
+
+**Quando usar:**
+- Quando o líder quiser remover um membro ou visitante da célula.
+
+**Fluxo:**
+1. Pegar o ID do membro ou visitante a ser removido.
+2. Executar `list_leader_cells` para obter as células.
+   - Se tiver **uma única célula**, usar diretamente.
+   - Se tiver **mais de uma**, aguardar o usuário informar qual célula, comparar pelo campo `name`.
+3. Enviar ao subagente:
+   - `CELL_ID`: _id da célula
+   - `MEMBER_ID`: ID do membro ou visitante
+
+---
+
+## cell_near_residence_member
+<< Verifica a célula ou grupo mais próximo da residência do membro/visitante que POSSUI cadastro no sistema com endereço atualizado. >>
+
+**Quando usar:**
+- Quando o líder quiser indicar uma célula próxima para um membro/visitante já cadastrado.
+
+**Fluxo:**
+1. Enviar ao subagente:
+   - ID da igreja
+   - Número de telefone do membro ou visitante
+2. Retornar apenas: nome da célula mais próxima, endereço e nome do líder (sem quilometragem ou outras informações).
+
+---
+
+## cell_near_residence_addres
+<< Verifica a célula ou grupo mais próximo da residência do membro/visitante que NÃO POSSUI cadastro no sistema. >>
+
+**Quando usar:**
+- Quando o líder quiser indicar uma célula próxima para uma pessoa sem cadastro.
+
+**Fluxo:**
+1. Se o usuário não informar o endereço, solicitar:
+   - CEP (se sistema estiver no Brasil), OU
+   - Endereço completo
+2. Se não houver CEP, usar o endereço completo. Se não houver endereço, usar número 0 na busca.
+3. Enviar ao subagente:
+   - ID da igreja
+   - CEP ou endereço completo
+4. Retornar apenas: nome da célula mais próxima, endereço e nome do líder (sem quilometragem ou outras informações).
+
+---
+
+## search_member_or_visitant
+<< Pesquisa membro ou visitante pelo nome. >>
+
+**Quando usar:**
+- Sempre que precisar localizar um membro ou visitante pelo nome.
+
+**Fluxo:**
+1. Enviar ao subagente:
+   - ID da igreja
+   - Nome do membro ou visitante a ser pesquisado
+2. Se retornar mais de um resultado, apresentar respeitando LGPD: apenas primeiro e último nome aparentes, nomes do meio com iniciais. Exemplo: `Fernando D*** Oliveira`.
+
+---
+
+## register_visitant_cell
+<< Registra o visitante que NÃO POSSUI cadastro no sistema diretamente na célula. >>
+
+**Pré-requisito:** Executar `search_member_or_visitant` ANTES para verificar se o visitante já está cadastrado. Esta ferramenta deve ser usada APENAS se a pesquisa não retornar visitante previamente cadastrado.
+
+**Quando usar:**
+- Quando o líder quiser registrar um novo visitante diretamente na célula.
+
+**Fluxo:**
+1. Executar `search_member_or_visitant` para verificar se já existe cadastro.
+2. Se não existir, enviar ao subagente:
+   - Nome completo (obrigatório)
+   - Telefone (opcional, se houver)
+3. Retornar EXATAMENTE a saída do subagente.
+
+---
+
+## cells_information
+<< Traz as informações detalhadas da célula que o líder lidera. >>
+
+**Quando usar:**
+- Quando o líder solicitar informações sobre a célula (endereço, horários, líder, etc.).
+
+**Fluxo:**
+1. Executar `list_leader_cells` para identificar a(s) célula(s) do líder.
+   - Se tiver **uma única célula**, usar diretamente.
+   - Se tiver **mais de uma**, aguardar o usuário informar qual, comparar pelo campo `name`.
+2. Executar a ferramenta MCP `cells_information` com o `_id` da célula.
+3. Retornar o resultado ao orquestrador.
