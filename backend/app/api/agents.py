@@ -189,6 +189,8 @@ async def get_agent(
         thinker_model=agent.thinker_model,
         thinker_ids=thinker_ids,
         thinker_restrictive=agent.thinker_restrictive,
+        thinker_always_active=agent.thinker_always_active or False,
+        thinker_keywords=agent.thinker_keywords or [],
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],

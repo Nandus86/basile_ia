@@ -43,20 +43,41 @@ async def detect_matching_thinkers(
     thinkers: List[Agent]
 ) -> List[Agent]:
     """
-    Detect which thinkers should be called based on message keywords.
+    Detect which thinkers should be called based on:
+    1. thinker_always_active flag - always call if true
+    2. thinker_keywords - custom keywords for this thinker
+    3. trigger_keywords - fallback to agent's trigger_keywords
     
-    Returns all thinkers whose trigger_keywords match the message.
+    Returns all thinkers that should be activated.
     """
     message_lower = message.lower()
     matching_thinkers = []
     
     for thinker in thinkers:
-        keywords = thinker.trigger_keywords or []
+        # Check if thinker_always_active is enabled
+        always_active = getattr(thinker, 'thinker_always_active', False)
+        if always_active:
+            matching_thinkers.append(thinker)
+            logger.info(f"[ThinkerService] ⚡ Thinker '{thinker.name}' is always active")
+            continue
         
+        # Check thinker_keywords (custom keywords for this thinker)
+        thinker_keywords = getattr(thinker, 'thinker_keywords', None) or []
+        if thinker_keywords:
+            for keyword in thinker_keywords:
+                if keyword.lower() in message_lower:
+                    matching_thinkers.append(thinker)
+                    logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched thinker_keyword: '{keyword}'")
+                    break
+            if thinker in matching_thinkers:
+                continue
+        
+        # Fallback to trigger_keywords
+        keywords = thinker.trigger_keywords or []
         for keyword in keywords:
             if keyword.lower() in message_lower:
                 matching_thinkers.append(thinker)
-                logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched keyword: '{keyword}'")
+                logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched trigger_keyword: '{keyword}'")
                 break
     
     return matching_thinkers

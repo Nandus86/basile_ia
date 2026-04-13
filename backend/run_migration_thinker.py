@@ -101,6 +101,38 @@ async def run_migration():
                 await conn.execute(text("ALTER TABLE agents ADD COLUMN thinker_restrictive BOOLEAN DEFAULT FALSE NOT NULL;"))
                 print("✅ Column 'thinker_restrictive' added")
             
+            # 6. Check and add thinker_always_active column
+            check_always = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='agents' AND column_name='thinker_always_active';
+            """)
+            result = await conn.execute(check_always)
+            exists = result.scalar() is not None
+            
+            if exists:
+                print("Column 'thinker_always_active' already exists.")
+            else:
+                print("Adding 'thinker_always_active' column to 'agents' table...")
+                await conn.execute(text("ALTER TABLE agents ADD COLUMN thinker_always_active BOOLEAN DEFAULT FALSE NOT NULL;"))
+                print("✅ Column 'thinker_always_active' added")
+            
+            # 7. Check and add thinker_keywords column
+            check_keywords = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='agents' AND column_name='thinker_keywords';
+            """)
+            result = await conn.execute(check_keywords)
+            exists = result.scalar() is not None
+            
+            if exists:
+                print("Column 'thinker_keywords' already exists.")
+            else:
+                print("Adding 'thinker_keywords' column to 'agents' table...")
+                await conn.execute(text("ALTER TABLE agents ADD COLUMN thinker_keywords JSON;"))
+                print("✅ Column 'thinker_keywords' added")
+            
             print("\n✅ Thinker migration completed successfully!")
     except Exception as e:
         print(f"\n❌ Error executing migration: {e}")

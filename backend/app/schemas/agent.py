@@ -99,7 +99,9 @@ class AgentCreate(AgentBase):
     is_thinker: bool = False
     thinker_prompt: Optional[str] = None
     thinker_model: Optional[str] = None
-    thinker_restrictive: bool = False  # NEW - Force to follow plan strictly
+    thinker_restrictive: bool = False  # NEW
+    thinker_always_active: bool = False  # NEW
+    thinker_keywords: Optional[List[str]] = None  # NEW
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: str = "medium"
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON personalizado para saída estruturada")
@@ -130,6 +132,8 @@ class AgentUpdate(BaseModel):
     thinker_prompt: Optional[str] = None
     thinker_model: Optional[str] = None
     thinker_restrictive: Optional[bool] = None  # NEW
+    thinker_always_active: Optional[bool] = None  # NEW
+    thinker_keywords: Optional[List[str]] = None  # NEW
     response_style: Optional[str] = None
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
@@ -188,6 +192,8 @@ class AgentResponse(BaseModel):
     thinker_model: Optional[str] = None  # NEW
     thinker_ids: List[UUID] = []  # NEW
     thinker_restrictive: bool = False  # NEW
+    thinker_always_active: bool = False  # NEW
+    thinker_keywords: List[str] = []  # NEW
     trigger_keywords: List[str] = []
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
