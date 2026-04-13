@@ -286,6 +286,7 @@
           <v-tab value="vfs_knowledge" :disabled="!editing"><v-icon start>mdi-file-document-multiple-outline</v-icon>VFS RAG 3.0</v-tab>
           <v-tab value="interactivity" :disabled="!editing"><v-icon start>mdi-message-flash</v-icon>Interatividade</v-tab>
           <v-tab value="planner" :disabled="!editing"><v-icon start>mdi-strategy</v-icon>Planejador</v-tab>
+          <v-tab value="thinker" :disabled="!editing"><v-icon start>mdi-head-brain</v-icon>Thinker</v-tab>
           <v-tab value="guardrail" :disabled="!editing"><v-icon start>mdi-shield-alert</v-icon>Guardrail</v-tab>
           <v-tab value="prompt_preview" :disabled="!editing"><v-icon start>mdi-eye</v-icon>Prompt Geral</v-tab>
         </v-tabs>
@@ -1290,6 +1291,84 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: Thinker -->
+            <v-window-item value="thinker">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para configurar o Thinker.
+              </v-alert>
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">Thinker (Planejador Estratégico)</h3>
+                  <v-switch
+                    v-model="formData.is_thinker"
+                    label="Ativar Thinker"
+                    color="teal"
+                    density="compact"
+                    hide-details
+                  ></v-switch>
+                </div>
+                
+                <p class="text-body-2 text-medium-emphasis mb-4">
+                  O Thinker é um tipo especial de agente que realiza planejamento estratégico antes do agente principal executar. Ele analisa a solicitação e gera um plano estruturado que otimiza a resposta do agente.
+                </p>
+
+                <div v-if="formData.is_thinker">
+                  <v-textarea
+                    v-model="formData.thinker_prompt"
+                    label="Prompt do Thinker"
+                    placeholder="Ex: Você é um estrategista de IA. Analise a solicitação do usuário e crie um plano detalhado em Markdown para o agente executar."
+                    rows="5"
+                    variant="outlined"
+                    persistent-hint
+                    hint="Deixe em branco para usar o prompt padrão do sistema."
+                  ></v-textarea>
+
+                  <v-autocomplete
+                    v-model="formData.thinker_model"
+                    label="Modelo do Thinker"
+                    :items="modelOptions"
+                    item-title="title"
+                    item-value="value"
+                    :loading="loadingModels"
+                    placeholder="Selecione um modelo (ex: gpt-4o-mini)"
+                    class="mt-4"
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon :color="item.raw.provider === 'openai' ? '#10a37f' : '#6366f1'" size="18">
+                            {{ item.raw.provider === 'openai' ? 'mdi-creation' : 'mdi-router-wireless' }}
+                          </v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+
+                  <v-autocomplete
+                    v-model="formData.thinker_ids"
+                    label="Thinkers Vinculados"
+                    :items="availableThinkers"
+                    item-title="title"
+                    item-value="value"
+                    multiple
+                    chips
+                    closable-chips
+                    class="mt-4"
+                    hint="Selecione outros agentes que servirão como Thinkers para este agente"
+                    persistent-hint
+                  >
+                    <template v-slot:item="{ props, item }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:prepend>
+                          <v-icon color="teal" size="18">mdi-head-brain</v-icon>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
+                </div>
+              </div>
+            </v-window-item>
+
             <!-- Tab: Guardrail -->
             <v-window-item value="guardrail">
               <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
@@ -2135,6 +2214,10 @@ const formData = reactive({
   vector_memory_enabled: false,
   is_orchestrator: false,
   is_planner: false,
+  is_thinker: false,
+  thinker_prompt: '',
+  thinker_model: 'gpt-4o-mini',
+  thinker_ids: [],
   planner_prompt: '',
   planner_model: 'gpt-4o-mini',
   is_guardrail_active: false,
@@ -2443,6 +2526,15 @@ const otherAgents = computed(() => {
   return agents.value.filter(a => a.id !== selectedAgent.value.id)
 })
 
+const availableThinkers = computed(() => {
+  return agents.value
+    .filter(a => a.id !== formData.id)
+    .map(a => ({
+      title: a.name,
+      value: a.id
+    }))
+})
+
 const globalDocs = computed(() => agentDocuments.value.filter(d => d.is_global))
 const agentDocs = computed(() => agentDocuments.value.filter(d => !d.is_global))
 const availableDocs = computed(() => {
@@ -2576,6 +2668,10 @@ function resetForm() {
     vector_memory_enabled: false,
     is_orchestrator: false,
     is_planner: false,
+    is_thinker: false,
+    thinker_prompt: '',
+    thinker_model: 'gpt-4o-mini',
+    thinker_ids: [],
     planner_prompt: '',
     planner_model: 'gpt-4o-mini',
     is_guardrail_active: false,
@@ -2862,6 +2958,10 @@ async function openDialog(agent = null) {
         vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
         is_orchestrator: fullAgent.is_orchestrator ?? false,
         is_planner: fullAgent.is_planner ?? false,
+        is_thinker: fullAgent.is_thinker ?? false,
+        thinker_prompt: fullAgent.thinker_prompt || '',
+        thinker_model: fullAgent.thinker_model || 'gpt-4o-mini',
+        thinker_ids: fullAgent.thinker_ids || [],
         planner_prompt: fullAgent.planner_prompt || '',
         planner_model: fullAgent.planner_model || 'gpt-4o-mini',
         is_guardrail_active: fullAgent.is_guardrail_active ?? false,
