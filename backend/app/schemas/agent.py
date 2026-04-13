@@ -123,6 +123,49 @@ class AgentCreate(AgentBase):
     provider_id: Optional[UUID] = None
 
 
+class AgentUpdate(BaseModel):
+    """Schema for updating an agent"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    model: Optional[str] = None
+    temperature: Optional[str] = None
+    max_tokens: Optional[str] = None
+    config: Optional[Dict[str, Any]] = None
+    is_active: Optional[bool] = None
+    access_level: Optional[AccessLevelEnum] = None
+    collaboration_enabled: Optional[bool] = None
+    mcp_ids: Optional[List[UUID]] = None
+    mcp_group_ids: Optional[List[UUID]] = None
+    skill_ids: Optional[List[UUID]] = None
+    thinker_ids: Optional[List[UUID]] = None
+    is_orchestrator: Optional[bool] = None
+    is_planner: Optional[bool] = None
+    is_thinker: Optional[bool] = None
+    thinker_prompt: Optional[str] = None
+    thinker_model: Optional[str] = None
+    response_style: Optional[str] = None
+    emotional_profile_id: Optional[UUID] = None
+    emotional_intensity: Optional[str] = None
+    output_schema: Optional[Dict[str, Any]] = None
+    input_schema: Optional[Dict[str, Any]] = None
+    transition_output_schema: Optional[Dict[str, Any]] = None
+    transition_input_schema: Optional[Dict[str, Any]] = None
+    vector_memory_enabled: Optional[bool] = None
+    training_memory_enabled: Optional[bool] = None
+    status_updates_enabled: Optional[bool] = None
+    status_updates_config: Optional[Dict[str, Any]] = None
+    planner_prompt: Optional[str] = None
+    planner_model: Optional[str] = None
+    is_guardrail_active: Optional[bool] = None
+    guardrail_prompt: Optional[str] = None
+    guardrail_model: Optional[str] = None
+    trigger_keywords: Optional[List[str]] = None
+    entity_memory_path: Optional[str] = None
+    group_id: Optional[UUID] = None
+    provider_id: Optional[UUID] = None
+
+
 class AgentResponse(BaseModel):
     """Schema for agent response"""
     id: UUID
