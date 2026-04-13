@@ -184,6 +184,7 @@ class AgentResponse(BaseModel):
     is_thinker: bool = False  # NEW
     thinker_prompt: Optional[str] = None  # NEW
     thinker_model: Optional[str] = None  # NEW
+    thinker_ids: List[UUID] = []  # NEW
     trigger_keywords: List[str] = []
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None

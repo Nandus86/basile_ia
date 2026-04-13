@@ -148,6 +148,15 @@ async def get_agent(
             color=agent.emotional_profile.color
         )
     
+    # Build thinkers list from links
+    thinker_ids = []
+    result_thinkers = await db.execute(
+        select(agent_thinker_links.c.thinker_id)
+        .where(agent_thinker_links.c.agent_id == agent_id)
+    )
+    for row in result_thinkers:
+        thinker_ids.append(row[0])
+    
     return AgentResponse(
         id=agent.id,
         name=agent.name,
@@ -175,6 +184,10 @@ async def get_agent(
         status_updates_config=agent.status_updates_config,
         trigger_keywords=agent.trigger_keywords or [],
         provider_id=agent.provider_id,
+        is_thinker=agent.is_thinker,
+        thinker_prompt=agent.thinker_prompt,
+        thinker_model=agent.thinker_model,
+        thinker_ids=thinker_ids,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
