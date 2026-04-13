@@ -91,7 +91,7 @@ class AgentCreate(AgentBase):
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
     mcp_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos MCPs com acesso")
-mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
+    mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
     skill_ids: Optional[List[UUID]] = Field(default=[], description="IDs das Skills com acesso")
     thinker_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Thinkers vinculados a este agente")
     is_orchestrator: bool = False
