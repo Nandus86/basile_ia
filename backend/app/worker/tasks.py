@@ -1655,12 +1655,16 @@ async def process_message_task(
             try:
                 agent_model = agent_config.get("agent_model")
                 
+                print(f"[Task] 🔍 DEBUG Thinker - agent_model: {agent_model}")
+                
                 if agent_model:
                     # Check if Thinker is enabled on this agent
                     is_thinker = getattr(agent_model, 'is_thinker', False)
                     thinker_always_active = getattr(agent_model, 'thinker_always_active', False)
                     thinker_keywords = getattr(agent_model, 'thinker_keywords', None) or []
                     trigger_keywords = getattr(agent_model, 'trigger_keywords', None) or []
+                    
+                    print(f"[Task] 🔍 DEBUG Thinker - is_thinker: {is_thinker}, always_active: {thinker_always_active}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
                     
                     # Check if Thinker should be activated
                     if is_thinker:
@@ -1671,6 +1675,7 @@ async def process_message_task(
                             # Check keywords
                             message_lower = message.lower()
                             all_keywords = list(thinker_keywords) + list(trigger_keywords)
+                            print(f"[Task] 🔍 DEBUG Thinker - checking keywords: {all_keywords} in message: {message_lower[:50]}...")
                             for kw in all_keywords:
                                 if kw.lower() in message_lower:
                                     thinker_enabled = True
