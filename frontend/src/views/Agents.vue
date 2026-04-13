@@ -1380,28 +1380,6 @@
                     placeholder="Selecione um modelo de qualquer provider"
                     class="mt-4"
                   />
-
-                  <v-autocomplete
-                    v-model="formData.thinker_ids"
-                    label="Thinkers Vinculados"
-                    :items="availableThinkers"
-                    item-title="title"
-                    item-value="value"
-                    multiple
-                    chips
-                    closable-chips
-                    class="mt-4"
-                    hint="Selecione outros agentes que servirão como Thinkers para este agente"
-                    persistent-hint
-                  >
-                    <template v-slot:item="{ props, item }">
-                      <v-list-item v-bind="props">
-                        <template v-slot:prepend>
-                          <v-icon color="teal" size="18">mdi-head-brain</v-icon>
-                        </template>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
                 </div>
               </div>
             </v-window-item>
