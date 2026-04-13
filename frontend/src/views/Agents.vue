@@ -2894,6 +2894,8 @@ async function openDialog(agent = null) {
         }
       })
       
+      const foundModel = allModels.value.find(m => m.id === fullAgent.model)
+      
       if (fullAgent.provider_id) {
         activeProvider.value = fullAgent.provider_id
       } else if (foundModel) {
