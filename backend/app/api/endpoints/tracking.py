@@ -16,6 +16,15 @@ from app.redis_client import redis_client
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+@router.delete("/antibot/{session_id}")
+async def reset_antibot_block(session_id: str):
+    """Reset anti-bot block for a specific session"""
+    await redis_client.reset_antibot(session_id)
+    logger.info(f"[AntiBot] 🔓 Session {session_id} unblocked by user")
+    return {"success": True, "message": f"Bloqueio Anti-Bot removido para sessão {session_id}"}
+
+
 @router.get("/logs")
 async def get_tracking_logs(
     skip: int = Query(0, ge=0),

@@ -348,6 +348,17 @@
             Ativar Agente
           </v-btn>
           <v-btn
+            v-if="getSessionId(selectedJob)"
+            color="teal"
+            variant="tonal"
+            prepend-icon="mdi-account-check"
+            :loading="unblockingBot"
+            @click="unblockBot(getSessionId(selectedJob))"
+            size="small"
+          >
+            Não é BOT
+          </v-btn>
+          <v-btn
             v-if="selectedJob.status === 'in_progress' || selectedJob.status === 'queued'"
             color="error"
             variant="flat"
@@ -675,6 +686,7 @@ const sendingHuman = ref(false)
 const pauseMinutes = ref(null)
 const pausingAgent = ref(false)
 const activatingAgent = ref(false)
+const unblockingBot = ref(false)
 
 // STM/MTM Memory Dialog
 const memoryDialog = ref(false)
@@ -972,6 +984,20 @@ const activateAgent = async () => {
     showSnackbar(error.response?.data?.detail || 'Falha ao ativar agente', 'error');
   } finally {
     activatingAgent.value = false;
+  }
+}
+
+const unblockBot = async (sessionId) => {
+  if (!sessionId) return
+  unblockingBot.value = true
+  try {
+    await axiosInstance.delete(`/tracking/antibot/${sessionId}`)
+    showSnackbar('Bloqueio Anti-Bot removido!', 'success')
+  } catch (error) {
+    console.error('Error unblocking bot:', error)
+    showSnackbar('Erro ao remover bloqueio', 'error')
+  } finally {
+    unblockingBot.value = false
   }
 }
 
