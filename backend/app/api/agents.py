@@ -188,6 +188,7 @@ async def get_agent(
         thinker_prompt=agent.thinker_prompt,
         thinker_model=agent.thinker_model,
         thinker_ids=thinker_ids,
+        thinker_restrictive=agent.thinker_restrictive,
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
