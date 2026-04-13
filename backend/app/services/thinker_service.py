@@ -101,8 +101,7 @@ async def get_all_agents_for_thinker(
             if skill.is_active:
                 skills.append({
                     "name": skill.name,
-                    "intent": skill.intent or "",
-                    "capabilities": [cap.get("header", "") for cap in (skill.capabilities or [])]
+                    "intent": skill.intent or ""
                 })
         
         # Get MCPs/tools
