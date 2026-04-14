@@ -241,6 +241,79 @@ Responda APENAS em JSON válido com este formato exato:
             collab_instruction += f"\n\n[CONTEXTO ADICIONAL]:\n{context}"
             
         agent_config["system_prompt"] = agent_config.get("system_prompt", "") + collab_instruction
+
+        # [THINKER] Internal thinking step for collaborators
+        try:
+            from app.models.agent import Agent as AgentModel
+            from sqlalchemy import select
+
+            collab_agent_id = agent_config.get("id")
+            if collab_agent_id:
+                result = await self.db.execute(select(AgentModel).where(AgentModel.id == collab_agent_id))
+                collab_agent_model = result.scalar_one_or_none()
+            else:
+                collab_agent_model = agent_config.get("agent_model")
+
+            if collab_agent_model:
+                is_thinker = getattr(collab_agent_model, 'is_thinker', False)
+                thinker_always_active = getattr(collab_agent_model, 'thinker_always_active', False)
+                thinker_keywords = getattr(collab_agent_model, 'thinker_keywords', None) or []
+                trigger_keywords = getattr(collab_agent_model, 'trigger_keywords', None) or []
+
+                print(f"[Orchestrator] 🔍 DEBUG Thinker - agent: {collab_agent_model.name}, is_thinker: {is_thinker}, always_active: {thinker_always_active}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
+
+                if is_thinker:
+                    thinker_enabled = False
+                    if thinker_always_active:
+                        thinker_enabled = True
+                        print(f"[Orchestrator] 🧠 Thinker always active for collaborator '{collab_agent_model.name}'")
+                    else:
+                        message_lower = message.lower()
+                        all_keywords = list(thinker_keywords) + list(trigger_keywords)
+                        print(f"[Orchestrator] 🔍 DEBUG Thinker - checking keywords: {all_keywords} in message: {message_lower[:50]}...")
+                        for kw in all_keywords:
+                            if kw.lower() in message_lower:
+                                thinker_enabled = True
+                                print(f"[Orchestrator] 🧠 Thinker activated by keyword: '{kw}' for collaborator '{collab_agent_model.name}'")
+                                break
+
+                    if thinker_enabled:
+                        thinker_prompt = getattr(collab_agent_model, 'thinker_prompt', None) or (
+                            "Você é um assistente de IA estratégico. Antes de responder, analise a solicitação do usuário "
+                            "e identifique os passos necessários para resolver a tarefa de forma eficaz. "
+                            "Considere as ferramentas disponíveis (colaboradores, MCPs) e monte um plano de execução."
+                        )
+                        is_restrictive = getattr(collab_agent_model, 'thinker_restrictive', False)
+
+                        if is_restrictive:
+                            thinking_instruction = (
+                                f"\n\n## 🧠 MODO THINKER ATIVADO - ANÁLISE OBRIGATÓRIA\n\n"
+                                f"⚠️ **IMPORTANTE**: Antes de responder, você DEVE analisar a solicitação e seguir estas regras:\n\n"
+                                f"1. Analise a solicitação do usuário com cuidado\n"
+                                f"2. Identifique os passos necessários para executar a tarefa\n"
+                                f"3. Considere usar os colaboradores/tools disponíveis\n"
+                                f"4. Execute APENAS o que for necessário\n"
+                                f"5. NÃO invente informações ou execute tarefas não solicitadas\n\n"
+                                f"📝 Instrução do Thinker: {thinker_prompt}\n"
+                            )
+                        else:
+                            thinking_instruction = (
+                                f"\n\n## 🧠 THINKER ATIVADO\n\n"
+                                f"Antes de responder, considere: {thinker_prompt}\n"
+                            )
+
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                        print(f"[Orchestrator] 🧠 Thinker enabled for collaborator '{collab_agent_model.name}' (restrictive={is_restrictive})")
+
+                        thinker_model = getattr(collab_agent_model, 'thinker_model', None)
+                        if thinker_model:
+                            agent_config["model"] = thinker_model
+                            print(f"[Orchestrator] 🧠 Using thinker model for collaborator: {thinker_model}")
+
+        except Exception as e:
+            import traceback
+            print(f"[Orchestrator] ⚠️ Error in thinker processing for collaborator: {e}")
+            traceback.print_exc()
         
         # Build messages: History + Final Custom Human Message
         messages = []
