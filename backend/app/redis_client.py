@@ -192,7 +192,14 @@ class RedisClient:
         for item in items:
             try:
                 parsed = json.loads(item)
-                if isinstance(parsed, dict) and parsed.get("original_job_id") == original_job_id:
+                if not isinstance(parsed, dict):
+                    continue
+
+                if parsed.get("original_job_id") == original_job_id:
+                    return True
+
+                nested_payload = parsed.get("payload")
+                if isinstance(nested_payload, dict) and nested_payload.get("original_job_id") == original_job_id:
                     return True
             except Exception:
                 continue

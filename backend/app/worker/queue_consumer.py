@@ -185,15 +185,12 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     )
 
                     if not already_buffered:
-                        # Buffer the essential payload for later processing
+                        # Buffer full original payload to preserve all fields for replay
+                        payload_for_buffer = dict(payload) if isinstance(payload, dict) else {}
+                        payload_for_buffer["original_job_id"] = job_id
                         buffer_data = json.dumps({
-                            "message": message_text,
-                            "agent_id": agent_id,
-                            "context_data": context_data,
-                            "transition_data": transition_data,
-                            "callback_url": callback_url,
-                            "user_access_level": user_access_level,
                             "original_job_id": job_id,
+                            "payload": payload_for_buffer,
                         })
                         await redis_client.push_to_buffer(session_id, buffer_data)
 
@@ -567,91 +564,105 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         if buffered_items:
                             logger.info(f"[Guard] Draining {len(buffered_items)} buffered messages for session {session_id}")
 
-                            # Combine messages into a single text
-                            combined_parts = []
-                            # Use the first buffered item's metadata for the new job
-                            first_item = json.loads(buffered_items[0])
-                            new_agent_id = first_item.get("agent_id")
-                            new_callback_url = first_item.get("callback_url")
-                            new_context_data = first_item.get("context_data")
-                            new_transition_data = first_item.get("transition_data")
-                            new_user_access_level = first_item.get("user_access_level", "normal")
+                            # Build replay payload from buffered entries.
+                            # Preferred path: use latest full payload (preserves global/system/church/member/ai_params).
+                            # Legacy fallback: rebuild minimal payload and combine only messages.
+                            latest_item = json.loads(buffered_items[-1])
+                            latest_payload = latest_item.get("payload") if isinstance(latest_item, dict) else None
 
-                            for i, item_json in enumerate(buffered_items):
-                                item = json.loads(item_json)
-                                msg = item.get("message", "")
-                                if msg:
-                                    combined_parts.append(f"Mensagem {i+1}: \"{msg}\"")
-
-                            combined_message = (
-                                "[O usuário enviou mensagens adicionais enquanto o atendimento anterior estava em andamento]\n\n"
-                                + "\n".join(combined_parts)
-                            )
-
-                            # Re-publish as a new job to RabbitMQ
-                            import uuid as uuid_mod
-                            new_job_id = f"job_{uuid_mod.uuid4().hex}"
-
-                            new_payload = {
-                                "message": combined_message,
-                                "agent_id": new_agent_id,
-                                "session_id": session_id,
-                                "user_access_level": new_user_access_level,
-                                "context_data": new_context_data,
-                                "transition_data": new_transition_data,
-                                "callback_url": new_callback_url,
-                            }
-
-                            # Create JobLog for the new combined job
-                            job_created_at = None
-                            try:
-                                from app.models.job_log import JobLog
-                                async with async_session_maker() as db_session:
-                                    drained_job_log = JobLog(
-                                        job_id=new_job_id,
-                                        webhook_path="buffer_drain",
-                                        status="queued",
-                                        request_data=new_payload,
-                                        callback_url=new_callback_url,
-                                    )
-                                    db_session.add(drained_job_log)
-                                    await db_session.commit()
-                                    await db_session.refresh(drained_job_log)
-                                    job_created_at = drained_job_log.created_at.isoformat() if drained_job_log.created_at else None
-                            except Exception as e:
-                                logger.error(f"[Guard] Failed to create JobLog for drained job: {e}")
-
-                            # Release lock before enqueuing drained job to avoid re-buffer loop
-                            await redis_client.release_user_lock(session_id)
-
-                            # Publish new drained job to SSE stream for realtime UI visibility
-                            try:
-                                await redis_client.publish("job_updates", json.dumps({
-                                    "event": "new_job",
-                                    "data": {
-                                        "job_id": new_job_id,
-                                        "webhook_path": "buffer_drain",
-                                        "status": "queued",
-                                        "request_data": new_payload,
-                                        "callback_url": new_callback_url,
-                                        "created_at": job_created_at,
-                                    }
-                                }))
-                            except Exception as sse_err:
-                                logger.error(f"[Guard] Failed to publish SSE new_job for drained buffer: {sse_err}")
-
-                            # Publish to RabbitMQ
-                            from app.services.rabbitmq_service import rabbitmq_client as rmq
-                            success = await rmq.publish_webhook_job(
-                                payload=new_payload,
-                                config_id="buffer_drain",
-                                session_id=session_id,
-                                job_id=new_job_id,
-                            )
-                            if success:
-                                logger.info(f"[Guard] Re-published drained buffer as new job {new_job_id}")
+                            new_payload = None
+                            if isinstance(latest_payload, dict):
+                                new_payload = dict(latest_payload)
+                                new_payload.pop("original_job_id", None)
+                                new_payload["session_id"] = session_id
                             else:
-                                logger.error(f"[Guard] Failed to re-publish drained buffer {new_job_id}!")
+                                combined_parts = []
+                                first_item = json.loads(buffered_items[0])
+                                new_agent_id = first_item.get("agent_id")
+                                new_callback_url = first_item.get("callback_url")
+                                new_context_data = first_item.get("context_data")
+                                new_transition_data = first_item.get("transition_data")
+                                new_user_access_level = first_item.get("user_access_level", "normal")
+
+                                for i, item_json in enumerate(buffered_items):
+                                    item = json.loads(item_json)
+                                    msg = item.get("message", "")
+                                    if msg:
+                                        combined_parts.append(f"Mensagem {i+1}: \"{msg}\"")
+
+                                combined_message = (
+                                    "[O usuário enviou mensagens adicionais enquanto o atendimento anterior estava em andamento]\n\n"
+                                    + "\n".join(combined_parts)
+                                )
+                                new_payload = {
+                                    "message": combined_message,
+                                    "agent_id": new_agent_id,
+                                    "session_id": session_id,
+                                    "user_access_level": new_user_access_level,
+                                    "context_data": new_context_data,
+                                    "transition_data": new_transition_data,
+                                    "callback_url": new_callback_url,
+                                }
+
+                            if not isinstance(new_payload, dict):
+                                logger.error("[Guard] Failed to build drained payload. Releasing lock only.")
+                                await redis_client.release_user_lock(session_id)
+                            else:
+                                # Re-publish as a new job to RabbitMQ
+                                import uuid as uuid_mod
+                                new_job_id = f"job_{uuid_mod.uuid4().hex}"
+                                new_callback_url = new_payload.get("callback_url")
+
+                                # Create JobLog for the new combined job
+                                job_created_at = None
+                                try:
+                                    from app.models.job_log import JobLog
+                                    async with async_session_maker() as db_session:
+                                        drained_job_log = JobLog(
+                                            job_id=new_job_id,
+                                            webhook_path="buffer_drain",
+                                            status="queued",
+                                            request_data=new_payload,
+                                            callback_url=new_callback_url,
+                                        )
+                                        db_session.add(drained_job_log)
+                                        await db_session.commit()
+                                        await db_session.refresh(drained_job_log)
+                                        job_created_at = drained_job_log.created_at.isoformat() if drained_job_log.created_at else None
+                                except Exception as e:
+                                    logger.error(f"[Guard] Failed to create JobLog for drained job: {e}")
+
+                                # Release lock before enqueuing drained job to avoid re-buffer loop
+                                await redis_client.release_user_lock(session_id)
+
+                                # Publish new drained job to SSE stream for realtime UI visibility
+                                try:
+                                    await redis_client.publish("job_updates", json.dumps({
+                                        "event": "new_job",
+                                        "data": {
+                                            "job_id": new_job_id,
+                                            "webhook_path": "buffer_drain",
+                                            "status": "queued",
+                                            "request_data": new_payload,
+                                            "callback_url": new_callback_url,
+                                            "created_at": job_created_at,
+                                        }
+                                    }))
+                                except Exception as sse_err:
+                                    logger.error(f"[Guard] Failed to publish SSE new_job for drained buffer: {sse_err}")
+
+                                # Publish to RabbitMQ
+                                from app.services.rabbitmq_service import rabbitmq_client as rmq
+                                success = await rmq.publish_webhook_job(
+                                    payload=new_payload,
+                                    config_id="buffer_drain",
+                                    session_id=session_id,
+                                    job_id=new_job_id,
+                                )
+                                if success:
+                                    logger.info(f"[Guard] Re-published drained buffer as new job {new_job_id}")
+                                else:
+                                    logger.error(f"[Guard] Failed to re-publish drained buffer {new_job_id}!")
                         else:
                             # No buffer — simply release lock
                             await redis_client.release_user_lock(session_id)
