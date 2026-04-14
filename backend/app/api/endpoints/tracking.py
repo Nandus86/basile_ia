@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, String
 from typing import List, Optional
 import json
 import asyncio
@@ -31,6 +31,7 @@ async def get_tracking_logs(
     limit: int = Query(50, ge=1, le=500),
     status: Optional[str] = None,
     path: Optional[str] = None,
+    session_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Get paginated list of system webhook/job logs"""
@@ -40,6 +41,8 @@ async def get_tracking_logs(
         query = query.where(JobLog.status == status)
     if path:
         query = query.where(JobLog.webhook_path.ilike(f"%{path}%"))
+    if session_id:
+        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"session_id\": \"{session_id}\"%"))
         
     # Count total
     count_query = select(func.count()).select_from(query.subquery())

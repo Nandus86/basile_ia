@@ -623,7 +623,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             if isinstance(result, Exception):
                 continue
             name, response = result
-if response:
+            if response:
                 collaborator_responses[name] = response
                 
                 # [THINKER] Update task list in agent memory after collaborator response
@@ -672,7 +672,7 @@ if response:
         if collaborator_responses:
             formatted = "\n\n".join([f"[{name}]: {response}" for name, response in collaborator_responses.items()])
             return formatted
-            
+        
         return ""
     
     async def orchestrate(

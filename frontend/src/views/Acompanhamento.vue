@@ -95,7 +95,18 @@
           density="compact"
           hide-details
           class="mr-3"
-          style="max-width: 260px"
+          style="max-width: 180px"
+          @keyup.enter="fetchLogs"
+        ></v-text-field>
+        <v-text-field
+          v-model="searchSessionId"
+          prepend-inner-icon="mdi-identifier"
+          placeholder="Buscar por Session ID..."
+          variant="outlined"
+          density="compact"
+          hide-details
+          class="mr-3"
+          style="max-width: 220px"
           @keyup.enter="fetchLogs"
         ></v-text-field>
         <v-select
@@ -128,6 +139,13 @@
       >
         <template v-slot:item.created_at="{ item }">
           <span class="text-body-2">{{ formatDate(item.created_at) }}</span>
+        </template>
+        
+        <template v-slot:item.session_id="{ item }">
+          <span v-if="item.session_id" class="text-body-2 font-weight-medium text-info">
+            {{ item.session_id }}
+          </span>
+          <span v-else class="text-medium-emphasis">—</span>
         </template>
         
         <template v-slot:item.status="{ item }">
@@ -644,19 +662,22 @@ const pathChartOptions = ref({
 const logs = ref([])
 const totalItems = ref(0)
 const page = ref(1)
-const itemsPerPage = ref(50)
+const itemsPerPage = ref(10)
 const itemsPerPageOptions = [
-  { value: 20, title: '20' },
+  { value: 10, title: '10' },
+  { value: 25, title: '25' },
   { value: 50, title: '50' },
   { value: 100, title: '100' },
   { value: 200, title: '200' },
 ]
 const searchPath = ref('')
+const searchSessionId = ref('')
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
 const headers = [
   { title: 'Data/Hora', key: 'created_at', sortable: false },
+  { title: 'Session ID', key: 'session_id', sortable: false },
   { title: 'Webhook Path', key: 'webhook_path', sortable: false },
   { title: 'Status', key: 'status', sortable: false },
   { title: 'Tempo', key: 'duration_ms', sortable: false },
@@ -826,6 +847,7 @@ const fetchLogs = async () => {
     let url = `/tracking/logs?skip=${skip}&limit=${itemsPerPage.value}`
     if (statusFilter.value) url += `&status=${statusFilter.value}`
     if (searchPath.value) url += `&path=${searchPath.value}`
+    if (searchSessionId.value) url += `&session_id=${searchSessionId.value}`
     const { data } = await axiosInstance.get(url)
     logs.value = data.items
     totalItems.value = data.total
