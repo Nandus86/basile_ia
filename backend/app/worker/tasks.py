@@ -10,6 +10,7 @@ Flow:
 """
 import time
 import json
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from app.database import AsyncSessionLocal
@@ -1761,7 +1762,8 @@ async def process_message_task(
                                 
                                 # Save task list to agent memory (only if memory is enabled)
                                 if thinker_memory_enabled:
-                                    await redis_client.set_agent_memory(
+                                    _redis = await get_redis()
+                                    await _redis.set_agent_memory(
                                         session_id=session_id,
                                         agent_id=str(agent_model.id),
                                         memory_data={
@@ -1791,11 +1793,7 @@ async def process_message_task(
                                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
                                 print(f"[Task] 🧠 Thinker task list injected for agent '{agent_model.name}'")
                                 
-                                # Optional: Use different model for thinking if specified
-                                thinker_model = getattr(agent_model, 'thinker_model', None)
-                                if thinker_model:
-                                    agent_config["model"] = thinker_model
-                                    print(f"[Task] 🧠 Using thinker model: {thinker_model}")
+                                # NOTE: thinker_model is used ONLY in call_thinker, not on main agent
                             else:
                                 print(f"[Task] ⚠️ Thinker did not return valid task list")
                                 # Fallback to simple instruction
@@ -1824,11 +1822,6 @@ async def process_message_task(
                                 
                                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
                                 print(f"[Task] 🧠 Thinker enabled for agent '{agent_model.name}' (fallback mode)")
-                                
-                                thinker_model = getattr(agent_model, 'thinker_model', None)
-                                if thinker_model:
-                                    agent_config["model"] = thinker_model
-                                    print(f"[Task] 🧠 Using thinker model: {thinker_model}")
                             
             except Exception as e:
                 import traceback

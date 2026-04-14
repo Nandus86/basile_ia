@@ -267,12 +267,13 @@ Responda APENAS em JSON válido com este formato exato:
                 session_id = context_data.get("session_id") if context_data else None
                 
                 # Check agent memory for existing task list (only if memory is enabled)
-                from app.redis_client import redis_client
+                from app.redis_client import get_redis
+                _redis = await get_redis()
                 thinker_enabled = False
                 think_task_list = None
                 
                 if session_id and thinker_memory_enabled:
-                    agent_memory = await redis_client.get_agent_memory(session_id, str(collab_agent_model.id))
+                    agent_memory = await _redis.get_agent_memory(session_id, str(collab_agent_model.id))
                     
                     if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
                         # Resume from existing task list
@@ -345,7 +346,7 @@ Responda APENAS em JSON válido com este formato exato:
                             })
                         
                         if session_id and thinker_memory_enabled:
-                            await redis_client.set_agent_memory(
+                            await _redis.set_agent_memory(
                                 session_id=session_id,
                                 agent_id=str(collab_agent_model.id),
                                 memory_data={
@@ -373,10 +374,7 @@ Responda APENAS em JSON válido com este formato exato:
                         agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
                         print(f"[Orchestrator] 🧠 Thinker task list injected for collaborator '{collab_agent_model.name}'")
                         
-                        thinker_model = getattr(collab_agent_model, 'thinker_model', None)
-                        if thinker_model:
-                            agent_config["model"] = thinker_model
-                            print(f"[Orchestrator] 🧠 Using thinker model: {thinker_model}")
+                        # NOTE: thinker_model is used ONLY in call_thinker, not on collaborator
                     else:
                         # Fallback to simple instruction
                         thinker_prompt = getattr(collab_agent_model, 'thinker_prompt', None) or (
@@ -625,19 +623,20 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             if isinstance(result, Exception):
                 continue
             name, response = result
-            if response:
+if response:
                 collaborator_responses[name] = response
                 
                 # [THINKER] Update task list in agent memory after collaborator response
                 if context_data and context_data.get("session_id"):
                     session_id = context_data.get("session_id")
                     try:
-                        from app.redis_client import redis_client
+                        from app.redis_client import get_redis
+                        _redis = await get_redis()
                         
                         # Find the collaborator agent
                         for collaborator, _ in selected_collaborators:
                             if collaborator.name == name:
-                                agent_memory = await redis_client.get_agent_memory(session_id, str(collaborator.id))
+                                agent_memory = await _redis.get_agent_memory(session_id, str(collaborator.id))
                                 if agent_memory and agent_memory.get("task_list"):
                                     response_lower = response.lower() if response else ""
                                     task_list = agent_memory.get("task_list", [])
@@ -651,7 +650,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                                                 current_task = i + 2
                                                 print(f"[Orchestrator] ✓ Task {i+1} completed for '{name}'")
                                                 
-                                                await redis_client.update_agent_memory(
+                                                await _redis.update_agent_memory(
                                                     session_id=session_id,
                                                     agent_id=str(collaborator.id),
                                                     updates={
@@ -665,7 +664,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                                                 all_completed = all(t.get("completed", False) for t in task_list)
                                                 if all_completed:
                                                     print(f"[Orchestrator] 🧠 All tasks completed for '{name}', clearing memory...")
-                                                    await redis_client.delete_agent_memory(session_id, str(collaborator.id))
+                                                    await _redis.delete_agent_memory(session_id, str(collaborator.id))
                                                 break
                     except Exception as te:
                         print(f"[Orchestrator] ⚠️ Error updating Thinker memory: {te}")
