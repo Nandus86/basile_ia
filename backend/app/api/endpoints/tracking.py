@@ -41,8 +41,6 @@ async def get_tracking_logs(
         query = query.where(JobLog.status == status)
     if path:
         query = query.where(JobLog.webhook_path.ilike(f"%{path}%"))
-    if session_id:
-        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"session_id\": \"{session_id}\"%"))
         
     # Count total
     count_query = select(func.count()).select_from(query.subquery())

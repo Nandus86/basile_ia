@@ -847,9 +847,15 @@ const fetchLogs = async () => {
     let url = `/tracking/logs?skip=${skip}&limit=${itemsPerPage.value}`
     if (statusFilter.value) url += `&status=${statusFilter.value}`
     if (searchPath.value) url += `&path=${searchPath.value}`
-    if (searchSessionId.value) url += `&session_id=${searchSessionId.value}`
+    
     const { data } = await axiosInstance.get(url)
-    logs.value = data.items
+    
+    let allItems = data.items
+    if (searchSessionId.value) {
+      allItems = allItems.filter(item => item.session_id?.toLowerCase().includes(searchSessionId.value.toLowerCase()))
+    }
+    
+    logs.value = allItems
     totalItems.value = data.total
   } catch (error) {
     showSnackbar('Erro ao carregar logs', 'error')
