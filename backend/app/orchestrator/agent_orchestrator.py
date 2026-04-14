@@ -242,7 +242,7 @@ Responda APENAS em JSON válido com este formato exato:
             
         agent_config["system_prompt"] = agent_config.get("system_prompt", "") + collab_instruction
 
-        # [THINKER] Internal thinking step for collaborators
+        # [THINKER] Internal thinking step for collaborators with task list support
         try:
             from app.models.agent import Agent as AgentModel
             from sqlalchemy import select
@@ -262,8 +262,39 @@ Responda APENAS em JSON válido com este formato exato:
 
                 print(f"[Orchestrator] 🔍 DEBUG Thinker - agent: {collab_agent_model.name}, is_thinker: {is_thinker}, always_active: {thinker_always_active}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
 
-                if is_thinker:
-                    thinker_enabled = False
+                # Get session_id from context_data
+                session_id = context_data.get("session_id") if context_data else None
+                
+                # Check agent memory for existing task list
+                from app.redis_client import redis_client
+                thinker_enabled = False
+                think_task_list = None
+                
+                if session_id:
+                    agent_memory = await redis_client.get_agent_memory(session_id, str(collab_agent_model.id))
+                    
+                    if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
+                        # Resume from existing task list
+                        think_task_list = agent_memory.get("task_list")
+                        current_task = agent_memory.get("current_task", 1)
+                        print(f"[Orchestrator] 🧠 Resuming Thinker task list from memory - current task: {current_task}")
+                        
+                        task_list_text = "\n".join([f"[{'✓' if t.get('completed') else ' '}] Task {i+1}: {t.get('description', t.get('acao', 'N/A'))}" 
+                                                    for i, t in enumerate(think_task_list)])
+                        
+                        continuation_instruction = (
+                            f"\n\n## 🧠 LISTA DE TAREFAS EM ANDAMENTO\n\n"
+                            f"Você está continuando uma lista de tarefas criada pelo Thinker. "
+                            f"Marque as tarefas já concluídas com ✓.\n\n"
+                            f"{task_list_text}\n\n"
+                            f"🎯 Próxima tarefa a executar: Task {current_task}\n"
+                            f"Instruções: Execute a tarefa atual, marque como concluída (✓), e avance para a próxima.\n"
+                            f"⚠️ NÃO use o Thinker novamente - continue a partir da lista existente.\n"
+                        )
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + continuation_instruction
+                        thinker_enabled = True
+                        
+                if not thinker_enabled and is_thinker:
                     if thinker_always_active:
                         thinker_enabled = True
                         print(f"[Orchestrator] 🧠 Thinker always active for collaborator '{collab_agent_model.name}'")
@@ -277,14 +308,82 @@ Responda APENAS em JSON válido com este formato exato:
                                 print(f"[Orchestrator] 🧠 Thinker activated by keyword: '{kw}' for collaborator '{collab_agent_model.name}'")
                                 break
 
-                    if thinker_enabled:
+                if thinker_enabled and not think_task_list:
+                    # Call Thinker to generate task list
+                    from app.services.thinker_service import call_thinker
+                    
+                    context_for_thinker = {
+                        "agent_id": str(collab_agent_model.id),
+                        "agent_name": collab_agent_model.name,
+                        "session_id": session_id,
+                    }
+                    if context_data:
+                        context_for_thinker.update(context_data)
+                    
+                    print(f"[Orchestrator] 🧠 Calling Thinker to generate task list for '{collab_agent_model.name}'...")
+                    
+                    thinker_result = await call_thinker(
+                        db=self.db,
+                        thinker=collab_agent_model,
+                        message=message,
+                        context_data=context_for_thinker,
+                        history=history
+                    )
+                    
+                    passos = thinker_result.get("passos", [])
+                    if passos:
+                        think_task_list = []
+                        for passo in passos:
+                            think_task_list.append({
+                                "ordem": passo.get("ordem", 0),
+                                "agente": passo.get("agente", ""),
+                                "acao": passo.get("acao", ""),
+                                "dados_necessarios": passo.get("dados_necessarios", {}),
+                                "completed": False,
+                                "description": passo.get("acao", "")
+                            })
+                        
+                        if session_id:
+                            await redis_client.set_agent_memory(
+                                session_id=session_id,
+                                agent_id=str(collab_agent_model.id),
+                                memory_data={
+                                    "task_list": think_task_list,
+                                    "current_task": 1,
+                                    "status": "in_progress",
+                                    "visao_geral": thinker_result.get("visao_geral", ""),
+                                    "original_message": message,
+                                },
+                                ttl_seconds=3600
+                            )
+                        
+                        print(f"[Orchestrator] 🧠 Thinker generated {len(think_task_list)} tasks")
+                        
+                        task_list_text = "\n".join([f"[ ] Task {t.get('ordem')}: {t.get('acao')}" for t in think_task_list])
+                        
+                        thinking_instruction = (
+                            f"\n\n## 🧠 THINKER ATIVADO - PLANO DE EXECUÇÃO GERADO\n\n"
+                            f"{thinker_result.get('visao_geral', '')}\n\n"
+                            f"📋 Lista de Tarefas (SIGA IMPRETERIVELMENTE):\n"
+                            f"{task_list_text}\n\n"
+                            f"🎯 Execute a Task 1 primeiro, marque como concluída (✓), e avance para a próxima.\n"
+                        )
+                        
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                        print(f"[Orchestrator] 🧠 Thinker task list injected for collaborator '{collab_agent_model.name}'")
+                        
+                        thinker_model = getattr(collab_agent_model, 'thinker_model', None)
+                        if thinker_model:
+                            agent_config["model"] = thinker_model
+                            print(f"[Orchestrator] 🧠 Using thinker model: {thinker_model}")
+                    else:
+                        # Fallback to simple instruction
                         thinker_prompt = getattr(collab_agent_model, 'thinker_prompt', None) or (
                             "Você é um assistente de IA estratégico. Antes de responder, analise a solicitação do usuário "
-                            "e identifique os passos necessários para resolver a tarefa de forma eficaz. "
-                            "Considere as ferramentas disponíveis (colaboradores, MCPs) e monte um plano de execução."
+                            "e identifique os passos necessários para resolver a tarefa de forma eficaz."
                         )
                         is_restrictive = getattr(collab_agent_model, 'thinker_restrictive', False)
-
+                        
                         if is_restrictive:
                             thinking_instruction = (
                                 f"\n\n## 🧠 MODO THINKER ATIVADO - ANÁLISE OBRIGATÓRIA\n\n"
@@ -301,14 +400,14 @@ Responda APENAS em JSON válido com este formato exato:
                                 f"\n\n## 🧠 THINKER ATIVADO\n\n"
                                 f"Antes de responder, considere: {thinker_prompt}\n"
                             )
-
+                        
                         agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
-                        print(f"[Orchestrator] 🧠 Thinker enabled for collaborator '{collab_agent_model.name}' (restrictive={is_restrictive})")
-
+                        print(f"[Orchestrator] 🧠 Thinker enabled for collaborator '{collab_agent_model.name}'")
+                        
                         thinker_model = getattr(collab_agent_model, 'thinker_model', None)
                         if thinker_model:
                             agent_config["model"] = thinker_model
-                            print(f"[Orchestrator] 🧠 Using thinker model for collaborator: {thinker_model}")
+                            print(f"[Orchestrator] 🧠 Using thinker model: {thinker_model}")
 
         except Exception as e:
             import traceback
@@ -527,6 +626,47 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             name, response = result
             if response:
                 collaborator_responses[name] = response
+                
+                # [THINKER] Update task list in agent memory after collaborator response
+                if context_data and session_id := context_data.get("session_id"):
+                    try:
+                        from app.redis_client import redis_client
+                        
+                        # Find the collaborator agent
+                        for collaborator, _ in selected_collaborators:
+                            if collaborator.name == name:
+                                agent_memory = await redis_client.get_agent_memory(session_id, str(collaborator.id))
+                                if agent_memory and agent_memory.get("task_list"):
+                                    response_lower = response.lower() if response else ""
+                                    task_list = agent_memory.get("task_list", [])
+                                    current_task = agent_memory.get("current_task", 1)
+                                    
+                                    # Mark completed if response indicates success
+                                    for i, task in enumerate(task_list):
+                                        if not task.get("completed") and i + 1 == current_task:
+                                            if any(word in response_lower for word in ["sucesso", "concluído", "concluida", "registrado", "confirmado", "ok", "realizado", "efetivado", "encontrado", "recebido"]):
+                                                task["completed"] = True
+                                                current_task = i + 2
+                                                print(f"[Orchestrator] ✓ Task {i+1} completed for '{name}'")
+                                                
+                                                await redis_client.update_agent_memory(
+                                                    session_id=session_id,
+                                                    agent_id=str(collaborator.id),
+                                                    updates={
+                                                        "task_list": task_list,
+                                                        "current_task": current_task,
+                                                    },
+                                                    ttl_seconds=3600
+                                                )
+                                                
+                                                # Check if all completed
+                                                all_completed = all(t.get("completed", False) for t in task_list)
+                                                if all_completed:
+                                                    print(f"[Orchestrator] 🧠 All tasks completed for '{name}', clearing memory...")
+                                                    await redis_client.delete_agent_memory(session_id, str(collaborator.id))
+                                                break
+                    except Exception as te:
+                        print(f"[Orchestrator] ⚠️ Error updating Thinker memory: {te}")
         
         if collaborator_responses:
             formatted = "\n\n".join([f"[{name}]: {response}" for name, response in collaborator_responses.items()])

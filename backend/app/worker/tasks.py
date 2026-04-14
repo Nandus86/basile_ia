@@ -1650,10 +1650,10 @@ async def process_message_task(
                 print(f"[Task] ❌ Error checking trigger MCPs: {e}")
                 traceback.print_exc()
 
-            # [THINKER] Internal thinking step - no external agent needed
+            # [THINKER] Internal thinking step with task list management
             thinker_enabled = False
+            think_task_list = None
             try:
-                # Buscar o agente diretamente do banco para ter todos os campos
                 from app.models.agent import Agent as AgentModel
                 from sqlalchemy import select
                 
@@ -1667,7 +1667,6 @@ async def process_message_task(
                 print(f"[Task] 🔍 DEBUG Thinker - agent_model: {agent_model}")
                 
                 if agent_model:
-                    # Check if Thinker is enabled on this agent
                     is_thinker = getattr(agent_model, 'is_thinker', False)
                     thinker_always_active = getattr(agent_model, 'thinker_always_active', False)
                     thinker_keywords = getattr(agent_model, 'thinker_keywords', None) or []
@@ -1675,13 +1674,38 @@ async def process_message_task(
                     
                     print(f"[Task] 🔍 DEBUG Thinker - is_thinker: {is_thinker}, always_active: {thinker_always_active}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
                     
-                    # Check if Thinker should be activated
-                    if is_thinker:
+                    # Check agent memory for existing task list
+                    from app.redis_client import redis_client
+                    agent_memory = await redis_client.get_agent_memory(session_id, str(agent_model.id))
+                    
+                    if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
+                        # Resume from existing task list - don't call Thinker again
+                        think_task_list = agent_memory.get("task_list")
+                        current_task = agent_memory.get("current_task", 1)
+                        print(f"[Task] 🧠 Resuming Thinker task list from memory - current task: {current_task}, total: {len(think_task_list)}")
+                        
+                        # Inject task list into prompt for continuation
+                        task_list_text = "\n".join([f"[{'✓' if t.get('completed') else ' '}] Task {i+1}: {t.get('description', t.get('acao', 'N/A'))}" 
+                                                    for i, t in enumerate(think_task_list)])
+                        
+                        continuation_instruction = (
+                            f"\n\n## 🧠 LISTA DE TAREFAS EM ANDAMENTO\n\n"
+                            f"Você está continuando uma lista de tarefas criada pelo Thinker. "
+                            f"Marque as tarefas já concluídas com ✓.\n\n"
+                            f"{task_list_text}\n\n"
+                            f"🎯 Próxima tarefa a executar: Task {current_task}\n"
+                            f"Instruções: Execute a tarefa atual, marque como concluída (✓), e avance para a próxima.\n"
+                            f"⚠️ NÃO use o Thinker novamente - continue a partir da lista existente.\n"
+                        )
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + continuation_instruction
+                        thinker_enabled = True  # Thinker was already used, just continuing
+                        
+                    elif is_thinker:
+                        # Check if Thinker should be activated (only if no existing task list)
                         if thinker_always_active:
                             thinker_enabled = True
                             print(f"[Task] 🧠 Thinker always active for agent '{agent_model.name}'")
                         else:
-                            # Check keywords
                             message_lower = message.lower()
                             all_keywords = list(thinker_keywords) + list(trigger_keywords)
                             print(f"[Task] 🔍 DEBUG Thinker - checking keywords: {all_keywords} in message: {message_lower[:50]}...")
@@ -1690,41 +1714,116 @@ async def process_message_task(
                                     thinker_enabled = True
                                     print(f"[Task] 🧠 Thinker activated by keyword: '{kw}'")
                                     break
-                    
-                    # If Thinker is enabled, inject thinking instruction
-                    if thinker_enabled:
-                        thinker_prompt = getattr(agent_model, 'thinker_prompt', None) or (
-                            "Você é um assistente de IA estratégico. Antes de responder, analise a solicitação do usuário "
-                            "e identifique os passos necessários para resolver a tarefa de forma eficaz. "
-                            "Considere as ferramentas disponíveis (colaboradores, MCPs) e monte um plano de execução."
-                        )
-                        is_restrictive = getattr(agent_model, 'thinker_restrictive', False)
                         
-                        if is_restrictive:
-                            thinking_instruction = (
-                                f"\n\n## 🧠 MODO THINKER ATIVADO - ANÁLISE OBRIGATÓRIA\n\n"
-                                f"⚠️ **IMPORTANTE**: Antes de responder, você DEVE analisar a solicitação e seguir estas regras:\n\n"
-                                f"1. Analise a solicitação do usuário com cuidado\n"
-                                f"2. Identifique os passos necessários para executar a tarefa\n"
-                                f"3. Considere usar os colaboradores/tools disponíveis\n"
-                                f"4. Execute APENAS o que for necessário\n"
-                                f"5. NÃO invente informações ou execute tarefas não solicitadas\n\n"
-                                f"📝 Instrução do Thinker: {thinker_prompt}\n"
+                        # If Thinker is enabled, call it to create task list
+                        if thinker_enabled:
+                            from app.services.thinker_service import call_thinker
+                            from uuid import UUID
+                            
+                            # Prepare context for Thinker
+                            context_for_thinker = {
+                                "agent_id": str(agent_model.id),
+                                "agent_name": agent_model.name,
+                                "session_id": session_id,
+                            }
+                            if context_data:
+                                context_for_thinker.update(context_data)
+                            
+                            print(f"[Task] 🧠 Calling Thinker to generate task list for '{agent_model.name}'...")
+                            
+                            thinker_result = await call_thinker(
+                                db=db,
+                                thinker=agent_model,
+                                message=message,
+                                context_data=context_for_thinker,
+                                history=[]
                             )
-                        else:
-                            thinking_instruction = (
-                                f"\n\n## 🧠 THINKER ATIVADO\n\n"
-                                f"Antes de responder, considere: {thinker_prompt}\n"
-                            )
-                        
-                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
-                        print(f"[Task] 🧠 Thinker enabled for agent '{agent_model.name}' (restrictive={is_restrictive})")
-                        
-                        # Optional: Use different model for thinking if specified
-                        thinker_model = getattr(agent_model, 'thinker_model', None)
-                        if thinker_model:
-                            agent_config["model"] = thinker_model
-                            print(f"[Task] 🧠 Using thinker model: {thinker_model}")
+                            
+                            # Parse the Thinker response to get task list
+                            passos = thinker_result.get("passos", [])
+                            if passos:
+                                # Convert Thinker response to task list format
+                                think_task_list = []
+                                for passo in passos:
+                                    think_task_list.append({
+                                        "ordem": passo.get("ordem", 0),
+                                        "agente": passo.get("agente", ""),
+                                        "acao": passo.get("acao", ""),
+                                        "dados_necessarios": passo.get("dados_necessarios", {}),
+                                        "completed": False,
+                                        "description": passo.get("acao", "")
+                                    })
+                                
+                                # Save task list to agent memory
+                                await redis_client.set_agent_memory(
+                                    session_id=session_id,
+                                    agent_id=str(agent_model.id),
+                                    memory_data={
+                                        "task_list": think_task_list,
+                                        "current_task": 1,
+                                        "status": "in_progress",
+                                        "visao_geral": thinker_result.get("visao_geral", ""),
+                                        "original_message": message,
+                                        "created_at": str(datetime.now())
+                                    },
+                                    ttl_seconds=3600
+                                )
+                                
+                                print(f"[Task] 🧠 Thinker generated {len(think_task_list)} tasks, saved to agent memory")
+                                
+                                # Inject task list into prompt
+                                task_list_text = "\n".join([f"[ ] Task {t.get('ordem')}: {t.get('acao')}" for t in think_task_list])
+                                
+                                thinking_instruction = (
+                                    f"\n\n## 🧠 THINKER ATIVADO - PLANO DE EXECUÇÃO GERADO\n\n"
+                                    f"{thinker_result.get('visao_geral', '')}\n\n"
+                                    f"📋 Lista de Tarefas (SIGA IMPRETERIVELMENTE):\n"
+                                    f"{task_list_text}\n\n"
+                                    f"🎯 Execute a Task 1 primeiro, marque como concluída (✓), e avance para a próxima.\n"
+                                    f"⚠️ Após completar todas as tarefas, limpe a memória do Thinker.\n"
+                                )
+                                
+                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                                print(f"[Task] 🧠 Thinker task list injected for agent '{agent_model.name}'")
+                                
+                                # Optional: Use different model for thinking if specified
+                                thinker_model = getattr(agent_model, 'thinker_model', None)
+                                if thinker_model:
+                                    agent_config["model"] = thinker_model
+                                    print(f"[Task] 🧠 Using thinker model: {thinker_model}")
+                            else:
+                                print(f"[Task] ⚠️ Thinker did not return valid task list")
+                                # Fallback to simple instruction
+                                thinker_prompt = getattr(agent_model, 'thinker_prompt', None) or (
+                                    "Você é um assistente de IA estratégico. Antes de responder, analise a solicitação do usuário "
+                                    "e identifique os passos necessários para resolver a tarefa de forma eficaz."
+                                )
+                                is_restrictive = getattr(agent_model, 'thinker_restrictive', False)
+                                
+                                if is_restrictive:
+                                    thinking_instruction = (
+                                        f"\n\n## 🧠 MODO THINKER ATIVADO - ANÁLISE OBRIGATÓRIA\n\n"
+                                        f"⚠️ **IMPORTANTE**: Antes de responder, você DEVE analisar a solicitação e seguir estas regras:\n\n"
+                                        f"1. Analise a solicitação do usuário com cuidado\n"
+                                        f"2. Identifique os passos necessários para executar a tarefa\n"
+                                        f"3. Considere usar os colaboradores/tools disponíveis\n"
+                                        f"4. Execute APENAS o que for necessário\n"
+                                        f"5. NÃO invente informações ou execute tarefas não solicitadas\n\n"
+                                        f"📝 Instrução do Thinker: {thinker_prompt}\n"
+                                    )
+                                else:
+                                    thinking_instruction = (
+                                        f"\n\n## 🧠 THINKER ATIVADO\n\n"
+                                        f"Antes de responder, considere: {thinker_prompt}\n"
+                                    )
+                                
+                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                                print(f"[Task] 🧠 Thinker enabled for agent '{agent_model.name}' (fallback mode)")
+                                
+                                thinker_model = getattr(agent_model, 'thinker_model', None)
+                                if thinker_model:
+                                    agent_config["model"] = thinker_model
+                                    print(f"[Task] 🧠 Using thinker model: {thinker_model}")
                             
             except Exception as e:
                 import traceback
@@ -1869,6 +1968,50 @@ async def process_message_task(
                 )
                 response_data["last_agent"] = agent_used
                 print(f"[Task] 💾 Session context saved: last_agent='{agent_used}'")
+                
+                # [THINKER] Update task list in agent memory if Thinker was used
+                if think_task_list:
+                    agent_memory = await redis_client.get_agent_memory(session_id, str(agent_id))
+                    if agent_memory and agent_memory.get("task_list"):
+                        # Check if response indicates task completion (look for patterns like "[Task 1 concluída]" or similar)
+                        response_lower = output_text.lower()
+                        
+                        # Simple heuristic: if response contains success indicators, mark current task as complete
+                        updated = False
+                        task_list = agent_memory.get("task_list", [])
+                        current_task = agent_memory.get("current_task", 1)
+                        
+                        # Find and mark completed tasks based on response content
+                        for i, task in enumerate(task_list):
+                            if not task.get("completed"):
+                                task_acao = task.get("acao", "").lower()
+                                # If response mentions something related to the task action
+                                if any(word in response_lower for word in ["sucesso", "concluído", "concluida", "registrado", "confirmado", "ok", "realizado", "efetivado"]):
+                                    task["completed"] = True
+                                    current_task = i + 2  # Move to next task
+                                    updated = True
+                                    print(f"[Task] ✓ Task {i+1} marked as completed in memory")
+                                    break
+                        
+                        if updated:
+                            # Update memory with new task list
+                            await redis_client.update_agent_memory(
+                                session_id=session_id,
+                                agent_id=str(agent_id),
+                                updates={
+                                    "task_list": task_list,
+                                    "current_task": current_task,
+                                },
+                                ttl_seconds=3600
+                            )
+                            
+                            # Check if all tasks are completed
+                            all_completed = all(t.get("completed", False) for t in task_list)
+                            if all_completed:
+                                print(f"[Task] 🧠 All Thinker tasks completed! Clearing agent memory...")
+                                await redis_client.delete_agent_memory(session_id, str(agent_id))
+                                response_data["thinker_completed"] = True
+                                
             except Exception as e:
                 print(f"[Task] ⚠️ Failed to save session context: {e}")
 

@@ -2,7 +2,7 @@
 Redis Client for caching and session management
 """
 import redis.asyncio as redis
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import json
 
 from app.config import settings
@@ -246,6 +246,74 @@ class RedisClient:
         pipe.delete(f"antibot:count:{session_id}")
         pipe.delete(f"antibot:blocked:{session_id}")
         await pipe.execute()
+
+    # ─── Agent-Specific Memory (Thinker Task List) ──────────────
+
+    async def set_agent_memory(
+        self,
+        session_id: str,
+        agent_id: str,
+        memory_data: Dict[str, Any],
+        ttl_seconds: int = 3600
+    ):
+        """
+        Store agent-specific memory (Thinker task list, execution state, etc).
+        Key format: agent_memory:{session_id}:{agent_id}
+        This memory is NOT shared between agents - each agent has its own.
+        """
+        client = await self.connect()
+        key = f"agent_memory:{session_id}:{agent_id}"
+        value = json.dumps(memory_data, ensure_ascii=False)
+        await client.setex(key, ttl_seconds, value)
+
+    async def get_agent_memory(
+        self,
+        session_id: str,
+        agent_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get agent-specific memory.
+        Returns None if not found or expired.
+        """
+        client = await self.connect()
+        key = f"agent_memory:{session_id}:{agent_id}"
+        raw = await client.get(key)
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception:
+                return None
+        return None
+
+    async def delete_agent_memory(
+        self,
+        session_id: str,
+        agent_id: str
+    ):
+        """Delete agent-specific memory."""
+        client = await self.connect()
+        key = f"agent_memory:{session_id}:{agent_id}"
+        await client.delete(key)
+
+    async def update_agent_memory(
+        self,
+        session_id: str,
+        agent_id: str,
+        updates: Dict[str, Any],
+        ttl_seconds: int = 3600
+    ) -> bool:
+        """
+        Update specific fields in agent memory.
+        Creates new memory if doesn't exist.
+        Returns True if updated, False if failed.
+        """
+        current = await self.get_agent_memory(session_id, agent_id)
+        if current is None:
+            current = {}
+        
+        current.update(updates)
+        await self.set_agent_memory(session_id, agent_id, current, ttl_seconds)
+        return True
 
 
 # Global instance
