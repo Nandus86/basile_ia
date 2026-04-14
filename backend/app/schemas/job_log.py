@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional, Any
 from datetime import datetime
 import uuid
@@ -20,23 +20,17 @@ class JobLogSchema(BaseModel):
 
     model_config = {"from_attributes": True}
 
-    @classmethod
-    def from_orm(cls, obj):
-        data = {}
-        for field in ["id", "job_id", "webhook_path", "status", "request_data", "response_data", 
-                      "error_message", "callback_url", "created_at", "completed_at", "duration_ms"]:
-            value = getattr(obj, field, None)
-            data[field] = value
-        
-        request_data = obj.request_data
+    @model_validator(mode='after')
+    def extract_session_id(self):
+        request_data = self.request_data
         if isinstance(request_data, dict):
-            data["session_id"] = request_data.get("session_id")
+            self.session_id = request_data.get("session_id")
         elif isinstance(request_data, str) and request_data:
             try:
                 import json
                 parsed = json.loads(request_data)
-                data["session_id"] = parsed.get("session_id") if isinstance(parsed, dict) else None
+                if isinstance(parsed, dict):
+                    self.session_id = parsed.get("session_id")
             except:
-                data["session_id"] = None
-        
-        return cls(**data)
+                pass
+        return self
