@@ -233,12 +233,18 @@ IMPORTANTE:
             end = response.rfind("}") + 1
             if start >= 0 and end > start:
                 json_str = response[start:end]
+                print(f"[ThinkerService] 🔍 DEBUG - Raw response: {response[:500]}...")
+                print(f"[ThinkerService] 🔍 DEBUG - Extracted JSON: {json_str[:300]}...")
                 plan = json.loads(json_str)
+                print(f"[ThinkerService] ✅ Thinker returned {len(plan.get('passos', []))} passos")
                 return plan
-        except json.JSONDecodeError:
-            logger.warning(f"[ThinkerService] ⚠️ Failed to parse thinker JSON, returning raw response")
+            else:
+                print(f"[ThinkerService] ⚠️ No JSON found in response: {response[:200]}...")
+        except json.JSONDecodeError as je:
+            logger.warning(f"[ThinkerService] ⚠️ Failed to parse thinker JSON: {je}")
         
         # Fallback: return structured with raw response
+        print(f"[ThinkerService] ⚠️ Returning fallback (no passos)")
         return {
             "visao_geral": response[:500],
             "passos": [],
