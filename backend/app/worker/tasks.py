@@ -1653,7 +1653,16 @@ async def process_message_task(
             # [THINKER] Internal thinking step - no external agent needed
             thinker_enabled = False
             try:
-                agent_model = agent_config.get("agent_model")
+                # Buscar o agente diretamente do banco para ter todos os campos
+                from app.models.agent import Agent as AgentModel
+                from sqlalchemy import select
+                
+                agent_id = agent_config.get("id")
+                if agent_id:
+                    result = await db.execute(select(AgentModel).where(AgentModel.id == agent_id))
+                    agent_model = result.scalar_one_or_none()
+                else:
+                    agent_model = agent_config.get("agent_model")
                 
                 print(f"[Task] 🔍 DEBUG Thinker - agent_model: {agent_model}")
                 
