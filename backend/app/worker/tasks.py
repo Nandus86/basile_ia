@@ -13,7 +13,7 @@ import json
 from typing import Optional, Dict, Any, List
 
 from app.database import AsyncSessionLocal
-from app.redis_client import redis_client
+from app.redis_client import redis_client, get_redis
 from app.config import settings
 from app.worker.status_monitor import StatusMonitor
 
