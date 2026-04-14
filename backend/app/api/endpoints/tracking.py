@@ -54,8 +54,26 @@ async def get_tracking_logs(
     result = await db.execute(query)
     logs = result.scalars().all()
     
+    # Extract session_id from request_data for each log
+    items = []
+    for log in logs:
+        item = JobLogSchema.model_validate(log)
+        if not item.session_id:
+            request_data = log.request_data
+            if request_data:
+                try:
+                    if isinstance(request_data, dict):
+                        item.session_id = request_data.get("session_id")
+                    elif isinstance(request_data, str) and request_data:
+                        parsed = json.loads(request_data)
+                        if isinstance(parsed, dict):
+                            item.session_id = parsed.get("session_id")
+                except Exception:
+                    pass
+        items.append(item)
+    
     return {
-        "items": [JobLogSchema.model_validate(log) for log in logs],
+        "items": items,
         "total": total,
         "skip": skip,
         "limit": limit

@@ -2,6 +2,7 @@ from pydantic import BaseModel, model_validator
 from typing import Optional, Any
 from datetime import datetime
 import uuid
+import json
 
 
 class JobLogSchema(BaseModel):
@@ -22,15 +23,16 @@ class JobLogSchema(BaseModel):
 
     @model_validator(mode='after')
     def extract_session_id(self):
-        request_data = self.request_data
-        if isinstance(request_data, dict):
-            self.session_id = request_data.get("session_id")
-        elif isinstance(request_data, str) and request_data:
-            try:
-                import json
-                parsed = json.loads(request_data)
-                if isinstance(parsed, dict):
-                    self.session_id = parsed.get("session_id")
-            except:
-                pass
+        if not self.session_id:
+            request_data = self.request_data
+            if request_data:
+                try:
+                    if isinstance(request_data, dict):
+                        self.session_id = request_data.get("session_id")
+                    elif isinstance(request_data, str) and request_data:
+                        parsed = json.loads(request_data)
+                        if isinstance(parsed, dict):
+                            self.session_id = parsed.get("session_id")
+                except Exception:
+                    pass
         return self
