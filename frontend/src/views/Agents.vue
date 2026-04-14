@@ -1350,7 +1350,7 @@
                     color="orange"
                     density="compact"
                     hide-details
-                    class="mb-4"
+                    class="mb-2"
                   >
                     <template v-slot:prepend>
                       <v-icon color="orange">mdi-lock-outline</v-icon>
@@ -1358,6 +1358,22 @@
                   </v-switch>
                   <p class="text-caption text-medium-emphasis mb-4">
                     Quando ativado, o agente seguirá <strong>APENAS</strong> as instruções do Thinker, sem adaptar ou inventar novas etapas.
+                  </p>
+                  
+                  <v-switch
+                    v-model="formData.thinker_memory_enabled"
+                    label="Memória Ativa"
+                    color="purple"
+                    density="compact"
+                    hide-details
+                    class="mb-2"
+                  >
+                    <template v-slot:prepend>
+                      <v-icon color="purple">mdi-memory</v-icon>
+                    </template>
+                  </v-switch>
+                  <p class="text-caption text-medium-emphasis mb-4">
+                    Quando ativado, o Thinker salvará a lista de tarefas na memória Redis e continuará de onde parou nas próximas interações. Desative para modo simples (apenas injeta instrução sem persistência).
                   </p>
                   
                   <v-textarea
@@ -2236,6 +2252,7 @@ const formData = reactive({
   thinker_restrictive: false,
   thinker_always_active: false,
   thinker_keywords: [],
+  thinker_memory_enabled: true,
   planner_prompt: '',
   planner_model: 'gpt-4o-mini',
   is_guardrail_active: false,
@@ -2993,6 +3010,7 @@ async function openDialog(agent = null) {
         thinker_restrictive: fullAgent.thinker_restrictive ?? false,
         thinker_always_active: fullAgent.thinker_always_active ?? false,
         thinker_keywords: fullAgent.thinker_keywords || [],
+        thinker_memory_enabled: fullAgent.thinker_memory_enabled ?? true,
         planner_prompt: fullAgent.planner_prompt || '',
         planner_model: fullAgent.planner_model || 'gpt-4o-mini',
         is_guardrail_active: fullAgent.is_guardrail_active ?? false,

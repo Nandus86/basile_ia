@@ -129,6 +129,7 @@ class Agent(Base):
     thinker_restrictive = Column(Boolean, default=False, nullable=False)  # Force to follow plan strictly
     thinker_always_active = Column(Boolean, default=False, nullable=False)  # Always active without keyword
     thinker_keywords = Column(JSON, nullable=True)  # Custom keywords to activate thinker
+    thinker_memory_enabled = Column(Boolean, default=True, nullable=False)  # Enable Redis memory for task list
     
     # New status configuration for long-running jobs
     status_updates_enabled = Column(Boolean, default=False)

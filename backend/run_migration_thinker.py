@@ -133,6 +133,22 @@ async def run_migration():
                 await conn.execute(text("ALTER TABLE agents ADD COLUMN thinker_keywords JSON;"))
                 print("✅ Column 'thinker_keywords' added")
             
+            # 8. Check and add thinker_memory_enabled column
+            check_memory = text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='agents' AND column_name='thinker_memory_enabled';
+            """)
+            result = await conn.execute(check_memory)
+            exists = result.scalar() is not None
+            
+            if exists:
+                print("Column 'thinker_memory_enabled' already exists.")
+            else:
+                print("Adding 'thinker_memory_enabled' column to 'agents' table...")
+                await conn.execute(text("ALTER TABLE agents ADD COLUMN thinker_memory_enabled BOOLEAN DEFAULT TRUE NOT NULL;"))
+                print("✅ Column 'thinker_memory_enabled' added")
+            
             print("\n✅ Thinker migration completed successfully!")
     except Exception as e:
         print(f"\n❌ Error executing migration: {e}")

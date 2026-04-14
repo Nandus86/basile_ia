@@ -1671,36 +1671,40 @@ async def process_message_task(
                     thinker_always_active = getattr(agent_model, 'thinker_always_active', False)
                     thinker_keywords = getattr(agent_model, 'thinker_keywords', None) or []
                     trigger_keywords = getattr(agent_model, 'trigger_keywords', None) or []
+                    thinker_memory_enabled = getattr(agent_model, 'thinker_memory_enabled', True)  # Default True
                     
-                    print(f"[Task] 🔍 DEBUG Thinker - is_thinker: {is_thinker}, always_active: {thinker_always_active}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
+                    print(f"[Task] 🔍 DEBUG Thinker - is_thinker: {is_thinker}, always_active: {thinker_always_active}, memory_enabled: {thinker_memory_enabled}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
                     
-                    # Check agent memory for existing task list
+                    # Check agent memory for existing task list (only if memory is enabled)
                     from app.redis_client import redis_client
-                    agent_memory = await redis_client.get_agent_memory(session_id, str(agent_model.id))
                     
-                    if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
-                        # Resume from existing task list - don't call Thinker again
-                        think_task_list = agent_memory.get("task_list")
-                        current_task = agent_memory.get("current_task", 1)
-                        print(f"[Task] 🧠 Resuming Thinker task list from memory - current task: {current_task}, total: {len(think_task_list)}")
+                    # Resume from existing task list only if memory is enabled
+                    if thinker_memory_enabled:
+                        agent_memory = await redis_client.get_agent_memory(session_id, str(agent_model.id))
                         
-                        # Inject task list into prompt for continuation
-                        task_list_text = "\n".join([f"[{'✓' if t.get('completed') else ' '}] Task {i+1}: {t.get('description', t.get('acao', 'N/A'))}" 
-                                                    for i, t in enumerate(think_task_list)])
-                        
-                        continuation_instruction = (
-                            f"\n\n## 🧠 LISTA DE TAREFAS EM ANDAMENTO\n\n"
-                            f"Você está continuando uma lista de tarefas criada pelo Thinker. "
-                            f"Marque as tarefas já concluídas com ✓.\n\n"
-                            f"{task_list_text}\n\n"
-                            f"🎯 Próxima tarefa a executar: Task {current_task}\n"
-                            f"Instruções: Execute a tarefa atual, marque como concluída (✓), e avance para a próxima.\n"
-                            f"⚠️ NÃO use o Thinker novamente - continue a partir da lista existente.\n"
-                        )
-                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + continuation_instruction
-                        thinker_enabled = True  # Thinker was already used, just continuing
-                        
-                    elif is_thinker:
+                        if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
+                            # Resume from existing task list - don't call Thinker again
+                            think_task_list = agent_memory.get("task_list")
+                            current_task = agent_memory.get("current_task", 1)
+                            print(f"[Task] 🧠 Resuming Thinker task list from memory - current task: {current_task}, total: {len(think_task_list)}")
+                            
+                            # Inject task list into prompt for continuation
+                            task_list_text = "\n".join([f"[{'✓' if t.get('completed') else ' '}] Task {i+1}: {t.get('description', t.get('acao', 'N/A'))}" 
+                                                        for i, t in enumerate(think_task_list)])
+                            
+                            continuation_instruction = (
+                                f"\n\n## 🧠 LISTA DE TAREFAS EM ANDAMENTO\n\n"
+                                f"Você está continuando uma lista de tarefas criada pelo Thinker. "
+                                f"Marque as tarefas já concluídas com ✓.\n\n"
+                                f"{task_list_text}\n\n"
+                                f"🎯 Próxima tarefa a executar: Task {current_task}\n"
+                                f"Instruções: Execute a tarefa atual, marque como concluída (✓), e avance para a próxima.\n"
+                                f"⚠️ NÃO use o Thinker novamente - continue a partir da lista existente.\n"
+                            )
+                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + continuation_instruction
+                            thinker_enabled = True  # Thinker was already used, just continuing
+                    
+                    if not thinker_enabled and is_thinker:
                         # Check if Thinker should be activated (only if no existing task list)
                         if thinker_always_active:
                             thinker_enabled = True
@@ -1754,22 +1758,22 @@ async def process_message_task(
                                         "description": passo.get("acao", "")
                                     })
                                 
-                                # Save task list to agent memory
-                                await redis_client.set_agent_memory(
-                                    session_id=session_id,
-                                    agent_id=str(agent_model.id),
-                                    memory_data={
-                                        "task_list": think_task_list,
-                                        "current_task": 1,
-                                        "status": "in_progress",
-                                        "visao_geral": thinker_result.get("visao_geral", ""),
-                                        "original_message": message,
-                                        "created_at": str(datetime.now())
-                                    },
-                                    ttl_seconds=3600
-                                )
-                                
-                                print(f"[Task] 🧠 Thinker generated {len(think_task_list)} tasks, saved to agent memory")
+                                # Save task list to agent memory (only if memory is enabled)
+                                if thinker_memory_enabled:
+                                    await redis_client.set_agent_memory(
+                                        session_id=session_id,
+                                        agent_id=str(agent_model.id),
+                                        memory_data={
+                                            "task_list": think_task_list,
+                                            "current_task": 1,
+                                            "status": "in_progress",
+                                            "visao_geral": thinker_result.get("visao_geral", ""),
+                                            "original_message": message,
+                                            "created_at": str(datetime.now())
+                                        },
+                                        ttl_seconds=3600
+                                    )
+                                    print(f"[Task] 🧠 Thinker generated {len(think_task_list)} tasks, saved to agent memory")
                                 
                                 # Inject task list into prompt
                                 task_list_text = "\n".join([f"[ ] Task {t.get('ordem')}: {t.get('acao')}" for t in think_task_list])

@@ -102,6 +102,7 @@ class AgentCreate(AgentBase):
     thinker_restrictive: bool = False  # NEW
     thinker_always_active: bool = False  # NEW
     thinker_keywords: Optional[List[str]] = None  # NEW
+    thinker_memory_enabled: bool = True  # NEW - Enable Redis memory for task list
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: str = "medium"
     output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Schema JSON personalizado para saída estruturada")
@@ -134,6 +135,7 @@ class AgentUpdate(BaseModel):
     thinker_restrictive: Optional[bool] = None  # NEW
     thinker_always_active: Optional[bool] = None  # NEW
     thinker_keywords: Optional[List[str]] = None  # NEW
+    thinker_memory_enabled: Optional[bool] = None  # NEW
     response_style: Optional[str] = None
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
@@ -194,6 +196,7 @@ class AgentResponse(BaseModel):
     thinker_restrictive: bool = False  # NEW
     thinker_always_active: bool = False  # NEW
     thinker_keywords: List[str] = []  # NEW
+    thinker_memory_enabled: bool = True  # NEW
     trigger_keywords: List[str] = []
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None

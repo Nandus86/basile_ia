@@ -259,18 +259,19 @@ Responda APENAS em JSON válido com este formato exato:
                 thinker_always_active = getattr(collab_agent_model, 'thinker_always_active', False)
                 thinker_keywords = getattr(collab_agent_model, 'thinker_keywords', None) or []
                 trigger_keywords = getattr(collab_agent_model, 'trigger_keywords', None) or []
+                thinker_memory_enabled = getattr(collab_agent_model, 'thinker_memory_enabled', True)
 
-                print(f"[Orchestrator] 🔍 DEBUG Thinker - agent: {collab_agent_model.name}, is_thinker: {is_thinker}, always_active: {thinker_always_active}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
+                print(f"[Orchestrator] 🔍 DEBUG Thinker - agent: {collab_agent_model.name}, is_thinker: {is_thinker}, always_active: {thinker_always_active}, memory_enabled: {thinker_memory_enabled}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
 
                 # Get session_id from context_data
                 session_id = context_data.get("session_id") if context_data else None
                 
-                # Check agent memory for existing task list
+                # Check agent memory for existing task list (only if memory is enabled)
                 from app.redis_client import redis_client
                 thinker_enabled = False
                 think_task_list = None
                 
-                if session_id:
+                if session_id and thinker_memory_enabled:
                     agent_memory = await redis_client.get_agent_memory(session_id, str(collab_agent_model.id))
                     
                     if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
@@ -343,7 +344,7 @@ Responda APENAS em JSON válido com este formato exato:
                                 "description": passo.get("acao", "")
                             })
                         
-                        if session_id:
+                        if session_id and thinker_memory_enabled:
                             await redis_client.set_agent_memory(
                                 session_id=session_id,
                                 agent_id=str(collab_agent_model.id),
@@ -628,7 +629,8 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 collaborator_responses[name] = response
                 
                 # [THINKER] Update task list in agent memory after collaborator response
-                if context_data and session_id := context_data.get("session_id"):
+                if context_data and context_data.get("session_id"):
+                    session_id = context_data.get("session_id")
                     try:
                         from app.redis_client import redis_client
                         
