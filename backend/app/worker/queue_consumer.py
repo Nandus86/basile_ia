@@ -177,19 +177,25 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 lock_acquired = await redis_client.acquire_user_lock(session_id, job_id)
 
                 if not lock_acquired:
-                    logger.info(f"[Guard] Session {session_id} is LOCKED (another job active). Buffering job {job_id}.")
+                    lock_owner = await redis_client.get_user_lock_owner(session_id)
+                    already_buffered = await redis_client.is_job_already_buffered(session_id, job_id)
+                    logger.info(
+                        f"[Guard] Session {session_id} is LOCKED by {lock_owner}. "
+                        f"Buffering job {job_id}. already_buffered={already_buffered}"
+                    )
 
-                    # Buffer the essential payload for later processing
-                    buffer_data = json.dumps({
-                        "message": message_text,
-                        "agent_id": agent_id,
-                        "context_data": context_data,
-                        "transition_data": transition_data,
-                        "callback_url": callback_url,
-                        "user_access_level": user_access_level,
-                        "original_job_id": job_id,
-                    })
-                    await redis_client.push_to_buffer(session_id, buffer_data)
+                    if not already_buffered:
+                        # Buffer the essential payload for later processing
+                        buffer_data = json.dumps({
+                            "message": message_text,
+                            "agent_id": agent_id,
+                            "context_data": context_data,
+                            "transition_data": transition_data,
+                            "callback_url": callback_url,
+                            "user_access_level": user_access_level,
+                            "original_job_id": job_id,
+                        })
+                        await redis_client.push_to_buffer(session_id, buffer_data)
 
                     # Mark job as buffered
                     await redis_client.set(
@@ -582,7 +588,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                 + "\n".join(combined_parts)
                             )
 
-                            # Re-publish as a new job to RabbitMQ (lock stays active)
+                            # Re-publish as a new job to RabbitMQ
                             import uuid as uuid_mod
                             new_job_id = f"job_{uuid_mod.uuid4().hex}"
 
@@ -597,20 +603,42 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             }
 
                             # Create JobLog for the new combined job
+                            job_created_at = None
                             try:
                                 from app.models.job_log import JobLog
                                 async with async_session_maker() as db_session:
-                                    job_log = JobLog(
+                                    drained_job_log = JobLog(
                                         job_id=new_job_id,
                                         webhook_path="buffer_drain",
                                         status="queued",
                                         request_data=new_payload,
                                         callback_url=new_callback_url,
                                     )
-                                    db_session.add(job_log)
+                                    db_session.add(drained_job_log)
                                     await db_session.commit()
+                                    await db_session.refresh(drained_job_log)
+                                    job_created_at = drained_job_log.created_at.isoformat() if drained_job_log.created_at else None
                             except Exception as e:
                                 logger.error(f"[Guard] Failed to create JobLog for drained job: {e}")
+
+                            # Release lock before enqueuing drained job to avoid re-buffer loop
+                            await redis_client.release_user_lock(session_id)
+
+                            # Publish new drained job to SSE stream for realtime UI visibility
+                            try:
+                                await redis_client.publish("job_updates", json.dumps({
+                                    "event": "new_job",
+                                    "data": {
+                                        "job_id": new_job_id,
+                                        "webhook_path": "buffer_drain",
+                                        "status": "queued",
+                                        "request_data": new_payload,
+                                        "callback_url": new_callback_url,
+                                        "created_at": job_created_at,
+                                    }
+                                }))
+                            except Exception as sse_err:
+                                logger.error(f"[Guard] Failed to publish SSE new_job for drained buffer: {sse_err}")
 
                             # Publish to RabbitMQ
                             from app.services.rabbitmq_service import rabbitmq_client as rmq
@@ -623,8 +651,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             if success:
                                 logger.info(f"[Guard] Re-published drained buffer as new job {new_job_id}")
                             else:
-                                logger.error(f"[Guard] Failed to re-publish drained buffer!")
-                                await redis_client.release_user_lock(session_id)
+                                logger.error(f"[Guard] Failed to re-publish drained buffer {new_job_id}!")
                         else:
                             # No buffer — simply release lock
                             await redis_client.release_user_lock(session_id)

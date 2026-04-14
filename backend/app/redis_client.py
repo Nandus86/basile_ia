@@ -172,12 +172,31 @@ class RedisClient:
         client = await self.connect()
         await client.delete(f"user_lock:{session_id}")
 
+    async def get_user_lock_owner(self, session_id: str) -> Optional[str]:
+        """Return the current job_id owner of a session lock, if any."""
+        client = await self.connect()
+        return await client.get(f"user_lock:{session_id}")
+
     async def push_to_buffer(self, session_id: str, data_json: str):
         """Push a message payload to the session's pending buffer (FIFO list)."""
         client = await self.connect()
         key = f"msg_buffer:{session_id}"
         await client.rpush(key, data_json)
         await client.expire(key, 7200)  # 2h safety TTL
+
+    async def is_job_already_buffered(self, session_id: str, original_job_id: str) -> bool:
+        """Check if original_job_id already exists in session buffer payloads."""
+        client = await self.connect()
+        key = f"msg_buffer:{session_id}"
+        items = await client.lrange(key, 0, -1)
+        for item in items:
+            try:
+                parsed = json.loads(item)
+                if isinstance(parsed, dict) and parsed.get("original_job_id") == original_job_id:
+                    return True
+            except Exception:
+                continue
+        return False
 
     async def drain_buffer(self, session_id: str) -> List[str]:
         """
