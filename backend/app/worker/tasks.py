@@ -1676,11 +1676,12 @@ async def process_message_task(
                     print(f"[Task] 🔍 DEBUG Thinker - is_thinker: {is_thinker}, always_active: {thinker_always_active}, memory_enabled: {thinker_memory_enabled}, keywords: {thinker_keywords}, trigger: {trigger_keywords}")
                     
                     # Check agent memory for existing task list (only if memory is enabled)
-                    from app.redis_client import redis_client
+                    # Use get_redis() to ensure we get the instance properly
+                    _redis = await get_redis()
                     
                     # Resume from existing task list only if memory is enabled
                     if thinker_memory_enabled:
-                        agent_memory = await redis_client.get_agent_memory(session_id, str(agent_model.id))
+                        agent_memory = await _redis.get_agent_memory(session_id, str(agent_model.id))
                         
                         if agent_memory and agent_memory.get("task_list") and agent_memory.get("status") == "in_progress":
                             # Resume from existing task list - don't call Thinker again
