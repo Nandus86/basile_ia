@@ -555,114 +555,9 @@ const fetchDisparadorData = async () => {
        const [resStats, resCamp] = await Promise.all([
            axiosInstance.get('/disparador/dashboard/stats'),
            axiosInstance.get('/disparador/dashboard/campaigns')
-       ])
-       dispStats.value = resStats.data
-       dispCampaigns.value = resCamp.data
-    } catch (e) {
-       console.error(e)
-    } finally {
-       dispLoading.value = false
-    }
-}
+])
 
-const openDispDetails = async (item) => {
-    dispSelected.value = item
-    dispReport.value = null
-    dispDialog.value = true
-    if (item.status === 'completed') {
-        try {
-            const res = await axiosInstance.get(`/disparador/dashboard/campaigns/${item.service_id}/report`)
-            dispReport.value = res.data
-        } catch (e) {}
-    }
-}
-
-const dispAction = async (action) => {
-    if (!dispSelected.value) return
-    dispActionLoading.value = true
-    try {
-        await axiosInstance.post(`/disparador/campaigns/${dispSelected.value.service_id}/${action}`)
-        if (action === 'retry-dlq') {
-            dispReport.value.dlq_count = 0
-            snackbar.value = { show: true, text: 'Contatos falhados reenfileirados.', color: 'success' }
-        }
-        await fetchDisparadorData()
-        if (action !== 'retry-dlq') {
-           const updated = dispCampaigns.value.find(c => c.service_id === dispSelected.value.service_id)
-           if (updated) dispSelected.value = updated
-        }
-    } catch (e) {
-        snackbar.value = { show: true, text: 'Erro ao executar ação.', color: 'error' }
-    } finally {
-        dispActionLoading.value = false
-    }
-}
-
-// Loading
-const loading = ref(false)
-const statsLoading = ref(false)
-
-// SSE
-const sseConnected = ref(false)
-
-// Charts — Dark themed
-const statusChartSeries = ref([])
-const statusChartOptions = ref({
-  chart: {
-    type: 'donut',
-    fontFamily: 'Inter, sans-serif',
-    background: 'transparent',
-    events: {
-      legendClick: (chartContext, seriesIndex, config) => {
-        chartContext.hideSeries(config.globals.colors[seriesIndex])
-      }
-    }
-  },
-  labels: [],
-  colors: ['#00FC8B', '#FF0055', '#FFB800', '#00D1FF'],
-  plotOptions: { pie: { donut: { size: '68%', labels: { show: true, total: { show: true, label: 'Total', color: 'rgba(255,255,255,0.6)', formatter: (w) => w.globals.seriesTotals.reduce((a, b) => a + b, 0) } } } } },
-  dataLabels: { enabled: false },
-  legend: { position: 'bottom', labels: { colors: 'rgba(255,255,255,0.6)' } },
-  stroke: { width: 2, colors: ['#070a13'] },
-      tooltip: { theme: 'dark', y: { formatter: (val, opts) => `${val} (${((val / opts.config.series.reduce((a, b) => a + b, 0)) * 100).toFixed(1)}%)` } },
-  responsive: [{
-    breakpoint: 480,
-    options: {
-      chart: { height: 220 },
-      legend: { position: 'right' }
-    }
-  }]
-})
-
-const pathChartSeries = ref([{ name: 'Requisições', data: [] }])
-const pathChartOptions = ref({
-  chart: {
-    type: 'bar',
-    toolbar: { show: true, tools: { download: true } },
-    fontFamily: 'Inter, sans-serif',
-    background: 'transparent'
-  },
-  plotOptions: { bar: { horizontal: true, borderRadius: 6, barHeight: '60%', dataLabels: { position: 'top' } } },
-  dataLabels: { enabled: true, style: { colors: ['#fff'] }, formatter: (val) => `${val}` },
-  xaxis: { categories: [], labels: { style: { colors: 'rgba(255,255,255,0.5)' } } },
-  yaxis: { labels: { style: { colors: 'rgba(255,255,255,0.7)' } } },
-  grid: { borderColor: 'rgba(255,255,255,0.04)' },
-  colors: ['#9D4EDD'],
-  tooltip: { theme: 'dark' },
-  responsive: [{
-    breakpoint: 768,
-    options: {
-      chart: { height: 240 },
-      yaxis: { labels: { rotate: -90 } }
-    }
-  }]
-})
-
-// Data Table
 const logs = ref([])
-const totalItems = ref(0)
-const page = ref(1)
-const itemsPerPage = ref(10)
 const itemsPerPageOptions = [
   { value: 10, title: '10' },
   { value: 25, title: '25' },
@@ -672,6 +567,9 @@ const itemsPerPageOptions = [
 ]
 const searchPath = ref('')
 const searchSessionId = ref('')
+const totalItems = ref(0)
+const page = ref(1)
+const itemsPerPage = ref(10)
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
