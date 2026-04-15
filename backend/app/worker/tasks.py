@@ -590,7 +590,7 @@ async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, conte
         if total > 0 and total % 100 == 0:
             print(f"[MTM] 📊 {total} messages for session {session_id}, triggering auto-summarize → LTM")
             import asyncio
-            asyncio.create_task(_auto_summarize_mtm_to_ltm(db, agent_id, session_id))
+            asyncio.create_task(_auto_summarize_mtm_to_ltm(agent_id, session_id))
 
     except Exception as e:
         print(f"[MTM] ❌ Error saving message: {e}")
@@ -646,7 +646,7 @@ async def _check_mtm_has_history(db, agent_id: str, session_id: str) -> bool:
         return False
 
 
-async def _auto_summarize_mtm_to_ltm(db, agent_id: str, session_id: str):
+async def _auto_summarize_mtm_to_ltm(agent_id: str, session_id: str):
     """Auto-summarize MTM conversation into qualitative LTM facts."""
     try:
         from app.models.conversation_message import ConversationMessage
@@ -656,17 +656,18 @@ async def _auto_summarize_mtm_to_ltm(db, agent_id: str, session_id: str):
         from app.weaviate_client import get_weaviate
         import uuid
 
-        # Load all messages
-        q = (
-            select(ConversationMessage)
-            .where(
-                ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
-                ConversationMessage.session_id == str(session_id),
+        async with AsyncSessionLocal() as db:
+            # Load all messages
+            q = (
+                select(ConversationMessage)
+                .where(
+                    ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
+                    ConversationMessage.session_id == str(session_id),
+                )
+                .order_by(ConversationMessage.created_at.asc())
             )
-            .order_by(ConversationMessage.created_at.asc())
-        )
-        result = await db.execute(q)
-        rows = result.scalars().all()
+            result = await db.execute(q)
+            rows = result.scalars().all()
 
         if not rows:
             return
