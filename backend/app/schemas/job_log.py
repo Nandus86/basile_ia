@@ -18,6 +18,8 @@ class JobLogSchema(BaseModel):
     completed_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
     session_id: Optional[str] = None
+    church_name: Optional[str] = None
+    member_fullname: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

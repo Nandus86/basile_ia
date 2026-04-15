@@ -28,10 +28,12 @@ async def reset_antibot_block(session_id: str):
 @router.get("/logs")
 async def get_tracking_logs(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=1000),
     status: Optional[str] = None,
     path: Optional[str] = None,
     session_id: Optional[str] = None,
+    church_name: Optional[str] = None,
+    member_name: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Get paginated list of system webhook/job logs"""
@@ -41,6 +43,12 @@ async def get_tracking_logs(
         query = query.where(JobLog.status == status)
     if path:
         query = query.where(JobLog.webhook_path.ilike(f"%{path}%"))
+    if session_id:
+        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"session_id\":%{session_id}%"))
+    if church_name:
+        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"church_name\":%{church_name}%"))
+    if member_name:
+        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"))
         
     # Count total
     count_query = select(func.count()).select_from(query.subquery())
@@ -52,22 +60,24 @@ async def get_tracking_logs(
     result = await db.execute(query)
     logs = result.scalars().all()
     
-    # Extract session_id from request_data for each log
+    # Extract fields from request_data for each log
     items = []
     for log in logs:
         item = JobLogSchema.model_validate(log)
-        if not item.session_id:
-            request_data = log.request_data
-            if request_data:
-                try:
-                    if isinstance(request_data, dict):
+        request_data = log.request_data
+        if request_data:
+            try:
+                if isinstance(request_data, str):
+                    request_data = json.loads(request_data)
+                if isinstance(request_data, dict):
+                    if not item.session_id:
                         item.session_id = request_data.get("session_id")
-                    elif isinstance(request_data, str) and request_data:
-                        parsed = json.loads(request_data)
-                        if isinstance(parsed, dict):
-                            item.session_id = parsed.get("session_id")
-                except Exception:
-                    pass
+                    church = request_data.get("church") or {}
+                    member = request_data.get("member") or {}
+                    item.church_name = church.get("church_name")
+                    item.member_fullname = member.get("fullname")
+            except Exception:
+                pass
         items.append(item)
     
     return {

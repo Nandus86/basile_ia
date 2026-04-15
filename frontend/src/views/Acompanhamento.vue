@@ -109,6 +109,28 @@
           style="max-width: 220px"
           @keyup.enter="fetchLogs"
         ></v-text-field>
+        <v-text-field
+          v-model="searchChurchName"
+          prepend-inner-icon="mdi-church"
+          placeholder="Buscar por Igreja..."
+          variant="outlined"
+          density="compact"
+          hide-details
+          class="mr-3"
+          style="max-width: 200px"
+          @keyup.enter="fetchLogs"
+        ></v-text-field>
+        <v-text-field
+          v-model="searchMemberName"
+          prepend-inner-icon="mdi-account"
+          placeholder="Buscar por Nome..."
+          variant="outlined"
+          density="compact"
+          hide-details
+          class="mr-3"
+          style="max-width: 200px"
+          @keyup.enter="fetchLogs"
+        ></v-text-field>
         <v-select
           v-model="statusFilter"
           :items="statusOptions"
@@ -130,7 +152,7 @@
         :loading="loading"
         :items-per-page="itemsPerPage"
         :items-per-page-options="itemsPerPageOptions"
-        :server-items-length="totalItems"
+        :items-length="totalItems"
         v-model:page="page"
         show-current-page
         @update:options="handleOptionsUpdate"
@@ -145,6 +167,16 @@
           <span v-if="item.session_id" class="text-body-2 font-weight-medium text-info">
             {{ item.session_id }}
           </span>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
+        <template v-slot:item.church_name="{ item }">
+          <span v-if="item.church_name" class="text-body-2">{{ item.church_name }}</span>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
+        <template v-slot:item.member_fullname="{ item }">
+          <span v-if="item.member_fullname" class="text-body-2">{{ item.member_fullname }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         
@@ -475,7 +507,7 @@
             <template #item.actions="{ item }">
                <v-btn size="small" variant="text" icon="mdi-magnify" color="primary" @click="openDispDetails(item)"></v-btn>
             </template>
-          </v-data-table>
+      </v-data-table>
         </v-card>
         
         <v-dialog v-model="dispDialog" max-width="700">
@@ -662,22 +694,27 @@ const pathChartOptions = ref({
 const logs = ref([])
 const totalItems = ref(0)
 const page = ref(1)
-const itemsPerPage = ref(10)
+const itemsPerPage = ref(20)
 const itemsPerPageOptions = [
-  { value: 10, title: '10' },
-  { value: 25, title: '25' },
+  { value: 20, title: '20' },
   { value: 50, title: '50' },
   { value: 100, title: '100' },
-  { value: 200, title: '200' },
+  { value: 250, title: '250' },
+  { value: 500, title: '500' },
+  { value: 1000, title: '1000' },
 ]
 const searchPath = ref('')
 const searchSessionId = ref('')
+const searchChurchName = ref('')
+const searchMemberName = ref('')
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
 const headers = [
   { title: 'Data/Hora', key: 'created_at', sortable: false },
   { title: 'Session ID', key: 'session_id', sortable: false },
+  { title: 'Igreja', key: 'church_name', sortable: false },
+  { title: 'Nome', key: 'member_fullname', sortable: false },
   { title: 'Webhook Path', key: 'webhook_path', sortable: false },
   { title: 'Status', key: 'status', sortable: false },
   { title: 'Tempo', key: 'duration_ms', sortable: false },
@@ -845,25 +882,30 @@ const fetchLogs = async () => {
   try {
     const skip = (page.value - 1) * itemsPerPage.value
     let url = `/tracking/logs?skip=${skip}&limit=${itemsPerPage.value}`
-    if (statusFilter.value) url += `&status=${statusFilter.value}`
-    if (searchPath.value) url += `&path=${searchPath.value}`
-    
+    if (statusFilter.value) url += `&status=${encodeURIComponent(statusFilter.value)}`
+    if (searchPath.value) url += `&path=${encodeURIComponent(searchPath.value)}`
+    if (searchSessionId.value) url += `&session_id=${encodeURIComponent(searchSessionId.value)}`
+    if (searchChurchName.value) url += `&church_name=${encodeURIComponent(searchChurchName.value)}`
+    if (searchMemberName.value) url += `&member_name=${encodeURIComponent(searchMemberName.value)}`
+
     const { data } = await axiosInstance.get(url)
-    
-    let allItems = data.items
-    if (searchSessionId.value) {
-      allItems = allItems.filter(item => item.session_id?.toLowerCase().includes(searchSessionId.value.toLowerCase()))
-    }
-    
-    logs.value = allItems
-    totalItems.value = data.total
+
+    logs.value = data.items || []
+    totalItems.value = data.total || 0
   } catch (error) {
     showSnackbar('Erro ao carregar logs', 'error')
   } finally { loading.value = false }
 }
 
 const fetchData = () => { fetchStats(); fetchLogs() }
-const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => { page.value = np; itemsPerPage.value = nip; fetchLogs() }
+const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => {
+  const nextPage = np || 1
+  const nextItemsPerPage = nip || itemsPerPage.value
+  const shouldFetch = page.value !== nextPage || itemsPerPage.value !== nextItemsPerPage
+  page.value = nextPage
+  itemsPerPage.value = nextItemsPerPage
+  if (shouldFetch) fetchLogs()
+}
 const openJobDetails = (job) => { 
   selectedJob.value = job; 
   testResult.value = null;
