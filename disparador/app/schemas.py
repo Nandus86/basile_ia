@@ -24,6 +24,8 @@ class DispatchPayload(BaseModel):
 
 class DispatchAcceptedResponse(BaseModel):
     service_id: str
+    campaign_key: str
+    run_id: str
     queued_count: int
     status: str = "accepted"
 

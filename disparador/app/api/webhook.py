@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+import uuid
 
 from app.database import get_db
 from app.models.dispatcher_config import DispatcherConfig
 from app.schemas import DispatchPayload, DispatchAcceptedResponse
 from app.services.rabbitmq_service import disparador_rmq
+from app.services.redis_service import disparador_redis
 
 router = APIRouter()
 
@@ -26,23 +28,30 @@ async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession
     if config.api_key and incoming_key != config.api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key")
         
+    campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
+    dispatch_flags = payload.model_dump().get("dispatch_flags") or {}
+    lock_bypass = bool(dispatch_flags.get("lock_bypass", False))
+
+    if not lock_bypass and await disparador_redis.is_campaign_locked(campaign_key):
+        raise HTTPException(status_code=409, detail="Campaign is locked for re-dispatch")
+
+    run_id = uuid.uuid4().hex
     batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
     total_contacts = len(payload.contacts)
-    
-    # Adicionamos "config_path" para o consumer
+
     payload_dict = payload.model_dump()
     payload_dict["config_path"] = path
-    
+    payload_dict["campaign_key"] = campaign_key
+    payload_dict["run_id"] = run_id
+
     contacts = payload_dict.pop("contacts")
-    
-    # We will publish to disp_jobs with batches
+
+    await disparador_rmq.connect()
     for i in range(0, total_contacts, batch_size):
         batch_contacts = contacts[i:i+batch_size]
         batch_payload = payload_dict.copy()
         batch_payload["contacts"] = batch_contacts
-        
-        # Publicar na fila disp_jobs
-        await disparador_rmq.connect()
+
         try:
             queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
             message = __import__('aio_pika').Message(
@@ -56,7 +65,13 @@ async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Erro ao enfileirar: {e}")
 
+    if not lock_bypass:
+        await disparador_redis.lock_campaign(campaign_key)
+    await disparador_redis.set_last_run(campaign_key, run_id)
+
     return DispatchAcceptedResponse(
         service_id=payload.service_id,
+        campaign_key=campaign_key,
+        run_id=run_id,
         queued_count=total_contacts
     )

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from typing import List
+from pydantic import BaseModel
 
 from app.services.redis_service import disparador_redis
 from app.services.rabbitmq_service import disparador_rmq
@@ -7,6 +7,11 @@ from app.schemas import CampaignReport, CampaignStatus
 import json
 
 router = APIRouter()
+
+class CampaignLockRequest(BaseModel):
+    type_id: str
+    queue_id: str
+    service_id: str
 
 @router.get("/stats")
 async def get_dashboard_stats():
@@ -48,8 +53,28 @@ async def resume_campaign(service_id: str):
     await disparador_redis.resume_campaign(service_id)
     return {"message": "Resumed successfully"}
 
+@router.post("/campaigns/unlock")
+async def unlock_campaign_lock(payload: CampaignLockRequest):
+    campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
+    await disparador_redis.unlock_campaign(campaign_key)
+    return {"campaign_key": campaign_key, "lock": "unlocked"}
+
+@router.post("/campaigns/lock")
+async def lock_campaign_lock(payload: CampaignLockRequest):
+    campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
+    await disparador_redis.lock_campaign(campaign_key)
+    return {"campaign_key": campaign_key, "lock": "locked"}
+
+@router.get("/campaigns/lock-status")
+async def campaign_lock_status(type_id: str, queue_id: str, service_id: str):
+    campaign_key = f"{type_id}:{queue_id}:{service_id}"
+    lock = await disparador_redis.get_campaign_lock(campaign_key)
+    last_run = await disparador_redis.get_last_run(campaign_key)
+    return {"campaign_key": campaign_key, "lock": lock, "last_run": last_run}
+
 @router.post("/campaigns/{service_id}/retry-dlq")
 async def retry_dlq(service_id: str):
+
     items = await disparador_redis.get_dlq(service_id)
     if not items:
         return {"message": "DLQ is empty", "requeued": 0}
@@ -69,9 +94,10 @@ async def retry_dlq(service_id: str):
             "queue_id": "dlq_retry",
             "service_id": service_id,
             "contacts": [contact],
-            "callback_url": "", # We might lose original callback_url if not stored in DLQ, usually we should.
+            "callback_url": "",
             "context_data": {},
             "transition_data": {},
+            "dispatch_flags": {"lock_bypass": True},
             "timestamp_create": "",
             "config_path": campaign.get("config_path")
         }

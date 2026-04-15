@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import httpx
 import json
@@ -106,12 +106,11 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     lb_delay = random.uniform(0.5, 1.2)
     await asyncio.sleep(lb_delay)
 
-async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, timestamp_create: str = None):
+async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, run_id: str, campaign_key: str, timestamp_create: str = None):
     total = len(contacts)
     if total == 0:
         return
         
-    triplet_key = f"{type_id}:{queue_id}:{service_id}"
     await disparador_redis.init_campaign(service_id, total, str(config.id), config.path)
     
     # 1. Dynamic Start Delay
@@ -132,19 +131,14 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
             wait_time = config.start_delay_seconds
 
     if wait_time > 0:
-        await disparador_redis.set_dispatch_status(triplet_key, "waiting")
+        await disparador_redis.set_run_status(run_id, "waiting")
         try:
-            # We use a simple sleep for now, but consumer can cancel the task
             await asyncio.sleep(wait_time)
         except asyncio.CancelledError:
-            logger.info(f"Dispatch task for {triplet_key} CANCELLED during wait.")
-            # Status will be cleaned up by the consumer or signal
+            logger.info(f"Dispatch task for run {run_id} CANCELLED during wait.")
             raise
 
-    # 2. Check if we should still proceed (idempotency check)
-    # If the status is no longer waiting (e.g. was cancelled or replaced), we might be in trouble
-    # but the consumer handles the 'sending' block.
-    await disparador_redis.set_dispatch_status(triplet_key, "sending")
+    await disparador_redis.set_run_status(run_id, "sending")
         
     for i, contact in enumerate(contacts):
         # 3. Check for cancellation/interruption mid-batch (optional but good)
@@ -165,17 +159,19 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                     "type_id": type_id,
                     "queue_id": queue_id,
                     "service_id": service_id,
-                    "contact": c, # note single contact
+                    "contact": c,
                     "context_data": context_data,
                     "transition_data": transition_data,
                     "callback_url": callback_url,
+                    "campaign_key": campaign_key,
+                    "run_id": run_id,
+                    "dispatch_flags": {"lock_bypass": True},
                     "timestamp_create": timestamp_create or datetime.now(ZoneInfo("UTC")).isoformat()
                 }
                 # Publish individual missing messages
                 await disparador_rmq.publish_contact(type_id, queue_id, requeue_payload)
             
-            # Since we are re-queuing, we clear status so it can be picked up later in the right window
-            await disparador_redis.delete_dispatch_status(triplet_key)
+            await disparador_redis.delete_run_status(run_id)
             break
             
         await dispatch_contact(config, type_id, queue_id, contact, service_id, context_data, transition_data, callback_url, i, total)
@@ -189,8 +185,8 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                 failed = campaign.get("failed", 0) if campaign else 0
                 await send_progress(config.progress_callback_url, service_id, total, sent, failed)
                 
-    # 4. Loop Finished
-    await disparador_redis.set_dispatch_status(triplet_key, "completed")
+    await disparador_redis.set_run_status(run_id, "completed")
+    await disparador_redis.set_last_run(campaign_key, run_id)
     campaign = await disparador_redis.get_campaign(service_id)
     if campaign:
         if campaign.get("sent", 0) + campaign.get("failed", 0) >= campaign.get("total", 0):

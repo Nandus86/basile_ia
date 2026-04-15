@@ -197,27 +197,48 @@ class DisparadorRedis:
         result = await self.client.set(key, "1", nx=True, ex=cooldown_seconds)
         return result is True
 
-    # -- Dispatch Status and Cancellation --
-    async def get_dispatch_status(self, triplet_key: str) -> Optional[str]:
-        """Returns waiting, sending, completed or None"""
+    # -- Campaign Lock (Business Rule) --
+    async def get_campaign_lock(self, campaign_key: str) -> str:
         await self.ensure_connected()
-        key = f"disp:status:{triplet_key}"
-        return await self.client.get(key)
+        key = f"disp:campaign:lock:{campaign_key}"
+        value = await self.client.get(key)
+        return value or "unlocked"
 
-    async def set_dispatch_status(self, triplet_key: str, status: str, ttl: int = 86400):
-        """Sets dispatch status (waiting, sending, completed)"""
-        await self.ensure_connected()
-        key = f"disp:status:{triplet_key}"
-        await self.client.set(key, status, ex=ttl)
+    async def is_campaign_locked(self, campaign_key: str) -> bool:
+        return await self.get_campaign_lock(campaign_key) == "locked"
 
-    async def delete_dispatch_status(self, triplet_key: str):
+    async def lock_campaign(self, campaign_key: str):
         await self.ensure_connected()
-        await self.client.delete(f"disp:status:{triplet_key}")
+        await self.client.set(f"disp:campaign:lock:{campaign_key}", "locked")
 
-    async def signal_cancel(self, triplet_key: str):
-        """Sends a cancellation signal for a triplet via PubSub"""
+    async def unlock_campaign(self, campaign_key: str):
         await self.ensure_connected()
-        channel = f"disp:cancel-chan:{triplet_key}"
+        await self.client.set(f"disp:campaign:lock:{campaign_key}", "unlocked")
+
+    # -- Run Status (Technical State) --
+    async def get_run_status(self, run_id: str) -> Optional[str]:
+        await self.ensure_connected()
+        return await self.client.get(f"disp:run:status:{run_id}")
+
+    async def set_run_status(self, run_id: str, status: str, ttl: int = 86400):
+        await self.ensure_connected()
+        await self.client.set(f"disp:run:status:{run_id}", status, ex=ttl)
+
+    async def delete_run_status(self, run_id: str):
+        await self.ensure_connected()
+        await self.client.delete(f"disp:run:status:{run_id}")
+
+    async def set_last_run(self, campaign_key: str, run_id: str):
+        await self.ensure_connected()
+        await self.client.set(f"disp:campaign:last_run:{campaign_key}", run_id)
+
+    async def get_last_run(self, campaign_key: str) -> Optional[str]:
+        await self.ensure_connected()
+        return await self.client.get(f"disp:campaign:last_run:{campaign_key}")
+
+    async def signal_cancel(self, run_id: str):
+        await self.ensure_connected()
+        channel = f"disp:cancel-chan:{run_id}"
         await self.client.publish(channel, "cancel")
 
 disparador_redis = DisparadorRedis()
