@@ -71,6 +71,7 @@ class AgentBase(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
     vector_memory_enabled: bool = False
+    information_bases_global_search_enabled: bool = False
     training_memory_enabled: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = Field(default=None)
@@ -144,6 +145,7 @@ class AgentUpdate(BaseModel):
     transition_output_schema: Optional[Dict[str, Any]] = None
     transition_input_schema: Optional[Dict[str, Any]] = None
     vector_memory_enabled: Optional[bool] = None
+    information_bases_global_search_enabled: Optional[bool] = None
     training_memory_enabled: Optional[bool] = None
     status_updates_enabled: Optional[bool] = None
     status_updates_config: Optional[Dict[str, Any]] = None
@@ -181,6 +183,7 @@ class AgentResponse(BaseModel):
     transition_output_schema: Optional[Dict[str, Any]] = None
     transition_input_schema: Optional[Dict[str, Any]] = None
     vector_memory_enabled: bool = False
+    information_bases_global_search_enabled: bool = False
     training_memory_enabled: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = None
@@ -224,6 +227,7 @@ class AgentListItem(BaseModel):
     response_style: str = "structured"
     emotional_profile_id: Optional[UUID] = None
     vector_memory_enabled: bool = False
+    information_bases_global_search_enabled: bool = False
     training_memory_enabled: bool = False
     mcp_count: int = 0
     collaborator_count: int = 0

@@ -1735,6 +1735,21 @@
                   </v-btn>
                 </div>
 
+                <v-card variant="outlined" class="mb-4">
+                  <v-card-text class="d-flex align-center py-2">
+                    <v-switch
+                      v-model="formData.information_bases_global_search_enabled"
+                      label="Pesquisa Global nas Bases Vinculadas"
+                      color="primary"
+                      hide-details
+                      density="compact"
+                    ></v-switch>
+                  </v-card-text>
+                  <v-card-subtitle class="pt-0 pb-3">
+                    Ativo: faz uma busca única em todas as bases associadas ao agente. Inativo: busca base a base.
+                  </v-card-subtitle>
+                </v-card>
+
                 <div class="d-flex align-center gap-2 mb-2">
                   <v-select
                     v-model="selectedBaseToAdd"
@@ -2243,6 +2258,7 @@ const formData = reactive({
   access_level: 'normal',
   collaboration_enabled: true,
   vector_memory_enabled: false,
+  information_bases_global_search_enabled: false,
   is_orchestrator: false,
   is_planner: false,
   is_thinker: false,
@@ -2710,6 +2726,7 @@ function resetForm() {
     access_level: 'normal',
     collaboration_enabled: true,
     vector_memory_enabled: false,
+    information_bases_global_search_enabled: false,
     is_orchestrator: false,
     is_planner: false,
     is_thinker: false,
@@ -3001,6 +3018,7 @@ async function openDialog(agent = null) {
         access_level: fullAgent.access_level || 'normal',
         collaboration_enabled: fullAgent.collaboration_enabled ?? true,
         vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
+        information_bases_global_search_enabled: fullAgent.information_bases_global_search_enabled ?? false,
         is_orchestrator: fullAgent.is_orchestrator ?? false,
         is_planner: fullAgent.is_planner ?? false,
         is_thinker: fullAgent.is_thinker ?? false,
@@ -3425,6 +3443,7 @@ async function duplicateAgent(agent) {
       access_level: fullAgent.access_level || 'normal',
       collaboration_enabled: fullAgent.collaboration_enabled ?? true,
       vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
+      information_bases_global_search_enabled: fullAgent.information_bases_global_search_enabled ?? false,
       is_orchestrator: fullAgent.is_orchestrator ?? false,
       is_planner: fullAgent.is_planner ?? false,
       emotional_profile_id: fullAgent.emotional_profile?.id || null,

@@ -205,47 +205,88 @@ async def _enrich_agent_prompt(
                     ctx = context_data or {}
                     weaviate_cl = get_weaviate()
                     all_info_nodes = []
-                    
+                    ib_global_search = getattr(ib_agent, "information_bases_global_search_enabled", False)
+
                     if weaviate_cl:
-                        for ib in active_bases:
+                        if ib_global_search:
                             possible_ids = []
-                            # Try extraction via correlation_schema
-                            if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
-                                target_key = ib.correlation_schema.get("target")
-                                if target_key:
-                                    clean_target = target_key.strip()
-                                    if clean_target.startswith("$request."):
-                                        clean_target = clean_target[len("$request."):]
-                                    parts = clean_target.split(".")
-                                    val = ctx
-                                    for part in parts:
-                                        if isinstance(val, dict) and part in val:
-                                            val = val[part]
-                                        else:
-                                            val = None
-                                            break
-                                    if val is not None and not isinstance(val, (dict, list)):
-                                        v_str = str(val).strip()
-                                        if v_str:
-                                            possible_ids.append(v_str)
-                            
-                            # Fallback to general context scanning if no specific id was found
+                            for ib in active_bases:
+                                if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                    target_key = ib.correlation_schema.get("target")
+                                    if target_key:
+                                        clean_target = target_key.strip()
+                                        if clean_target.startswith("$request."):
+                                            clean_target = clean_target[len("$request."):]
+                                        parts = clean_target.split(".")
+                                        val = ctx
+                                        for part in parts:
+                                            if isinstance(val, dict) and part in val:
+                                                val = val[part]
+                                            else:
+                                                val = None
+                                                break
+                                        if val is not None and not isinstance(val, (dict, list)):
+                                            v_str = str(val).strip()
+                                            if v_str:
+                                                possible_ids.append(v_str)
+
                             if not possible_ids:
                                 for k, v in ctx.items():
                                     if isinstance(v, str) and v.strip():
                                         possible_ids.append(v.strip())
                                 if session_id:
                                     possible_ids.append(str(session_id))
-                            
-                            # Fetch nodes uniquely for this base's IDs
-                            ib_limit = getattr(ib, 'max_results', 3) or 3
+
+                            possible_ids = list(dict.fromkeys(possible_ids))
+                            base_codes = [ib.code for ib in active_bases if ib.code]
+                            ib_limit = max([getattr(ib, 'max_results', 3) or 3 for ib in active_bases] or [3])
                             for uid in possible_ids:
                                 info_nodes = await weaviate_cl.search_information_bases(
-                                    base_codes=[ib.code], user_id=uid, query=message, limit=ib_limit
+                                    base_codes=base_codes, user_id=uid, query=message, limit=ib_limit
                                 )
                                 if info_nodes:
                                     all_info_nodes.extend(info_nodes)
-                                    
+                        else:
+                            for ib in active_bases:
+                                possible_ids = []
+                                # Try extraction via correlation_schema
+                                if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                    target_key = ib.correlation_schema.get("target")
+                                    if target_key:
+                                        clean_target = target_key.strip()
+                                        if clean_target.startswith("$request."):
+                                            clean_target = clean_target[len("$request."):]
+                                        parts = clean_target.split(".")
+                                        val = ctx
+                                        for part in parts:
+                                            if isinstance(val, dict) and part in val:
+                                                val = val[part]
+                                            else:
+                                                val = None
+                                                break
+                                        if val is not None and not isinstance(val, (dict, list)):
+                                            v_str = str(val).strip()
+                                            if v_str:
+                                                possible_ids.append(v_str)
+
+                                # Fallback to general context scanning if no specific id was found
+                                if not possible_ids:
+                                    for k, v in ctx.items():
+                                        if isinstance(v, str) and v.strip():
+                                            possible_ids.append(v.strip())
+                                    if session_id:
+                                        possible_ids.append(str(session_id))
+
+                                possible_ids = list(dict.fromkeys(possible_ids))
+                                # Fetch nodes uniquely for this base's IDs
+                                ib_limit = getattr(ib, 'max_results', 3) or 3
+                                for uid in possible_ids:
+                                    info_nodes = await weaviate_cl.search_information_bases(
+                                        base_codes=[ib.code], user_id=uid, query=message, limit=ib_limit
+                                    )
+                                    if info_nodes:
+                                        all_info_nodes.extend(info_nodes)
+
                         if all_info_nodes:
                             seen = set()
                             unique_nodes = []
@@ -256,7 +297,7 @@ async def _enrich_agent_prompt(
                                 if meta_key not in seen:
                                     seen.add(meta_key)
                                     unique_nodes.append(n)
-                            
+
                             print(f"[Task] 📚 Retrieved {len(unique_nodes)} Information Base contexts (from {len(all_info_nodes)} facets)")
                             info_parts = []
                             for n in unique_nodes[:6]:
@@ -963,6 +1004,70 @@ async def _build_information_base_tools(
 
     tools = []
     ctx = context_data or {}
+    ib_global_search = getattr(agent_obj, "information_bases_global_search_enabled", False)
+
+    if ib_global_search:
+        fallback_user_id = None
+        for ib in active_bases:
+            if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                target_key = ib.correlation_schema.get("target")
+                if target_key:
+                    clean_target = target_key.strip()
+                    if clean_target.startswith("$request."):
+                        clean_target = clean_target[len("$request."):]
+                    parts = clean_target.split(".")
+                    val = ctx
+                    for part in parts:
+                        if isinstance(val, dict) and part in val:
+                            val = val[part]
+                        else:
+                            val = None
+                            break
+                    if val is not None and not isinstance(val, (dict, list)):
+                        fallback_user_id = str(val).strip() or None
+                        if fallback_user_id:
+                            break
+
+        if not fallback_user_id:
+            for k, v in ctx.items():
+                if isinstance(v, str) and v.strip():
+                    fallback_user_id = v.strip()
+                    break
+
+        if fallback_user_id:
+            import re
+            _base_codes = [b.code for b in active_bases if b.code]
+            _base_names = [b.name for b in active_bases if b.code]
+            _uid = fallback_user_id
+            _wc = weaviate_cl
+            _m = max([getattr(b, 'max_results', 3) or 3 for b in active_bases] or [3])
+
+            async def _search_global_bases(query: str, _codes=_base_codes, _names=_base_names, _u=_uid, _w=_wc, _max=_m) -> str:
+                try:
+                    results = await _w.search_information_bases(
+                        base_codes=_codes,
+                        user_id=_u,
+                        query=query,
+                        limit=_max,
+                    )
+                    if not results:
+                        return "Nenhum resultado encontrado nas bases globais associadas."
+                    lines = [f"- [{r.get('base_code', 'N/A')}] {r['content']}" for r in results]
+                    return f"Resultados das bases globais ({', '.join(_names)}):\n" + "\n".join(lines)
+                except Exception as e:
+                    return f"Erro ao pesquisar bases globais: {str(e)}"
+
+            global_tool = StructuredTool.from_function(
+                coroutine=_search_global_bases,
+                name="pesquisar_bases_globais",
+                description=(
+                    "Pesquisa global nas bases de informação associadas a este agente. "
+                    "Use para buscar em todas as bases vinculadas em uma única consulta."
+                ),
+                return_direct=False,
+            )
+            tools.append(global_tool)
+            print(f"[Task] 🔧 Global Information Base tool created: pesquisar_bases_globais (bases={len(_base_codes)}, user_id={fallback_user_id})")
 
     for ib in active_bases:
         # Resolve user_id from context_data via correlation_schema

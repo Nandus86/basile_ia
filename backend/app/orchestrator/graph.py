@@ -240,46 +240,93 @@ Cite a fonte (nome do documento) quando usar informações do contexto acima.
                         from app.weaviate_client import get_weaviate
                         weaviate_client = get_weaviate()
                         all_info_nodes = []
-                        
+                        ib_global_search = getattr(agent_obj, "information_bases_global_search_enabled", False)
+
                         if weaviate_client:
-                            for ib in active_bases:
+                            if ib_global_search:
                                 possible_ids = []
-                                # Try extraction via correlation_schema
-                                if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
-                                    target_key = ib.correlation_schema.get("target")
-                                    if target_key:
-                                        parts = target_key.split(".")
-                                        val = info_base_context_data
-                                        for part in parts:
-                                            if isinstance(val, dict) and part in val:
-                                                val = val[part]
-                                            else:
-                                                val = None
-                                                break
-                                        if val is not None and not isinstance(val, (dict, list)):
-                                            v_str = str(val).strip()
-                                            if v_str:
-                                                possible_ids.append(v_str)
-                                            
-                                # Fallback to general context scanning if no specific id was found
+                                for ib in active_bases:
+                                    if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                        target_key = ib.correlation_schema.get("target")
+                                        if target_key:
+                                            clean_target = target_key.strip()
+                                            if clean_target.startswith("$request."):
+                                                clean_target = clean_target[len("$request."):]
+                                            parts = clean_target.split(".")
+                                            val = info_base_context_data
+                                            for part in parts:
+                                                if isinstance(val, dict) and part in val:
+                                                    val = val[part]
+                                                else:
+                                                    val = None
+                                                    break
+                                            if val is not None and not isinstance(val, (dict, list)):
+                                                v_str = str(val).strip()
+                                                if v_str:
+                                                    possible_ids.append(v_str)
+
                                 if not possible_ids:
                                     for k, v in info_base_context_data.items():
                                         if isinstance(v, str) and v.strip():
                                             possible_ids.append(v.strip())
                                     if contact_id:
                                         possible_ids.append(str(contact_id))
-                                        
-                                # Fetch nodes uniquely for this base's IDs
+
+                                possible_ids = list(dict.fromkeys(possible_ids))
+                                base_codes = [ib.code for ib in active_bases if ib.code]
+                                ib_limit = max([getattr(ib, 'max_results', 3) or 3 for ib in active_bases] or [3])
                                 for uid in possible_ids:
                                     info_nodes = await weaviate_client.search_information_bases(
-                                        base_codes=[ib.code],
+                                        base_codes=base_codes,
                                         user_id=uid,
                                         query=current_message,
-                                        limit=getattr(ib, 'max_results', 3) or 3
+                                        limit=ib_limit
                                     )
                                     if info_nodes:
                                         all_info_nodes.extend(info_nodes)
-                                        
+                            else:
+                                for ib in active_bases:
+                                    possible_ids = []
+                                    # Try extraction via correlation_schema
+                                    if ib.correlation_schema and isinstance(ib.correlation_schema, dict):
+                                        target_key = ib.correlation_schema.get("target")
+                                        if target_key:
+                                            clean_target = target_key.strip()
+                                            if clean_target.startswith("$request."):
+                                                clean_target = clean_target[len("$request."):]
+                                            parts = clean_target.split(".")
+                                            val = info_base_context_data
+                                            for part in parts:
+                                                if isinstance(val, dict) and part in val:
+                                                    val = val[part]
+                                                else:
+                                                    val = None
+                                                    break
+                                            if val is not None and not isinstance(val, (dict, list)):
+                                                v_str = str(val).strip()
+                                                if v_str:
+                                                    possible_ids.append(v_str)
+
+                                    # Fallback to general context scanning if no specific id was found
+                                    if not possible_ids:
+                                        for k, v in info_base_context_data.items():
+                                            if isinstance(v, str) and v.strip():
+                                                possible_ids.append(v.strip())
+                                        if contact_id:
+                                            possible_ids.append(str(contact_id))
+
+                                    possible_ids = list(dict.fromkeys(possible_ids))
+                                    # Fetch nodes uniquely for this base's IDs
+                                    for uid in possible_ids:
+                                        info_nodes = await weaviate_client.search_information_bases(
+                                            base_codes=[ib.code],
+                                            user_id=uid,
+                                            query=current_message,
+                                            limit=getattr(ib, 'max_results', 3) or 3
+                                        )
+                                        if info_nodes:
+                                            all_info_nodes.extend(info_nodes)
+
                             if all_info_nodes:
                                 # Deduplicate by content
                                 seen = set()
@@ -288,9 +335,10 @@ Cite a fonte (nome do documento) quando usar informações do contexto acima.
                                     if n['content'] not in seen:
                                         seen.add(n['content'])
                                         unique_nodes.append(n)
-                                print(f"[Response] \U0001f4da Retrieved {len(unique_nodes)} Information Base contexts")
+                                print(f"[Response] 📚 Retrieved {len(unique_nodes)} Information Base contexts")
                                 info_str = "\n".join([f"- {n['content']} (Meta: {n['metadata']})" for n in unique_nodes[:6]])
                                 system_prompt += f"\n\n## Contextualização Personalizada Externa\n\nInformações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
+
             except Exception as e:
                 import traceback
                 print(f"[Response] Failed to retrieve Information Bases context: {e}")
