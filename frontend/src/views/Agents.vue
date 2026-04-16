@@ -2150,15 +2150,25 @@
             </template>
             <div class="d-flex flex-wrap gap-2">
               <v-chip color="success" size="small"><v-icon start size="14">mdi-check</v-icon>Prioridade</v-chip>
+              <v-chip color="indigo" size="small"><v-icon start size="14">mdi-play</v-icon>Sempre ativo início</v-chip>
+              <v-chip color="deep-purple" size="small"><v-icon start size="14">mdi-stop</v-icon>Sempre ativo final</v-chip>
               <v-chip color="grey" size="small"><v-icon start size="14">mdi-minus</v-icon>Neutro</v-chip>
               <v-chip color="error" size="small"><v-icon start size="14">mdi-close</v-icon>Bloqueado</v-chip>
             </div>
           </v-alert>
 
-          <div class="d-flex ga-2 mb-4">
+          <div class="d-flex ga-2 mb-4 flex-wrap">
             <v-btn size="small" variant="tonal" color="success" @click="setAllCollaborators('enabled')">
               <v-icon start size="16">mdi-check-all</v-icon>
               Priorizar Todos
+            </v-btn>
+            <v-btn size="small" variant="tonal" color="indigo" @click="setAllCollaborators('always_active_start')">
+              <v-icon start size="16">mdi-play-box-multiple</v-icon>
+              Início Todos
+            </v-btn>
+            <v-btn size="small" variant="tonal" color="deep-purple" @click="setAllCollaborators('always_active_end')">
+              <v-icon start size="16">mdi-stop-box-multiple</v-icon>
+              Final Todos
             </v-btn>
             <v-btn size="small" variant="tonal" @click="setAllCollaborators('neutral')">
               <v-icon start size="16">mdi-minus-box-multiple</v-icon>
@@ -2194,6 +2204,12 @@
                 <v-btn-toggle v-model="collaboratorStatuses[agent.id]" mandatory divided variant="outlined" density="compact">
                   <v-btn value="enabled" color="success" size="small">
                     <v-icon size="16">mdi-check</v-icon>
+                  </v-btn>
+                  <v-btn value="always_active_start" color="indigo" size="small">
+                    <v-icon size="16">mdi-play</v-icon>
+                  </v-btn>
+                  <v-btn value="always_active_end" color="deep-purple" size="small">
+                    <v-icon size="16">mdi-stop</v-icon>
                   </v-btn>
                   <v-btn value="neutral" size="small">
                     <v-icon size="16">mdi-minus</v-icon>
@@ -2302,9 +2318,11 @@ const formDataConfigJson = ref('')
 
 const updateFormDataConfig = () => {
   try {
-    if (formDataConfigJson.value.trim()) {
-      formData.config = { ...formData.config, ...JSON.parse(formDataConfigJson.value) }
+    if (!formDataConfigJson.value.trim()) {
+      formData.config = {}
+      return
     }
+    formData.config = JSON.parse(formDataConfigJson.value)
   } catch (e) {
     console.error('Erro ao parsear config JSON:', e)
   }
@@ -2830,7 +2848,7 @@ function resetForm() {
     },
     provider_id: null
   })
-  formDataConfigJson.value = ''
+  formDataConfigJson.value = JSON.stringify(formData.config, null, 2)
   outputSchemaJson.value = ''
   outputSchemaError.value = ''
   outputSchemaPreset.value = 'default'
@@ -3138,17 +3156,7 @@ async function openDialog(agent = null) {
         }
       })
       
-      // Carregar config JSON para campo de edição
-      const configKeys = ['is_reasoning_model', 'reasoning_effort', 'max_completion_tokens', 'short_term_memory_enabled', 'short_term_memory_ttl_hours']
-      const extraConfig = {}
-      for (const key of configKeys) {
-        if (fullAgent.config && fullAgent.config[key] !== undefined) {
-          extraConfig[key] = fullAgent.config[key]
-        }
-      }
-      if (Object.keys(extraConfig).length > 0) {
-        formDataConfigJson.value = JSON.stringify(extraConfig, null, 2)
-      }
+      formDataConfigJson.value = JSON.stringify(fullAgent.config || {}, null, 2)
       
       const foundModel = allModels.value.find(m => m.id === fullAgent.model)
       

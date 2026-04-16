@@ -60,6 +60,8 @@ class CollaborationStatus(str, enum.Enum):
     """Status for agent collaboration permissions - horizontal collaboration"""
     ENABLED = "enabled"    # ✅ Priority - orchestrator should consider using
     NEUTRAL = "neutral"    # ⚪ Available - orchestrator can use if needed
+    ALWAYS_ACTIVE_START = "always_active_start"    # ▶️ Mandatory collaborator invoked before orchestrator answer
+    ALWAYS_ACTIVE_END = "always_active_end"    # ⏹️ Mandatory collaborator invoked after orchestrator answer
     BLOCKED = "blocked"    # 🚫 Forbidden - never accessible
 
 

@@ -558,11 +558,14 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         
         enabled = []
         neutral = []
+        always_start = []
         for setting in agent_with_settings.collaborator_settings:
             if setting.status == CollaborationStatus.ENABLED:
                 enabled.append(setting.collaborator)
             elif setting.status == CollaborationStatus.NEUTRAL:
                 neutral.append(setting.collaborator)
+            elif setting.status == CollaborationStatus.ALWAYS_ACTIVE_START:
+                always_start.append(setting.collaborator)
         
         # [VERTICAL HIERARCHY] Filter collaborators by user access level
         from app.models.agent import AccessLevel
@@ -573,26 +576,25 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             
         enabled = [c for c in enabled if user_level.can_access(c.access_level)]
         neutral = [c for c in neutral if user_level.can_access(c.access_level)]
+        always_start = [c for c in always_start if user_level.can_access(c.access_level)]
         
-        if not enabled and not neutral:
-            return ""
-        
+        selected_collaborators = [(c, "MANDATORY_ALWAYS_ACTIVE_START") for c in always_start]
+
         # Use LLM decision to select subset of agents to consult
         decision = await self.should_collaborate(message, primary_agent, enabled, neutral, history)
         
-        if not decision["should_collaborate"] or not decision["agents_to_consult"]:
+        if decision["should_collaborate"] and decision["agents_to_consult"]:
+            for agent_info in decision["agents_to_consult"]:
+                agent_id = agent_info.get("id")
+                orientation = agent_info.get("orientation", "")
+                for agent in (enabled + neutral):
+                    if str(agent.id) == str(agent_id):
+                        if str(agent.id) not in {str(a.id) for a, _ in selected_collaborators}:
+                            selected_collaborators.append((agent, orientation))
+                        break
+        elif not always_start:
             print(f"[Orchestrator] No collaboration needed: {decision.get('reasoning')}")
             return ""
-            
-        # Filter enabled/neutral to only those selected
-        selected_collaborators = []
-        for agent_info in decision["agents_to_consult"]:
-            agent_id = agent_info.get("id")
-            orientation = agent_info.get("orientation", "")
-            for agent in (enabled + neutral):
-                if str(agent.id) == str(agent_id):
-                    selected_collaborators.append((agent, orientation))
-                    break
         
         monitor = monitor or self.monitor
         if monitor:
@@ -693,28 +695,43 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         
         enabled = []
         neutral = []
+        always_end = []
         for setting in agent_with_settings.collaborator_settings:
             if setting.status == CollaborationStatus.ENABLED:
                 enabled.append(setting.collaborator)
             elif setting.status == CollaborationStatus.NEUTRAL:
                 neutral.append(setting.collaborator)
+            elif setting.status == CollaborationStatus.ALWAYS_ACTIVE_END:
+                always_end.append(setting.collaborator)
+
+        from app.models.agent import AccessLevel
+        try:
+            user_level = AccessLevel(getattr(primary_agent, 'access_level', AccessLevel.NORMAL.value))
+        except ValueError:
+            user_level = AccessLevel.NORMAL
+
+        enabled = [c for c in enabled if user_level.can_access(c.access_level)]
+        neutral = [c for c in neutral if user_level.can_access(c.access_level)]
+        always_end = [c for c in always_end if user_level.can_access(c.access_level)]
         
         monitor = monitor or self.monitor
         if monitor:
             monitor.log_progress("Iniciando orquestração final pós-resposta")
-            
+
+        selected_collaborators = [(c, "MANDATORY_ALWAYS_ACTIVE_END") for c in always_end]
+
         decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
-        if not decision["should_collaborate"] or not decision["agents_to_consult"]:
+        if decision["should_collaborate"] and decision["agents_to_consult"]:
+            for agent_info in decision["agents_to_consult"]:
+                agent_id = agent_info.get("id")
+                orientation = agent_info.get("orientation", "")
+                for agent in (enabled + neutral):
+                    if str(agent.id) == str(agent_id):
+                        if str(agent.id) not in {str(a.id) for a, _ in selected_collaborators}:
+                            selected_collaborators.append((agent, orientation))
+                        break
+        elif not always_end:
             return primary_response
-            
-        selected_collaborators = []
-        for agent_info in decision["agents_to_consult"]:
-            agent_id = agent_info.get("id")
-            orientation = agent_info.get("orientation", "")
-            for agent in (enabled + neutral):
-                if str(agent.id) == str(agent_id):
-                    selected_collaborators.append((agent, orientation))
-                    break
         
         tasks = [
             self._invoke_collaborator(

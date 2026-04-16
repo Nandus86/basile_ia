@@ -882,12 +882,18 @@ async def _build_collaborator_tools(
 
     enabled = []
     neutral = []
+    always_start = []
+    always_end = []
     for setting in agent_with_settings.collaborator_settings:
         if setting.status == CollaborationStatus.ENABLED:
             enabled.append(setting.collaborator)
         elif setting.status == CollaborationStatus.NEUTRAL:
             neutral.append(setting.collaborator)
-    all_collaborators = enabled + neutral
+        elif setting.status == CollaborationStatus.ALWAYS_ACTIVE_START:
+            always_start.append(setting.collaborator)
+        elif setting.status == CollaborationStatus.ALWAYS_ACTIVE_END:
+            always_end.append(setting.collaborator)
+    all_collaborators = always_start + enabled + neutral + always_end
     if not all_collaborators:
         return [], [], []
 

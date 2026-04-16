@@ -20,6 +20,8 @@ class CollaborationStatusEnum(str, Enum):
     """Horizontal collaboration status"""
     ENABLED = "enabled"
     NEUTRAL = "neutral"
+    ALWAYS_ACTIVE_START = "always_active_start"
+    ALWAYS_ACTIVE_END = "always_active_end"
     BLOCKED = "blocked"
 
 
