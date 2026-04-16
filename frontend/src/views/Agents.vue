@@ -615,6 +615,30 @@
                     </v-row>
                   </v-card-text>
                 </v-card>
+
+                <v-card variant="outlined">
+                  <v-card-title class="d-flex align-center py-3 px-4">
+                    <v-icon class="mr-2" color="grey">mdi-code-json</v-icon>
+                    <span>Configuração Avançada (JSON)</span>
+                  </v-card-title>
+                  <v-divider></v-divider>
+                  <v-card-text>
+                    <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+                      <template v-slot:prepend>
+                        <v-icon>mdi-information</v-icon>
+                      </template>
+                      Configure opções avançadas em JSON. Exemplo: <code>{"response_variables": [{"from": "célula", "to": "{{ $request.ai_params.cell_name }}"}]}</code>
+                    </v-alert>
+                    <v-textarea
+                      v-model="formDataConfigJson"
+                      label="Config JSON"
+                      placeholder='{"response_variables": [...]}'
+                      rows="4"
+                      prepend-inner-icon="mdi-braces"
+                      @blur="updateFormDataConfig"
+                    ></v-textarea>
+                  </v-card-text>
+                </v-card>
               </v-form>
             </v-window-item>
 
@@ -2274,6 +2298,18 @@ const saving = ref(false)
 const editing = ref(false)
 const formRef = ref(null)
 const formValid = ref(false)
+const formDataConfigJson = ref('')
+
+const updateFormDataConfig = () => {
+  try {
+    if (formDataConfigJson.value.trim()) {
+      formData.config = { ...formData.config, ...JSON.parse(formDataConfigJson.value) }
+    }
+  } catch (e) {
+    console.error('Erro ao parsear config JSON:', e)
+  }
+}
+
 const formData = reactive({
   id: null,
   name: '',
@@ -2794,6 +2830,7 @@ function resetForm() {
     },
     provider_id: null
   })
+  formDataConfigJson.value = ''
   outputSchemaJson.value = ''
   outputSchemaError.value = ''
   outputSchemaPreset.value = 'default'
@@ -3100,6 +3137,18 @@ async function openDialog(agent = null) {
           max_updates: fullAgent.status_updates_config?.max_updates ?? 3
         }
       })
+      
+      // Carregar config JSON para campo de edição
+      const configKeys = ['is_reasoning_model', 'reasoning_effort', 'max_completion_tokens', 'short_term_memory_enabled', 'short_term_memory_ttl_hours']
+      const extraConfig = {}
+      for (const key of configKeys) {
+        if (fullAgent.config && fullAgent.config[key] !== undefined) {
+          extraConfig[key] = fullAgent.config[key]
+        }
+      }
+      if (Object.keys(extraConfig).length > 0) {
+        formDataConfigJson.value = JSON.stringify(extraConfig, null, 2)
+      }
       
       const foundModel = allModels.value.find(m => m.id === fullAgent.model)
       
