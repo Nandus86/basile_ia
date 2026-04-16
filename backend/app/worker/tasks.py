@@ -10,6 +10,7 @@ Flow:
 """
 import time
 import json
+import re
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -22,6 +23,18 @@ from app.worker.status_monitor import StatusMonitor
 # ─────────────────────────────────────────────────────────────
 # Shared helpers
 # ─────────────────────────────────────────────────────────────
+
+def _resolve_template(template: str, context_data: Dict[str, Any]) -> str:
+    """Resolve template like {{ $request.ai_params.cell_name }} from context_data."""
+    resolved = template
+    for match in re.finditer(r'\{\{\s*\$request\.([^}]+)\s*\}\}', template):
+        path = match.group(1)
+        value = context_data
+        for key in path.split('.'):
+            value = value.get(key, "") if isinstance(value, dict) else ""
+        resolved = resolved.replace(match.group(0), str(value))
+    return resolved
+
 
 def _resolve_tz_name(transition_data: Optional[Dict[str, Any]] = None) -> str:
     """Extract IANA timezone name from transition_data payload.
@@ -1651,10 +1664,19 @@ async def process_message_task(
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo supervisor")
 
                 # Strip internal metadata tags
-                import re
                 _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
                 if isinstance(final_result, str):
                     final_result = _ctx_re.sub('', final_result).strip()
+
+                # Process response_variables - substituição de palavras na resposta
+                response_vars = agent_config.get("config", {}).get("response_variables", [])
+                if response_vars and isinstance(final_result, str):
+                    for var in response_vars:
+                        from_word = var.get("from", "")
+                        to_template = var.get("to", "")
+                        if from_word and to_template:
+                            resolved = _resolve_template(to_template, context_data or {})
+                            final_result = final_result.replace(from_word, resolved)
 
                 if str(final_result).strip():
                     await redis_client.add_message(
@@ -2117,11 +2139,20 @@ async def process_message_task(
                 print(f"[Task] ✅ {agent_used} responded on try {retry_count+1}")
 
                 # Strip internal metadata tags that may leak into the response
-                import re
                 _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
                 output_text = _ctx_re.sub('', output_text).strip()
                 if isinstance(final_result, str):
                     final_result = _ctx_re.sub('', final_result).strip()
+
+                # Process response_variables - substituição de palavras na resposta
+                response_vars = agent_config.get("config", {}).get("response_variables", [])
+                if response_vars and isinstance(final_result, str):
+                    for var in response_vars:
+                        from_word = var.get("from", "")
+                        to_template = var.get("to", "")
+                        if from_word and to_template:
+                            resolved = _resolve_template(to_template, context_data or {})
+                            final_result = final_result.replace(from_word, resolved)
 
                 if output_text.strip():
                     if stm_enabled:
