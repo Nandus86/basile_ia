@@ -160,6 +160,8 @@ class Agent(Base):
     
     # Priority keywords that force the orchestrator to call this agent
     trigger_keywords = Column(JSON, default=list)
+    true_trigger_keywords = Column(JSON, default=list)
+    true_trigger_match_mode = Column(String(20), default="word", nullable=False)
     
     # Dynamic entity memory path - e.g. $request.church._id
     entity_memory_path = Column(String(255), nullable=True)

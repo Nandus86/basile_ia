@@ -468,9 +468,55 @@ async def _enrich_agent_prompt(
         # The ReAct agent naturally decides when to call each one
         print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — loading collaborator tools")
         try:
-            collab_tools, mandatory_instructions = await _build_collaborator_tools(
+            collab_tools, mandatory_instructions, deterministic_matches = await _build_collaborator_tools(
                 db, agent_model, message, context_data, user_access_level=user_access_level
             )
+
+            if deterministic_matches:
+                from app.orchestrator.agent_orchestrator import AgentOrchestrator
+
+                selected_match = deterministic_matches[0]
+                selected_collab = selected_match["agent"]
+                selected_keyword = selected_match["keyword"]
+                selected_mode = selected_match["mode"]
+
+                direct_orchestrator = AgentOrchestrator(db, monitor=monitor)
+                orientation = (
+                    f"TRUE_TRIGGER_KEYWORD acionado ({selected_mode}: '{selected_keyword}'). "
+                    f"Executar atendimento completo desta solicitação com máxima prioridade: {message}"
+                )
+                collab_name, collab_response = await direct_orchestrator._invoke_collaborator(
+                    agent=selected_collab,
+                    message=message,
+                    history=history or [],
+                    context=rag_context or "",
+                    context_data=context_data,
+                    orientation=orientation,
+                    primary_agent=agent_model,
+                    monitor=monitor,
+                    response_style=getattr(selected_collab, "response_style", "structured"),
+                )
+
+                if collab_response:
+                    filtered_tools = []
+                    for tool in collab_tools:
+                        tname = getattr(tool, "name", "")
+                        if tname and collab_name and tname.lower().endswith((collab_name or "").lower().replace(" ", "_")):
+                            continue
+                        filtered_tools.append(tool)
+                    if len(filtered_tools) != len(collab_tools):
+                        collab_tools = filtered_tools
+
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                        f"\n\n## TRUE TRIGGER EXECUTADO (DETERMINÍSTICO)\n"
+                        f"- Agente acionado diretamente: {collab_name}\n"
+                        f"- Modo de match: {selected_mode}\n"
+                        f"- Keyword: {selected_keyword}\n"
+                        f"- Resultado bruto:\n{collab_response}\n"
+                        f"Use este resultado como fonte prioritária e não reacione o mesmo especialista para a mesma tarefa neste turno.\n"
+                    )
+                    print(f"[Task] ✅ True trigger executado: '{collab_name}' via keyword '{selected_keyword}' ({selected_mode})")
+
             if collab_tools:
                 existing_tools = agent_config.get("tools", []) or []
                 agent_config["tools"] = existing_tools + collab_tools
@@ -769,13 +815,39 @@ Se não houver fatos relevantes, responda EXATAMENTE: NENHUM"""
 # Collaborator Tools (v0.0.9) — collaborators become tools
 # ─────────────────────────────────────────────────────────────
 
+def _match_true_trigger_keyword(message: str, keyword: str, mode: str) -> bool:
+    """Deterministic matcher for true trigger keywords."""
+    import re
+
+    if not message or not keyword:
+        return False
+
+    message_norm = str(message).lower()
+    keyword_norm = str(keyword).strip().lower()
+    if not keyword_norm:
+        return False
+
+    mode_norm = (mode or "word").strip().lower()
+
+    if mode_norm == "contains":
+        return keyword_norm in message_norm
+
+    if mode_norm == "phrase":
+        msg_clean = " ".join(message_norm.split())
+        kw_clean = " ".join(keyword_norm.split())
+        return kw_clean in msg_clean
+
+    escaped = re.escape(keyword_norm)
+    return re.search(rf"(?<!\w){escaped}(?!\w)", message_norm) is not None
+
+
 async def _build_collaborator_tools(
     db,
     agent_model,
     message: str,
     context_data: Optional[Dict[str, Any]] = None,
     user_access_level: str = "normal",
-) -> tuple[list, list]:
+) -> tuple[list, list, list]:
     """
     Build LangChain tools from an orchestrator's collaborators.
     
@@ -793,7 +865,7 @@ async def _build_collaborator_tools(
     orchestrator = AgentOrchestrator(db)
     agent_with_settings = await orchestrator.get_agent_with_collaborators(agent_model.id)
     if not agent_with_settings or not agent_with_settings.collaborator_settings:
-        return []
+        return [], [], []
 
     enabled = []
     neutral = []
@@ -804,7 +876,7 @@ async def _build_collaborator_tools(
             neutral.append(setting.collaborator)
     all_collaborators = enabled + neutral
     if not all_collaborators:
-        return [], []
+        return [], [], []
 
     # [VERTICAL HIERARCHY] Filter collaborators by user access level
     from app.models.agent import AccessLevel
@@ -819,10 +891,11 @@ async def _build_collaborator_tools(
     ]
 
     if not all_collaborators:
-        return []
+        return [], [], []
 
     tools = []
     mandatory_instructions = []
+    deterministic_matches = []
 
     for collab in all_collaborators:
         # Sanitize name for tool compatibility
@@ -854,6 +927,25 @@ async def _build_collaborator_tools(
         
         priority = "PRIORITÁRIO (RECOMENDADO)" if collab in enabled else "disponível (secundário)"
         
+        # TRUE TRIGGER MATCHING (deterministic)
+        true_agent_kws = getattr(collab, 'true_trigger_keywords', []) or []
+        true_match_mode = getattr(collab, 'true_trigger_match_mode', 'word') or 'word'
+        best_true_match = None
+        for tkw in true_agent_kws:
+            if _match_true_trigger_keyword(message, tkw, true_match_mode):
+                candidate = {
+                    "agent": collab,
+                    "keyword": tkw,
+                    "mode": true_match_mode,
+                    "priority": 1 if collab in enabled else 2,
+                    "keyword_len": len((tkw or "").strip()),
+                }
+                if best_true_match is None or candidate["keyword_len"] > best_true_match["keyword_len"]:
+                    best_true_match = candidate
+
+        if best_true_match:
+            deterministic_matches.append(best_true_match)
+
         # KEYWORD MATCHING
         agent_kws = getattr(collab, 'trigger_keywords', []) or []
         msg_lower = message.lower()
@@ -962,7 +1054,8 @@ async def _build_collaborator_tools(
         tools.append(tool)
         print(f"[Task] 🔧 Collaborator tool created: {tool_name} → '{collab.name}'")
 
-    return tools, mandatory_instructions
+    deterministic_matches.sort(key=lambda m: (m["priority"], -m["keyword_len"], (m["agent"].name or "").lower()))
+    return tools, mandatory_instructions, deterministic_matches
 
 
 # ─────────────────────────────────────────────────────────────

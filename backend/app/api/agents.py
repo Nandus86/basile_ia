@@ -185,6 +185,8 @@ async def get_agent(
         status_updates_enabled=agent.status_updates_enabled,
         status_updates_config=agent.status_updates_config,
         trigger_keywords=agent.trigger_keywords or [],
+        true_trigger_keywords=agent.true_trigger_keywords or [],
+        true_trigger_match_mode=agent.true_trigger_match_mode or "word",
         provider_id=agent.provider_id,
         is_thinker=agent.is_thinker,
         thinker_prompt=agent.thinker_prompt,

@@ -82,6 +82,8 @@ class AgentBase(BaseModel):
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
     trigger_keywords: List[str] = Field(default_factory=list)
+    true_trigger_keywords: List[str] = Field(default_factory=list)
+    true_trigger_match_mode: str = "word"
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
@@ -155,6 +157,8 @@ class AgentUpdate(BaseModel):
     guardrail_prompt: Optional[str] = None
     guardrail_model: Optional[str] = None
     trigger_keywords: Optional[List[str]] = None
+    true_trigger_keywords: Optional[List[str]] = None
+    true_trigger_match_mode: Optional[str] = None
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
@@ -201,6 +205,8 @@ class AgentResponse(BaseModel):
     thinker_keywords: List[str] = []  # NEW
     thinker_memory_enabled: bool = True  # NEW
     trigger_keywords: List[str] = []
+    true_trigger_keywords: List[str] = []
+    true_trigger_match_mode: str = "word"
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None

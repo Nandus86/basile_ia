@@ -522,9 +522,37 @@
                     <v-row class="mt-3">
                       <v-col cols="12">
                         <v-combobox
+                          v-model="formData.true_trigger_keywords"
+                          label="True Trigger Keywords (Determinístico)"
+                          hint="Se houver match, este agente é acionado por código com prioridade máxima"
+                          persistent-hint
+                          multiple
+                          chips
+                          closable-chips
+                          prepend-inner-icon="mdi-lightning-bolt"
+                          variant="outlined"
+                          density="comfortable"
+                        ></v-combobox>
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <v-select
+                          v-model="formData.true_trigger_match_mode"
+                          label="Modo de Match do True Trigger"
+                          :items="trueTriggerMatchModes"
+                          item-title="label"
+                          item-value="value"
+                          prepend-inner-icon="mdi-tune-variant"
+                          variant="outlined"
+                          density="comfortable"
+                          hint="Contém, Palavra inteira ou Frase inteira"
+                          persistent-hint
+                        ></v-select>
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <v-combobox
                           v-model="formData.trigger_keywords"
-                          label="Palavras-Chave de Ativação (Opcional)"
-                          hint="Se configuradas, o orquestrador acionará este agente PRIORITARIAMENTE quando alguma delas for digitada pelo usuário"
+                          label="Palavras-Chave de Ativação (Soft)"
+                          hint="Priorização por prompt (não determinístico)"
                           persistent-hint
                           multiple
                           chips
@@ -2282,6 +2310,8 @@ const formData = reactive({
   transition_input_schema: null,
   transition_output_schema: null,
   trigger_keywords: [],
+  true_trigger_keywords: [],
+  true_trigger_match_mode: 'word',
   entity_memory_path: null,
   provider_id: null,
   config: {
@@ -2306,6 +2336,12 @@ const reasoningEffortOptions = [
   { value: 'low', label: '🟢 Low — Rápido, menos profundo' },
   { value: 'medium', label: '🟡 Medium — Balanceado' },
   { value: 'high', label: '🔴 High — Máxima profundidade' }
+]
+
+const trueTriggerMatchModes = [
+  { value: 'word', label: 'Palavra inteira' },
+  { value: 'phrase', label: 'Frase inteira' },
+  { value: 'contains', label: 'Contém' }
 ]
 
 // Output Schema Data
@@ -2746,6 +2782,8 @@ function resetForm() {
     transition_input_schema: null,
     transition_output_schema: null,
     trigger_keywords: [],
+    true_trigger_keywords: [],
+    true_trigger_match_mode: 'word',
     entity_memory_path: null,
     config: {
       is_reasoning_model: false,
@@ -3041,6 +3079,8 @@ async function openDialog(agent = null) {
         transition_input_schema: fullAgent.transition_input_schema || null,
         transition_output_schema: fullAgent.transition_output_schema || null,
         trigger_keywords: fullAgent.trigger_keywords || [],
+        true_trigger_keywords: fullAgent.true_trigger_keywords || [],
+        true_trigger_match_mode: fullAgent.true_trigger_match_mode || 'word',
         entity_memory_path: fullAgent.entity_memory_path || null,
         provider_id: fullAgent.provider_id || null,
         config: {
@@ -3453,6 +3493,8 @@ async function duplicateAgent(agent) {
       transition_input_schema: fullAgent.transition_input_schema || null,
       transition_output_schema: fullAgent.transition_output_schema || null,
       trigger_keywords: fullAgent.trigger_keywords || [],
+      true_trigger_keywords: fullAgent.true_trigger_keywords || [],
+      true_trigger_match_mode: fullAgent.true_trigger_match_mode || 'word',
       entity_memory_path: fullAgent.entity_memory_path || null,
       config: fullAgent.config || {}
     }
