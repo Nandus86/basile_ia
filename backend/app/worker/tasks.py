@@ -2160,6 +2160,56 @@ async def process_message_task(
                             resolved = _resolve_template(to_template, context_data or {})
                             final_result = final_result.replace(from_word, resolved)
 
+                # Mandatory final collaborators: ALWAYS_ACTIVE_END
+                if agent_model and getattr(agent_model, "is_orchestrator", False) and getattr(agent_model, "collaboration_enabled", False):
+                    try:
+                        from app.orchestrator.agent_orchestrator import AgentOrchestrator
+                        from app.models.agent import CollaborationStatus
+
+                        orchestrator = AgentOrchestrator(db, monitor=monitor)
+                        agent_with_settings = await orchestrator.get_agent_with_collaborators(agent_model.id)
+                        always_end_collabs = []
+                        if agent_with_settings and agent_with_settings.collaborator_settings:
+                            for setting in agent_with_settings.collaborator_settings:
+                                if setting.status == CollaborationStatus.ALWAYS_ACTIVE_END:
+                                    always_end_collabs.append(setting.collaborator)
+
+                        if always_end_collabs:
+                            final_text_for_formatter = str(final_result) if not isinstance(final_result, str) else final_result
+                            for collab in always_end_collabs:
+                                orientation = (
+                                    "MANDATORY_ALWAYS_ACTIVE_END: você deve finalizar e formatar a resposta final ao usuário. "
+                                    "Use o conteúdo abaixo como base e entregue apenas a resposta final, pronta para o usuário.\n\n"
+                                    f"RESPOSTA_BASE_DO_ORQUESTRADOR:\n{final_text_for_formatter}"
+                                )
+                                collab_name, collab_response = await orchestrator._invoke_collaborator(
+                                    agent=collab,
+                                    message=final_text_for_formatter,
+                                    history=history or [],
+                                    context=rag_context or "",
+                                    context_data=context_data,
+                                    orientation=orientation,
+                                    primary_agent=agent_model,
+                                    monitor=monitor,
+                                    response_style=getattr(collab, "response_style", "structured"),
+                                )
+                                if collab_response and str(collab_response).strip():
+                                    final_text_for_formatter = str(collab_response).strip()
+                                    print(f"[Task] ✅ ALWAYS_ACTIVE_END aplicado por '{collab_name}'")
+
+                            if isinstance(final_result, dict):
+                                if "output" in final_result:
+                                    final_result["output"] = final_text_for_formatter
+                                elif "response" in final_result:
+                                    final_result["response"] = final_text_for_formatter
+                                else:
+                                    final_result = final_text_for_formatter
+                            else:
+                                final_result = final_text_for_formatter
+                            output_text = final_text_for_formatter
+                    except Exception as e:
+                        print(f"[Task] ⚠️ Error executing ALWAYS_ACTIVE_END collaborators: {e}")
+
                 if output_text.strip():
                     if stm_enabled:
                         await redis_client.add_message(
