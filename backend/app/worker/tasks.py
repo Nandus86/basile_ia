@@ -967,7 +967,14 @@ async def _build_collaborator_tools(
             if tool_names:
                 details.append(f"FERRAMENTAS: {', '.join(tool_names)}")
         
-        priority = "PRIORITÁRIO (RECOMENDADO)" if collab in enabled else "disponível (secundário)"
+        if collab in enabled:
+            priority = "PRIORITÁRIO (RECOMENDADO)"
+        elif collab in always_start:
+            priority = "OBRIGATÓRIO NO INÍCIO"
+        elif collab in always_end:
+            priority = "OBRIGATÓRIO NO FINAL"
+        else:
+            priority = "disponível (secundário)"
         
         # TRUE TRIGGER MATCHING (deterministic)
         true_agent_kws = getattr(collab, 'true_trigger_keywords', []) or []
