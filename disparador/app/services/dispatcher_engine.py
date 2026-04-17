@@ -133,7 +133,7 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
     if total == 0:
         return
         
-    await disparador_redis.init_campaign(service_id, total, str(config.id), config.path)
+    await disparador_redis.init_campaign(service_id, total, str(config.id), config.path, campaign_key=campaign_key)
     
     # 1. Dynamic Start Delay
     wait_time = config.start_delay_seconds

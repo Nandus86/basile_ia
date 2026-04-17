@@ -51,7 +51,20 @@ async def pause_campaign(service_id: str):
 @router.post("/campaigns/{service_id}/resume")
 async def resume_campaign(service_id: str):
     await disparador_redis.resume_campaign(service_id)
+
+    campaign = await disparador_redis.get_campaign(service_id)
+    if campaign:
+        campaign_key = campaign.get("campaign_key")
+        if campaign_key:
+            await disparador_redis.unlock_campaign(campaign_key)
+
     return {"message": "Resumed successfully"}
+
+
+@router.post("/campaigns/{service_id}/activate")
+async def activate_campaign(service_id: str):
+    """Alias for resume to support frontend action naming."""
+    return await resume_campaign(service_id)
 
 @router.post("/campaigns/unlock")
 async def unlock_campaign_lock(payload: CampaignLockRequest):

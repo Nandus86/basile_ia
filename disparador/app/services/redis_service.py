@@ -74,7 +74,7 @@ class DisparadorRedis:
         return chosen
 
     # -- Campaign Tracking --
-    async def init_campaign(self, service_id: str, total: int, config_id: str, config_path: str):
+    async def init_campaign(self, service_id: str, total: int, config_id: str, config_path: str, campaign_key: str = None):
         await self.ensure_connected()
         key = f"disp:campaign:{service_id}"
         # Only init if not exists to support resuming
@@ -88,6 +88,7 @@ class DisparadorRedis:
                 "percent": 0.0,
                 "config_id": config_id,
                 "config_path": config_path,
+                "campaign_key": campaign_key,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "completed_at": None
             }

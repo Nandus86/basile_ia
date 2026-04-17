@@ -11,6 +11,7 @@ Flow:
 import time
 import json
 import re
+import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
@@ -19,6 +20,7 @@ from app.redis_client import redis_client, get_redis
 from app.config import settings
 from app.worker.status_monitor import StatusMonitor
 
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────
 # Shared helpers
@@ -28,10 +30,11 @@ def _resolve_template(template: str, context_data: Dict[str, Any]) -> str:
     """Resolve template like {{ $request.ai_params.cell_name }} from context_data."""
     resolved = template
     for match in re.finditer(r'\{\{\s*\$request\.([^}]+)\s*\}\}', template):
-        path = match.group(1)
+        path = match.group(1).strip()
         value = context_data
         for key in path.split('.'):
-            value = value.get(key, "") if isinstance(value, dict) else ""
+            clean_key = key.strip()
+            value = value.get(clean_key, "") if isinstance(value, dict) else ""
         resolved = resolved.replace(match.group(0), str(value))
     return resolved
 
@@ -56,22 +59,47 @@ def _apply_response_variables(text: str, response_vars: List[Dict[str, Any]], co
         return text
 
     updated = text
-    for var in response_vars:
-        from_values = [str(v) for v in _ensure_list(var.get("from")) if str(v)]
-        to_values = _ensure_list(var.get("to"))
-        resolved_targets = [
-            _resolve_template(str(v), context_data or {})
-            for v in to_values
-            if str(v)
-        ]
-        replacement = resolved_targets[0] if resolved_targets else ""
+    total_replacements = 0
 
-        if not from_values or not replacement:
+    for idx, var in enumerate(response_vars):
+        from_values = [str(v).strip() for v in _ensure_list(var.get("from")) if str(v).strip()]
+        to_values = [str(v) for v in _ensure_list(var.get("to")) if str(v)]
+        resolved_targets = [
+            _resolve_template(v, context_data or {})
+            for v in to_values
+        ]
+        replacement = resolved_targets[0].strip() if resolved_targets else ""
+
+        if not from_values:
+            logger.info("[response_variables] rule=%s skipped: empty 'from'", idx)
             continue
 
-        for from_word in from_values:
-            updated = updated.replace(from_word, replacement)
+        if not replacement:
+            logger.info(
+                "[response_variables] rule=%s skipped: empty replacement after template resolve. to=%s context_keys=%s",
+                idx,
+                to_values,
+                list((context_data or {}).keys()),
+            )
+            continue
 
+        rule_count = 0
+        for from_word in from_values:
+            hits = updated.count(from_word)
+            if hits:
+                updated = updated.replace(from_word, replacement)
+                rule_count += hits
+
+        total_replacements += rule_count
+        logger.info(
+            "[response_variables] rule=%s from=%s replacement=%r hits=%s",
+            idx,
+            from_values,
+            replacement,
+            rule_count,
+        )
+
+    logger.info("[response_variables] total_hits=%s", total_replacements)
     return updated
 
 

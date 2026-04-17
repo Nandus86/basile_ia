@@ -613,7 +613,10 @@ const dispAction = async (action) => {
     if (!dispSelected.value) return
     dispActionLoading.value = true
     try {
-        await axiosInstance.post(`/disparador/campaigns/${dispSelected.value.service_id}/${action}`)
+        const endpoint = action === 'resume'
+          ? `/disparador/dashboard/campaigns/${dispSelected.value.service_id}/${action}`
+          : `/disparador/campaigns/${dispSelected.value.service_id}/${action}`
+        await axiosInstance.post(endpoint)
         if (action === 'retry-dlq') {
             dispReport.value.dlq_count = 0
             snackbar.value = { show: true, text: 'Contatos falhados reenfileirados.', color: 'success' }
