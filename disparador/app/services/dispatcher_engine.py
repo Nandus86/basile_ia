@@ -74,7 +74,7 @@ async def send_progress(url: str, service_id: str, total: int, sent: int, failed
     except Exception as e:
         logger.warning(f"Failed to send progress callback to {url}: {e}")
 
-async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, service_id: str, context_data: dict, transition_data: dict, callback_url: str, batch_position: int, batch_total: int):
+async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, service_id: str, context_data: dict, transition_data: dict, callback_url: str, batch_position: int, batch_total: int, message_text: str = None, source_payload: dict = None):
     # Rate Limit
     is_allowed = await disparador_redis.check_rate_limit(contact["number"])
     if not is_allowed:
@@ -87,8 +87,25 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     index = await disparador_redis.get_next_index(str(config.id), service_id, config.index_max)
     
     # ProcessRequest Payload
-    agent_payload = {
-        "message": "DISPARADOR_START", # Placeholder ou pode ser configurável
+    source_payload = source_payload or {}
+    message_value = message_text or source_payload.get("message") or "DISPARADOR_START"
+
+    passthrough_payload = {
+        k: v
+        for k, v in source_payload.items()
+        if k not in {
+            "contacts",
+            "contact",
+            "run_id",
+            "campaign_key",
+            "dispatch_flags",
+            "config_path",
+            "timestamp_create",
+        }
+    }
+
+    passthrough_payload.update({
+        "message": message_value,
         "session_id": f"{contact['number']}_{service_id}",
         "agent_id": str(config.agent_id) if config.agent_id else None,
         "callback_url": callback_url,
@@ -102,7 +119,9 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
             "dispatcher_image_enabled": config.image_enabled,
         },
         "transition_data": transition_data,
-    }
+    })
+
+    agent_payload = passthrough_payload
     
     target_url = getattr(config, 'target_endpoint', None)
     
@@ -128,7 +147,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     lb_delay = random.uniform(0.5, 1.2)
     await asyncio.sleep(lb_delay)
 
-async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, run_id: str, campaign_key: str, timestamp_create: str = None):
+async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, run_id: str, campaign_key: str, message_text: str = None, source_payload: dict = None, timestamp_create: str = None):
     total = len(contacts)
     if total == 0:
         return
@@ -193,7 +212,20 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                 await disparador_redis.delete_run_status(run_id)
                 break
 
-            await dispatch_contact(config, type_id, queue_id, contact, service_id, context_data, transition_data, callback_url, i, total)
+            await dispatch_contact(
+                config,
+                type_id,
+                queue_id,
+                contact,
+                service_id,
+                context_data,
+                transition_data,
+                callback_url,
+                i,
+                total,
+                message_text=message_text,
+                source_payload=source_payload,
+            )
 
             # Progress callback ~10%
             if config.progress_callback_url:

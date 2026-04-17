@@ -27,6 +27,7 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
             context_data = payload.get("context_data")
             transition_data = payload.get("transition_data")
             timestamp_create = payload.get("timestamp_create")
+            message_text = payload.get("message")
             campaign_key = payload.get("campaign_key") or f"{type_id}:{queue_id}:{service_id}"
             run_id = payload.get("run_id")
             if not run_id:
@@ -77,6 +78,8 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     callback_url,
                     run_id,
                     campaign_key,
+                    message_text=message_text,
+                    source_payload=payload,
                     timestamp_create=timestamp_create,
                 )
             except asyncio.CancelledError:

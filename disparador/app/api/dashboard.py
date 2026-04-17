@@ -107,9 +107,11 @@ async def retry_dlq(service_id: str):
             "queue_id": "dlq_retry",
             "service_id": service_id,
             "contacts": [contact],
+            "message": "DISPARADOR_START",
             "callback_url": "",
             "context_data": {},
             "transition_data": {},
+            "system": {"apikey": None},
             "dispatch_flags": {"lock_bypass": True},
             "timestamp_create": "",
             "config_path": campaign.get("config_path")

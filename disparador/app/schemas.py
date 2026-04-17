@@ -14,12 +14,13 @@ class DispatchPayload(BaseModel):
     queue_id: str
     service_id: str
     contacts: List[ContactItem]
+    message: str
     timestamp_create: str
     callback_url: str
     context_data: Optional[Dict[str, Any]] = None
     transition_data: Optional[Dict[str, Any]] = None
-    system: Optional[SystemInfo] = None
-    
+    system: SystemInfo
+
     model_config = {"extra": "allow"}
 
 class DispatchAcceptedResponse(BaseModel):
