@@ -157,58 +157,62 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
             raise
 
     await disparador_redis.set_run_status(run_id, "sending")
-        
-    for i, contact in enumerate(contacts):
-        # 3. Check for cancellation/interruption mid-batch (optional but good)
-        # In this specific requirement, if it's already "sending", new ones are ignored.
-        # But if the user manually pauses/stops, we check that too.
-        
-        # Pause Check
-        while await disparador_redis.is_paused(service_id):
-            logger.info(f"Campaign {service_id} is paused. Waiting 5s...")
-            await asyncio.sleep(5.0)
-            
-        # Window Check
-        if not is_within_time_window(config, transition_data):
-            logger.info(f"Campaign {service_id} out of time window. Requeuing remaining {len(contacts)-i} contacts.")
-            # Re-queue others
-            for c in contacts[i:]:
-                requeue_payload = {
-                    "type_id": type_id,
-                    "queue_id": queue_id,
-                    "service_id": service_id,
-                    "contact": c,
-                    "context_data": context_data,
-                    "transition_data": transition_data,
-                    "callback_url": callback_url,
-                    "campaign_key": campaign_key,
-                    "run_id": run_id,
-                    "dispatch_flags": {"lock_bypass": True},
-                    "timestamp_create": timestamp_create or datetime.now(ZoneInfo("UTC")).isoformat()
-                }
-                # Publish individual missing messages
-                await disparador_rmq.publish_contact(type_id, queue_id, requeue_payload)
-            
-            await disparador_redis.delete_run_status(run_id)
-            break
-            
-        await dispatch_contact(config, type_id, queue_id, contact, service_id, context_data, transition_data, callback_url, i, total)
-        
-        # Progress callback ~10%
-        if config.progress_callback_url:
-            sent = await disparador_redis.get_sent_count(service_id)
-            if sent % max(1, total // 10) == 0:
-                # We need failed count too.
-                campaign = await disparador_redis.get_campaign(service_id)
-                failed = campaign.get("failed", 0) if campaign else 0
-                await send_progress(config.progress_callback_url, service_id, total, sent, failed)
-                
-    await disparador_redis.set_run_status(run_id, "completed")
-    await disparador_redis.set_last_run(campaign_key, run_id)
-    campaign = await disparador_redis.get_campaign(service_id)
-    if campaign:
-        if campaign.get("sent", 0) + campaign.get("failed", 0) >= campaign.get("total", 0):
-            await disparador_redis.complete_campaign(service_id)
+
+    try:
+        for i, contact in enumerate(contacts):
+            # 3. Check for cancellation/interruption mid-batch (optional but good)
+            # In this specific requirement, if it's already "sending", new ones are ignored.
+            # But if the user manually pauses/stops, we check that too.
+
+            # Pause Check
+            while await disparador_redis.is_paused(service_id):
+                logger.info(f"Campaign {service_id} is paused. Waiting 5s...")
+                await asyncio.sleep(5.0)
+
+            # Window Check
+            if not is_within_time_window(config, transition_data):
+                logger.info(f"Campaign {service_id} out of time window. Requeuing remaining {len(contacts)-i} contacts.")
+                # Re-queue others
+                for c in contacts[i:]:
+                    requeue_payload = {
+                        "type_id": type_id,
+                        "queue_id": queue_id,
+                        "service_id": service_id,
+                        "contact": c,
+                        "context_data": context_data,
+                        "transition_data": transition_data,
+                        "callback_url": callback_url,
+                        "campaign_key": campaign_key,
+                        "run_id": run_id,
+                        "dispatch_flags": {"lock_bypass": True},
+                        "timestamp_create": timestamp_create or datetime.now(ZoneInfo("UTC")).isoformat()
+                    }
+                    # Publish individual missing messages
+                    await disparador_rmq.publish_contact(type_id, queue_id, requeue_payload)
+
+                await disparador_redis.delete_run_status(run_id)
+                break
+
+            await dispatch_contact(config, type_id, queue_id, contact, service_id, context_data, transition_data, callback_url, i, total)
+
+            # Progress callback ~10%
             if config.progress_callback_url:
-                await send_progress(config.progress_callback_url, service_id, campaign["total"], campaign["sent"], campaign["failed"], status="completed")
+                sent = await disparador_redis.get_sent_count(service_id)
+                if sent % max(1, total // 10) == 0:
+                    # We need failed count too.
+                    campaign = await disparador_redis.get_campaign(service_id)
+                    failed = campaign.get("failed", 0) if campaign else 0
+                    await send_progress(config.progress_callback_url, service_id, total, sent, failed)
+
+        await disparador_redis.set_run_status(run_id, "completed")
+        await disparador_redis.set_last_run(campaign_key, run_id)
+        campaign = await disparador_redis.get_campaign(service_id)
+        if campaign:
+            if campaign.get("sent", 0) + campaign.get("failed", 0) >= campaign.get("total", 0):
+                await disparador_redis.complete_campaign(service_id)
+                if config.progress_callback_url:
+                    await send_progress(config.progress_callback_url, service_id, campaign["total"], campaign["sent"], campaign["failed"], status="completed")
+    finally:
+        # Ensure lock is released even on errors/cancellations.
+        await disparador_redis.unlock_campaign(campaign_key)
 

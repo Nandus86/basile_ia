@@ -3,6 +3,7 @@ from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import uuid
+import logging
 
 from app.database import get_db
 from app.models.dispatcher_config import DispatcherConfig
@@ -11,6 +12,7 @@ from app.services.rabbitmq_service import disparador_rmq
 from app.services.redis_service import disparador_redis
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 @router.post("/trigger/personalizado/{path:path}", response_model=DispatchAcceptedResponse)
 async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession = Depends(get_db)):
@@ -33,7 +35,22 @@ async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession
     lock_bypass = bool(dispatch_flags.get("lock_bypass", False))
 
     if not lock_bypass and await disparador_redis.is_campaign_locked(campaign_key):
-        raise HTTPException(status_code=409, detail="Campaign is locked for re-dispatch")
+        run_status = None
+        last_run = await disparador_redis.get_last_run(campaign_key)
+        if last_run:
+            run_status = await disparador_redis.get_run_status(last_run)
+
+        # Auto-heal stale lock when there is no active run.
+        if run_status not in ("waiting", "sending"):
+            logger.warning(
+                "Auto-unlocking stale campaign lock for %s (last_run=%s, run_status=%s)",
+                campaign_key,
+                last_run,
+                run_status,
+            )
+            await disparador_redis.unlock_campaign(campaign_key)
+        else:
+            raise HTTPException(status_code=409, detail="Campaign is locked for re-dispatch")
 
     run_id = uuid.uuid4().hex
     batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
