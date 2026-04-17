@@ -135,12 +135,25 @@ class DisparadorRedis:
         await self.ensure_connected()
         campaigns = []
         async for key in self.client.scan_iter("disp:campaign:*"):
+            # Keep only campaign payload keys: disp:campaign:{service_id}
+            key_parts = key.split(":")
+            if len(key_parts) != 3:
+                continue
+
             data = await self.client.get(key)
-            if data:
+            if not data:
+                continue
+
+            try:
                 c = json.loads(data)
-                c["service_id"] = key.split(":")[-1]
-                if not status or c.get("status") == status:
-                    campaigns.append(c)
+            except json.JSONDecodeError:
+                logger.warning("Skipping non-JSON campaign key '%s'", key)
+                continue
+
+            c["service_id"] = key_parts[-1]
+            if not status or c.get("status") == status:
+                campaigns.append(c)
+
         return sorted(campaigns, key=lambda x: x.get("started_at", ""), reverse=True)
 
     # -- Pause --

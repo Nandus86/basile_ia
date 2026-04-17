@@ -36,9 +36,9 @@ async def get_tracking_logs(
     member_name: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get paginated list of system webhook/job logs"""
+    """Get paginated list of system webhook/job logs (lightweight list view)."""
     query = select(JobLog)
-    
+
     if status:
         query = query.where(JobLog.status == status)
     if path:
@@ -49,43 +49,68 @@ async def get_tracking_logs(
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"church_name\":%{church_name}%"))
     if member_name:
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"))
-        
-    # Count total
+
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
     total = total_result.scalar_one()
 
-    # Get items
     query = query.order_by(desc(JobLog.created_at)).offset(skip).limit(limit)
     result = await db.execute(query)
     logs = result.scalars().all()
-    
-    # Extract fields from request_data for each log
+
     items = []
     for log in logs:
         item = JobLogSchema.model_validate(log)
         request_data = log.request_data
-        if request_data:
-            try:
-                if isinstance(request_data, str):
-                    request_data = json.loads(request_data)
-                if isinstance(request_data, dict):
-                    if not item.session_id:
-                        item.session_id = request_data.get("session_id")
-                    church = request_data.get("church") or {}
-                    member = request_data.get("member") or {}
-                    item.church_name = church.get("church_name")
-                    item.member_fullname = member.get("fullname")
-            except Exception:
-                pass
+        if isinstance(request_data, dict):
+            if not item.session_id:
+                item.session_id = request_data.get("session_id")
+            church = request_data.get("church") or {}
+            member = request_data.get("member") or {}
+            item.church_name = church.get("church_name")
+            item.member_fullname = member.get("fullname")
+
+        # Keep list payload small for stable pagination with high limits.
+        item.request_data = None
+        item.response_data = None
+
         items.append(item)
-    
+
     return {
         "items": items,
         "total": total,
         "skip": skip,
         "limit": limit
     }
+
+
+@router.get("/jobs/{job_id}")
+async def get_job_details(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Get complete job payload/details for modal inspection."""
+    query = select(JobLog).where(JobLog.job_id == job_id)
+    result = await db.execute(query)
+    job_log = result.scalar_one_or_none()
+
+    if not job_log:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    item = JobLogSchema.model_validate(job_log)
+    request_data = job_log.request_data
+    if isinstance(request_data, str):
+        try:
+            request_data = json.loads(request_data)
+        except json.JSONDecodeError:
+            request_data = None
+
+    if isinstance(request_data, dict):
+        if not item.session_id:
+            item.session_id = request_data.get("session_id")
+        church = request_data.get("church") or {}
+        member = request_data.get("member") or {}
+        item.church_name = church.get("church_name")
+        item.member_fullname = member.get("fullname")
+
+    return item
 
 @router.get("/stats")
 async def get_tracking_stats(db: AsyncSession = Depends(get_db)):

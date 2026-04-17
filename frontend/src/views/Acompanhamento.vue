@@ -906,12 +906,21 @@ const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => {
   itemsPerPage.value = nextItemsPerPage
   if (shouldFetch) fetchLogs()
 }
-const openJobDetails = (job) => { 
-  selectedJob.value = job; 
+const openJobDetails = async (job) => {
   testResult.value = null;
   showHumanInput.value = false;
   humanText.value = '';
-  dialog.value = true 
+
+  try {
+    const { data } = await axiosInstance.get(`/tracking/jobs/${job.job_id}`)
+    selectedJob.value = data
+  } catch (error) {
+    console.error('Erro ao carregar detalhes do job:', error)
+    selectedJob.value = job
+    showSnackbar('Falha ao carregar detalhes completos do job', 'error')
+  }
+
+  dialog.value = true
 }
 
 // ── STM/MTM from Job ──

@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import random
+import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import httpx
@@ -15,6 +16,27 @@ logger = logging.getLogger(__name__)
 def parse_time(time_str: str):
     """Parse HH:mm to time object"""
     return datetime.strptime(time_str, "%H:%M").time()
+
+def parse_timestamp_create(value: str) -> datetime:
+    """Parse timestamp_create accepting ISO and JS Date.toString formats."""
+    text = (value or "").strip()
+    if not text:
+        raise ValueError("Empty timestamp_create")
+
+    iso_candidate = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(iso_candidate)
+    except ValueError:
+        cleaned = re.sub(r"\s*\([^)]*\)", "", text).strip()
+        if " GMT" in cleaned:
+            cleaned = cleaned.split(" GMT", 1)[0].strip()
+        parsed = datetime.strptime(cleaned, "%a %b %d %Y %H:%M:%S")
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    return parsed.astimezone(timezone.utc)
 
 def is_within_time_window(config, transition_data: dict) -> bool:
     tz_name = (transition_data or {}).get("timezone", "UTC")
@@ -117,11 +139,7 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
     wait_time = config.start_delay_seconds
     if timestamp_create and config.start_delay_seconds > 0:
         try:
-            # Assumes ISO format from worker/consumer or previous re-queue
-            created_at = datetime.fromisoformat(timestamp_create.replace("Z", "+00:00"))
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
-            
+            created_at = parse_timestamp_create(timestamp_create)
             now = datetime.now(timezone.utc)
             elapsed = (now - created_at).total_seconds()
             wait_time = max(0, config.start_delay_seconds - elapsed)
