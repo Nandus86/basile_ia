@@ -38,6 +38,20 @@ def parse_timestamp_create(value: str) -> datetime:
 
     return parsed.astimezone(timezone.utc)
 
+def _build_transition_data(base_transition: dict = None, source_payload: dict = None, context_data: dict = None) -> dict:
+    """Build transition_data preserving dynamic schema fields and enriching safely."""
+    source_payload = source_payload or {}
+    built = dict(base_transition or {})
+
+    if "global" in source_payload and "global" not in built:
+        built["global"] = source_payload.get("global")
+
+    if isinstance(context_data, dict) and context_data and "context_data" not in built:
+        built["context_data"] = dict(context_data)
+
+    return built or None
+
+
 def is_within_time_window(config, transition_data: dict) -> bool:
     tz_name = (transition_data or {}).get("timezone", "UTC")
     try:
@@ -89,6 +103,20 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     # ProcessRequest Payload
     source_payload = source_payload or {}
     message_value = message_text or source_payload.get("message") or "DISPARADOR_START"
+    enriched_context = {
+        **(context_data or {}),
+        "contact_name": contact["name"],
+        "contact_phone": contact["number"],
+        "dispatcher_index": index,
+        "dispatcher_triggers": config.triggers,
+        "dispatcher_buttons": config.buttons if config.buttons_enabled else [],
+        "dispatcher_image_enabled": config.image_enabled,
+    }
+    effective_transition_data = _build_transition_data(
+        base_transition=transition_data,
+        source_payload=source_payload,
+        context_data=enriched_context,
+    )
 
     passthrough_payload = {
         k: v
@@ -109,16 +137,8 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "session_id": f"{contact['number']}_{service_id}",
         "agent_id": str(config.agent_id) if config.agent_id else None,
         "callback_url": callback_url,
-        "context_data": {
-            **(context_data or {}),
-            "contact_name": contact["name"],
-            "contact_phone": contact["number"],
-            "dispatcher_index": index,
-            "dispatcher_triggers": config.triggers,
-            "dispatcher_buttons": config.buttons if config.buttons_enabled else [],
-            "dispatcher_image_enabled": config.image_enabled,
-        },
-        "transition_data": transition_data,
+        "context_data": enriched_context,
+        "transition_data": effective_transition_data,
     })
 
     agent_payload = passthrough_payload

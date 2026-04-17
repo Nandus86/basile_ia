@@ -103,6 +103,17 @@ def _apply_response_variables(text: str, response_vars: List[Dict[str, Any]], co
     return updated
 
 
+def _merge_transition_data(
+    transition_data: Optional[Dict[str, Any]] = None,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return transition_data enriched non-destructively with context_data."""
+    merged = dict(transition_data or {})
+    if isinstance(context_data, dict) and context_data and "context_data" not in merged:
+        merged["context_data"] = dict(context_data)
+    return merged or None
+
+
 def _resolve_tz_name(transition_data: Optional[Dict[str, Any]] = None) -> str:
     """Extract IANA timezone name from transition_data payload.
     Falls back to 'America/Sao_Paulo' if not found."""
@@ -1794,8 +1805,9 @@ async def process_message_task(
                     "processing_time_ms": processing_time,
                     "last_agent": last_agent,
                 }
-                if transition_data:
-                    response_data["transition_data"] = transition_data
+                response_transition_data = _merge_transition_data(transition_data, context_data)
+                if response_transition_data:
+                    response_data["transition_data"] = response_transition_data
                 if callback_url:
                     await _send_callback(callback_url, response_data)
                 return response_data
@@ -2273,8 +2285,9 @@ async def process_message_task(
                     
                 break  # Sai do loop while
 
-            if transition_data:
-                response_data["transition_data"] = transition_data
+            response_transition_data = _merge_transition_data(transition_data, context_data)
+            if response_transition_data:
+                response_data["transition_data"] = response_transition_data
             if callback_url:
                 await _send_callback(callback_url, response_data)
 
