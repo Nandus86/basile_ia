@@ -36,6 +36,45 @@ def _resolve_template(template: str, context_data: Dict[str, Any]) -> str:
     return resolved
 
 
+def _ensure_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _apply_response_variables(text: str, response_vars: List[Dict[str, Any]], context_data: Optional[Dict[str, Any]]) -> str:
+    """Apply response_variables with support for scalar/list in from/to.
+
+    Examples:
+      {"from": "old", "to": "new"}
+      {"from": ["old1", "old2"], "to": "new"}
+      {"from": ["old1", "old2"], "to": ["new1", "new2"]}
+    """
+    if not response_vars or not isinstance(text, str):
+        return text
+
+    updated = text
+    for var in response_vars:
+        from_values = [str(v) for v in _ensure_list(var.get("from")) if str(v)]
+        to_values = _ensure_list(var.get("to"))
+        resolved_targets = [
+            _resolve_template(str(v), context_data or {})
+            for v in to_values
+            if str(v)
+        ]
+        replacement = resolved_targets[0] if resolved_targets else ""
+
+        if not from_values or not replacement:
+            continue
+
+        for from_word in from_values:
+            updated = updated.replace(from_word, replacement)
+
+    return updated
+
+
 def _resolve_tz_name(transition_data: Optional[Dict[str, Any]] = None) -> str:
     """Extract IANA timezone name from transition_data payload.
     Falls back to 'America/Sao_Paulo' if not found."""
@@ -1707,12 +1746,7 @@ async def process_message_task(
                 # Process response_variables - substituição de palavras na resposta
                 response_vars = agent_config.get("config", {}).get("response_variables", [])
                 if response_vars and isinstance(final_result, str):
-                    for var in response_vars:
-                        from_word = var.get("from", "")
-                        to_template = var.get("to", "")
-                        if from_word and to_template:
-                            resolved = _resolve_template(to_template, context_data or {})
-                            final_result = final_result.replace(from_word, resolved)
+                    final_result = _apply_response_variables(final_result, response_vars, context_data)
 
                 if str(final_result).strip():
                     await redis_client.add_message(
@@ -2183,12 +2217,7 @@ async def process_message_task(
                 # Process response_variables - substituição de palavras na resposta
                 response_vars = agent_config.get("config", {}).get("response_variables", [])
                 if response_vars and isinstance(final_result, str):
-                    for var in response_vars:
-                        from_word = var.get("from", "")
-                        to_template = var.get("to", "")
-                        if from_word and to_template:
-                            resolved = _resolve_template(to_template, context_data or {})
-                            final_result = final_result.replace(from_word, resolved)
+                    final_result = _apply_response_variables(final_result, response_vars, context_data)
 
                 if output_text.strip():
                     if stm_enabled:

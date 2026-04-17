@@ -537,7 +537,7 @@
              </v-card-text>
              <v-card-actions class="pa-4 border-t">
                 <v-btn v-if="dispSelected.status === 'running'" color="warning" prepend-icon="mdi-pause" variant="flat" @click="dispAction('pause')" :loading="dispActionLoading">Pausar</v-btn>
-                <v-btn v-if="dispSelected.status === 'paused'" color="success" prepend-icon="mdi-play" variant="flat" @click="dispAction('resume')" :loading="dispActionLoading">Retomar</v-btn>
+                <v-btn color="success" prepend-icon="mdi-play" variant="flat" @click="dispAction('resume')" :loading="dispActionLoading">Ativar / Retomar</v-btn>
                 <v-btn v-if="dispReport && dispReport.dlq_count > 0" color="error" prepend-icon="mdi-refresh" variant="flat" @click="dispAction('retry-dlq')" :loading="dispActionLoading">Reprocessar DLQ</v-btn>
                 <v-spacer></v-spacer>
                 <v-btn variant="text" @click="dispDialog = false">Fechar</v-btn>

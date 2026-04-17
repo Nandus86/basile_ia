@@ -627,7 +627,7 @@
                       <template v-slot:prepend>
                         <v-icon>mdi-information</v-icon>
                       </template>
-                      Configure opções avançadas em JSON. Exemplo: <code>{"response_variables": [{"from": "célula", "to": "{{ $request.ai_params.cell_name }}"}]}</code>
+                      Configure opções avançadas em JSON. Exemplo: <code>{"response_variables": [{"from": ["célula", "celula"], "to": ["{{ $request.ai_params.cell_name }}", "{{ $request.ai_params.church_name }}"]}]}</code>
                     </v-alert>
                     <v-textarea
                       v-model="formDataConfigJson"
