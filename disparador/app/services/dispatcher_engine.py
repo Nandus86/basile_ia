@@ -134,7 +134,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
 
     passthrough_payload.update({
         "message": message_value,
-        "session_id": f"{contact['number']}_{service_id}",
+        "session_id": f"{queue_id}{contact['number']}",
         "agent_id": str(config.agent_id) if config.agent_id else None,
         "callback_url": callback_url,
         "context_data": enriched_context,
