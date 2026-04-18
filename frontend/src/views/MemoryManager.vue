@@ -27,7 +27,8 @@
             </div>
           </div>
           <div class="z-1">
-            <h3 class="text-h4 font-weight-bold text-white mb-0" style="line-height: 1; font-variant-numeric: tabular-nums;">{{ vectorMemories.length }}</h3>
+            <h3 class="text-h4 font-weight-bold text-white mb-0" style="line-height: 1; font-variant-numeric: tabular-nums;">{{ totalVectorMemories }}</h3>
+            <span v-if="totalVectorMemories > vectorMemories.length" class="text-caption" style="opacity: 0.5">exibindo {{ vectorMemories.length }}</span>
           </div>
         </v-card>
       </v-col>
@@ -41,7 +42,8 @@
             </div>
           </div>
           <div class="z-1">
-            <h3 class="text-h4 font-weight-bold text-white mb-0" style="line-height: 1; font-variant-numeric: tabular-nums;">{{ mtmSessions.length }}</h3>
+            <h3 class="text-h4 font-weight-bold text-white mb-0" style="line-height: 1; font-variant-numeric: tabular-nums;">{{ totalMtmSessions }}</h3>
+            <span v-if="totalMtmSessions > mtmSessions.length" class="text-caption" style="opacity: 0.5">exibindo {{ mtmSessions.length }}</span>
           </div>
         </v-card>
       </v-col>
@@ -578,6 +580,11 @@ const vectorMemories = ref([])
 const agentSelfMemories = ref([])
 const vectorCollections = ref([])
 
+// Real totals from API (not limited by fetch limit)
+const totalVectorMemories = ref(0)
+const totalAgentMemories = ref(0)
+const totalMtmSessions = ref(0)
+
 const vectorSubType = ref('contacts')
 const vectorTypeFilter = ref('all')
 const memoryTypeOptions = [
@@ -792,8 +799,9 @@ async function fetchJobKeys() {
 async function fetchVectorMemories() {
   loadingVector.value = true
   try {
-    const res = await axios.get('/memory/vector/memories', { params: { limit: 200 } })
+    const res = await axios.get('/memory/vector/memories', { params: { limit: 500 } })
     vectorMemories.value = res.data.memories || []
+    totalVectorMemories.value = res.data.total ?? res.data.count ?? vectorMemories.value.length
   } catch (e) {
     showSnack('Erro ao buscar memórias vetoriais', 'error')
   } finally {
@@ -804,8 +812,9 @@ async function fetchVectorMemories() {
 async function fetchAgentSelfMemories() {
   loadingVector.value = true
   try {
-    const res = await axios.get('/memory/vector/agent-memories', { params: { limit: 200 } })
+    const res = await axios.get('/memory/vector/agent-memories', { params: { limit: 500 } })
     agentSelfMemories.value = res.data.memories || []
+    totalAgentMemories.value = res.data.total ?? res.data.count ?? agentSelfMemories.value.length
   } catch (e) {
     showSnack('Erro ao buscar memórias de auto-aprendizado', 'error')
   } finally {
@@ -831,8 +840,9 @@ async function fetchVectorCollections() {
 async function fetchMtmSessions() {
   loadingMtm.value = true
   try {
-    const res = await axios.get('/memory/mtm/sessions', { params: { limit: 500 } })
+    const res = await axios.get('/memory/mtm/sessions', { params: { limit: 1000 } })
     mtmSessions.value = res.data.sessions || []
+    totalMtmSessions.value = res.data.total ?? res.data.count ?? mtmSessions.value.length
   } catch (e) {
     showSnack('Erro ao buscar sessões MTM', 'error')
   } finally {

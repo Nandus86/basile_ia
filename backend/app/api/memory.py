@@ -319,7 +319,7 @@ async def list_vector_collections():
 async def list_vector_memories(
     agent_id: Optional[str] = None,
     contact_id: Optional[str] = None,
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, le=500),
 ):
     """List vector memories from ContactMemory collection with optional filters"""
     import asyncio
@@ -330,7 +330,7 @@ async def list_vector_memories(
             collection_name = "ContactMemory"
             
             if collection_name not in client.collections.list_all():
-                return []
+                return [], 0
             
             collection = client.collections.get(collection_name)
             
@@ -344,6 +344,14 @@ async def list_vector_memories(
                 filters = wv.classes.query.Filter.by_property("agent_id").equal(agent_id)
             elif contact_id:
                 filters = wv.classes.query.Filter.by_property("contact_id").equal(contact_id)
+            
+            # Get real total count via aggregate
+            total = 0
+            try:
+                agg = collection.aggregate.over_all(total_count=True, filters=filters)
+                total = agg.total_count if agg.total_count is not None else 0
+            except Exception:
+                pass
             
             results = collection.query.fetch_objects(
                 limit=limit,
@@ -363,10 +371,10 @@ async def list_vector_memories(
                     "metadata": props.get("metadata", "{}"),
                     "created_at": str(props.get("created_at", "")),
                 })
-            return memories
+            return memories, total
         
-        memories = await asyncio.to_thread(_sync_list)
-        return {"memories": memories, "count": len(memories)}
+        memories, total = await asyncio.to_thread(_sync_list)
+        return {"memories": memories, "count": len(memories), "total": total}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -375,7 +383,7 @@ async def list_vector_memories(
 async def list_agent_self_memories(
     agent_id: Optional[str] = None,
     memory_type: Optional[str] = None,
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, le=500),
 ):
     """List agent-level self-correction memories from AgentSelfMemory collection"""
     import asyncio
@@ -386,7 +394,7 @@ async def list_agent_self_memories(
             collection_name = "AgentSelfMemory"
             
             if collection_name not in client.collections.list_all():
-                return []
+                return [], 0
             
             collection = client.collections.get(collection_name)
             
@@ -400,6 +408,14 @@ async def list_agent_self_memories(
                 filters = wv.classes.query.Filter.by_property("agent_id").equal(agent_id)
             elif memory_type:
                 filters = wv.classes.query.Filter.by_property("memory_type").equal(memory_type)
+            
+            # Get real total count via aggregate
+            total = 0
+            try:
+                agg = collection.aggregate.over_all(total_count=True, filters=filters)
+                total = agg.total_count if agg.total_count is not None else 0
+            except Exception:
+                pass
             
             results = collection.query.fetch_objects(
                 limit=limit,
@@ -418,10 +434,10 @@ async def list_agent_self_memories(
                     "metadata": props.get("metadata", "{}"),
                     "created_at": str(props.get("created_at", "")),
                 })
-            return memories
+            return memories, total
         
-        memories = await asyncio.to_thread(_sync_list_agent)
-        return {"memories": memories, "count": len(memories)}
+        memories, total = await asyncio.to_thread(_sync_list_agent)
+        return {"memories": memories, "count": len(memories), "total": total}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -517,7 +533,7 @@ async def delete_all_memories_for_contact(contact_id: str, agent_id: Optional[st
 @router.get("/mtm/sessions")
 async def list_mtm_sessions(
     agent_id: Optional[str] = None,
-    limit: int = Query(100, le=500),
+    limit: int = Query(100, le=1000),
 ):
     """List all MTM sessions with message counts and last interaction"""
     from app.database import AsyncSessionLocal
@@ -526,6 +542,22 @@ async def list_mtm_sessions(
     import uuid
 
     async with AsyncSessionLocal() as db:
+        # Base filter
+        base_filter = []
+        if agent_id:
+            base_filter.append(ConversationMessage.agent_id == uuid.UUID(agent_id))
+
+        # Real total count of distinct sessions
+        count_q = (
+            select(func.count(func.distinct(
+                func.concat(ConversationMessage.agent_id, ':', ConversationMessage.session_id)
+            )))
+        )
+        for f in base_filter:
+            count_q = count_q.where(f)
+        total_result = await db.execute(count_q)
+        total = total_result.scalar_one() or 0
+
         q = (
             select(
                 ConversationMessage.agent_id,
@@ -539,8 +571,8 @@ async def list_mtm_sessions(
             .limit(limit)
         )
 
-        if agent_id:
-            q = q.where(ConversationMessage.agent_id == uuid.UUID(agent_id))
+        for f in base_filter:
+            q = q.where(f)
 
         result = await db.execute(q)
         rows = result.all()
@@ -555,7 +587,7 @@ async def list_mtm_sessions(
                 "first_interaction": row.first_interaction.isoformat() if row.first_interaction else None,
             })
 
-        return {"sessions": sessions, "count": len(sessions)}
+        return {"sessions": sessions, "count": len(sessions), "total": total}
 
 
 @router.get("/mtm/sessions/{session_id}")
