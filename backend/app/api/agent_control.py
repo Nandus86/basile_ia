@@ -103,3 +103,20 @@ async def activate_agent(request: ActiveAgentRequest):
         "session_id": request.session_id,
         "was_paused": is_paused,
     }
+
+
+@router.get("/status/{session_id}")
+async def get_agent_status(session_id: str):
+    """
+    Check if the agent is active or paused for a specific session_id.
+    """
+    try:
+        is_paused = await redis_client.is_agent_paused(session_id)
+        return {
+            "session_id": session_id,
+            "active": not is_paused,
+            "paused": is_paused
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get agent status: {str(e)}")
+
