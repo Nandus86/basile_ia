@@ -9,14 +9,14 @@ from typing import Optional, List
 from uuid import UUID
 
 from app.database import get_db
-from app.models.agent import Agent, AgentCollaborator, CollaborationStatus, AccessLevel, agent_thinker_links
+from app.models.agent import Agent, AgentCollaborator, CollaborationStatus, AccessLevel, ExecutionMode, agent_thinker_links
 from app.models.mcp import MCP
 from app.models.mcp_group import MCPGroup
 from app.models.skill import Skill
 from app.models.information_base import InformationBase
 from app.schemas.agent import (
     AgentCreate, AgentUpdate, AgentResponse, AgentList, AgentListItem,
-    CollaboratorsUpdateRequest, CollaboratorSummary, AccessLevelEnum, CollaborationStatusEnum
+    CollaboratorsUpdateRequest, CollaboratorSummary, AccessLevelEnum, CollaborationStatusEnum, ExecutionModeEnum
 )
 
 router = APIRouter()
@@ -92,6 +92,7 @@ async def list_agents(
             collaborator_count=len(agent.collaborator_settings) if agent.collaborator_settings else 0,
             group_id=agent.group_id,
             provider_id=agent.provider_id,
+            execution_mode=ExecutionModeEnum(getattr(agent.execution_mode, 'value', 'balanced')),
             created_at=agent.created_at
         ))
     
@@ -188,6 +189,7 @@ async def get_agent(
         true_trigger_keywords=agent.true_trigger_keywords or [],
         true_trigger_match_mode=agent.true_trigger_match_mode or "word",
         provider_id=agent.provider_id,
+        execution_mode=ExecutionModeEnum(getattr(agent.execution_mode, 'value', 'balanced')),
         is_thinker=agent.is_thinker,
         thinker_prompt=agent.thinker_prompt,
         thinker_model=agent.thinker_model,
@@ -220,6 +222,8 @@ async def create_agent(
     
     # Convert enum to model enum
     agent_dict["access_level"] = AccessLevel(agent_dict["access_level"].value)
+    if "execution_mode" in agent_dict and agent_dict["execution_mode"] is not None:
+        agent_dict["execution_mode"] = ExecutionMode(agent_dict["execution_mode"].value)
     
     # Remove None FK values to avoid constraint issues
     if agent_dict.get("emotional_profile_id") is None:
@@ -299,6 +303,8 @@ async def update_agent(
     # Handle access_level enum conversion
     if "access_level" in update_data and update_data["access_level"] is not None:
         update_data["access_level"] = AccessLevel(update_data["access_level"].value)
+    if "execution_mode" in update_data and update_data["execution_mode"] is not None:
+        update_data["execution_mode"] = ExecutionMode(update_data["execution_mode"].value)
     
     for field, value in update_data.items():
         setattr(agent, field, value)

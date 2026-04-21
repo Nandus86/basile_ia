@@ -1,11 +1,12 @@
 """
 Agent Factory - Creates LangGraph-compatible agents from database configurations
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypedDict
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.prebuilt import create_react_agent
+from langgraph.graph import StateGraph, START, END
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -18,7 +19,93 @@ import logging
 import json
 import copy
 import urllib.parse
+import hashlib
+import time
+from pydantic import BaseModel, Field
+from langchain.agents.middleware import wrap_model_call, wrap_tool_call
 logger = logging.getLogger(__name__)
+
+
+class ToolFirstPlan(BaseModel):
+    """Structured plan for deterministic tool-first execution."""
+    steps: List[str] = Field(default_factory=list)
+    max_tool_calls: int = Field(default=3, ge=0, le=10)
+    max_collab_calls: int = Field(default=1, ge=0, le=5)
+    stop_condition: str = Field(default="respond_when_data_is_sufficient")
+
+
+class ExecutionBudget:
+    """Turn-level budget guardrails for deterministic execution."""
+
+    def __init__(
+        self,
+        max_total_actions: int = 4,
+        max_tool_calls: int = 3,
+        max_collab_calls: int = 1,
+        max_wall_time_seconds: int = 25,
+    ):
+        self.max_total_actions = max_total_actions
+        self.max_tool_calls = max_tool_calls
+        self.max_collab_calls = max_collab_calls
+        self.max_wall_time_seconds = max_wall_time_seconds
+        self.actions_used = 0
+        self.tool_calls_used = 0
+        self.collab_calls_used = 0
+        self.started_at = time.monotonic()
+
+    def can_continue(self) -> bool:
+        if self.actions_used >= self.max_total_actions:
+            return False
+        if (time.monotonic() - self.started_at) >= self.max_wall_time_seconds:
+            return False
+        return True
+
+    def consume(self, action_type: str) -> bool:
+        if not self.can_continue():
+            return False
+        if action_type == "tool" and self.tool_calls_used >= self.max_tool_calls:
+            return False
+        if action_type == "collab" and self.collab_calls_used >= self.max_collab_calls:
+            return False
+
+        self.actions_used += 1
+        if action_type == "tool":
+            self.tool_calls_used += 1
+        if action_type == "collab":
+            self.collab_calls_used += 1
+        return True
+
+    def stop_reason(self) -> str:
+        if self.actions_used >= self.max_total_actions:
+            return "budget_exceeded"
+        if self.tool_calls_used >= self.max_tool_calls:
+            return "tool_budget_exceeded"
+        if self.collab_calls_used >= self.max_collab_calls:
+            return "collab_budget_exceeded"
+        if (time.monotonic() - self.started_at) >= self.max_wall_time_seconds:
+            return "timeout"
+        return "completed"
+
+
+class AgentRuntimeState(TypedDict, total=False):
+    execution_mode: str
+    actions_used: int
+    tool_calls_used: int
+    collab_calls_used: int
+    seen_fingerprints: List[str]
+    start_time: float
+
+
+def _normalize_args(args: Any) -> str:
+    try:
+        return json.dumps(args or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        return str(args)
+
+
+def _fingerprint_tool_call(name: str, args: Any) -> str:
+    raw = f"{name}:{_normalize_args(args)}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class AgentFactory:
@@ -196,6 +283,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             "skills_summary": skills_summary,  # For orchestrator to see collaborator skills
             "greeting_config": greeting_config,
             "provider": agent.provider if hasattr(agent, "provider") else None,
+            "execution_mode": getattr(getattr(agent, "execution_mode", None), "value", "balanced"),
         }
         
         self._agent_cache[agent_id] = config
@@ -398,7 +486,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         agent_config: Dict[str, Any],
         messages: List[Any],
         rag_context: Optional[str] = None,
-        context_data: Optional[Dict[str, Any]] = None
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
     ) -> str:
         """
         Invoke an agent with messages and return response.
@@ -408,7 +497,23 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         
         llm = self.create_llm(agent_config)
         run_config = self.get_run_config(agent_config)
-        
+
+        resolved_execution_mode = (
+            (execution_mode_override or "").strip().lower()
+            or str(agent_config.get("execution_mode") or "balanced").strip().lower()
+        )
+        if resolved_execution_mode not in {"balanced", "tools_first", "orchestrator_first"}:
+            resolved_execution_mode = "balanced"
+
+        budget_cfg = (agent_config.get("config") or {}).get("execution_budget") or {}
+        budget = ExecutionBudget(
+            max_total_actions=int(budget_cfg.get("max_total_actions_per_turn", 4)),
+            max_tool_calls=int(budget_cfg.get("max_tool_calls_per_turn", 3)),
+            max_collab_calls=int(budget_cfg.get("max_collab_calls_per_turn", 1)),
+            max_wall_time_seconds=int(budget_cfg.get("max_wall_time_per_turn_seconds", 25)),
+        )
+        seen_fingerprints = set()
+
         # Build system prompt
         system_prompt = agent_config["system_prompt"]
         
@@ -535,11 +640,16 @@ Cite a fonte quando usar informações do contexto acima.
         # Resolve global macros like {{ $now }} before execution
         from app.utils.macros import resolve_global_macros
         system_prompt = resolve_global_macros(system_prompt, context_data)
-        
+
+        system_prompt += (
+            "\n\n## Modo de Execução (Determinístico)\n"
+            f"- Modo resolvido deste turno: {resolved_execution_mode}\n"
+            "- Você deve obedecer os limites de execução e evitar chamadas redundantes.\n"
+            "- Nunca repita a mesma ferramenta com os mesmos argumentos no mesmo turno.\n"
+        )
+
         if agent_config["has_tools"]:
-            # Use ReAct agent with tools
             tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
-            # Add skills reminder before tools (so the LLM sees them together)
             skills_reminder = ""
             if agent_config.get("skills_summary"):
                 skill_names = [s["name"] for s in agent_config["skills_summary"]]
@@ -553,6 +663,75 @@ Cite a fonte quando usar informações do contexto acima.
             resilience_cfg = agent_config.get("resilience", {})
             max_retries = resilience_cfg.get("max_retries", 3)
             timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
+
+            if resolved_execution_mode == "tools_first":
+                planner_llm = llm.with_structured_output(ToolFirstPlan)
+                planner_messages = [
+                    SystemMessage(content=(
+                        "Gere um plano curto para usar ferramentas com prioridade. "
+                        "Responda apenas no schema fornecido."
+                    )),
+                    HumanMessage(content=f"Solicitação atual: {messages[-1].content if messages else ''}"),
+                ]
+                try:
+                    plan = await planner_llm.ainvoke(planner_messages, config=run_config)
+                    if isinstance(plan, ToolFirstPlan):
+                        budget.max_tool_calls = min(budget.max_tool_calls, int(plan.max_tool_calls))
+                        budget.max_collab_calls = min(budget.max_collab_calls, int(plan.max_collab_calls))
+                        logger.info(
+                            "[AgentFactory] 🧭 tools_first plan=%s max_tool_calls=%s max_collab_calls=%s",
+                            plan.steps,
+                            budget.max_tool_calls,
+                            budget.max_collab_calls,
+                        )
+                except Exception as planner_err:
+                    logger.warning(f"[AgentFactory] planner tools_first fallback: {planner_err}")
+
+            def _select_tools_for_mode(mode: str):
+                tools = agent_config["tools"]
+                if mode == "orchestrator_first":
+                    return [t for t in tools if str(getattr(t, "name", "")).startswith("consultar_")] or tools
+                if mode == "tools_first":
+                    return [t for t in tools if not str(getattr(t, "name", "")).startswith("consultar_")] or tools
+                return tools
+
+            selected_tools = _select_tools_for_mode(resolved_execution_mode)
+
+            @wrap_model_call
+            def _dynamic_tool_filter(request, handler):
+                allowed_tools = _select_tools_for_mode(resolved_execution_mode)
+                if budget.tool_calls_used >= budget.max_tool_calls:
+                    allowed_tools = [t for t in allowed_tools if str(getattr(t, "name", "")).startswith("consultar_")]
+                return handler(request.override(tools=allowed_tools))
+
+            @wrap_tool_call
+            def _guard_tool_calls(request, handler):
+                tool_name = request.tool_call.get("name", "")
+                tool_args = request.tool_call.get("args", {})
+                fingerprint = _fingerprint_tool_call(tool_name, tool_args)
+
+                if fingerprint in seen_fingerprints:
+                    return ToolMessage(
+                        content="Tool call blocked: repeated same arguments in current turn.",
+                        tool_call_id=request.tool_call["id"],
+                    )
+
+                action_type = "collab" if str(tool_name).startswith("consultar_") else "tool"
+                if not budget.consume(action_type):
+                    return ToolMessage(
+                        content=f"Tool call blocked by execution budget ({budget.stop_reason()}).",
+                        tool_call_id=request.tool_call["id"],
+                    )
+
+                seen_fingerprints.add(fingerprint)
+                try:
+                    return handler(request)
+                except Exception as e:
+                    logger.warning("[AgentFactory] Tool execution error tool=%s err=%s", tool_name, e)
+                    return ToolMessage(
+                        content=f"Tool error: {str(e)}",
+                        tool_call_id=request.tool_call["id"],
+                    )
 
             tool_instructions = f"""
 {skills_reminder}
@@ -572,58 +751,87 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
 - ⏱️ LIMITE DE TEMPO: Você tem no máximo {timeout_seconds} segundos para completar toda a execução. Priorize as ações mais importantes e evite chamadas desnecessárias de ferramentas.
 """
             full_prompt = system_prompt + tool_instructions
-            
             agent_messages = [SystemMessage(content=full_prompt)] + messages
-            
+
             react_agent = create_react_agent(
                 model=llm,
-                tools=agent_config["tools"]
+                tools=selected_tools,
+                middleware=[_dynamic_tool_filter, _guard_tool_calls],
             )
 
             logger.info(
-                f"[AgentFactory] 🤖 Invocando ReAct agent='{agent_config['name']}'  "
-                f"model='{agent_config['model']}'  tools={[t.name for t in agent_config['tools']]}"
-            )
-            recursion_limit = max(12, max_retries * 4 + 4)
-            result = await react_agent.ainvoke(
-                {"messages": agent_messages},
-                config={
-                    **run_config,
-                    "recursion_limit": recursion_limit  # Prevent infinite tool loops dynamically based on max_retries
-                }
+                "[AgentFactory] 🤖 Invocando ReAct agent='%s' model='%s' mode=%s tools=%s",
+                agent_config["name"],
+                agent_config["model"],
+                resolved_execution_mode,
+                [t.name for t in selected_tools],
             )
 
-            # Log tool calls executed during this run
-            from langchain_core.messages import ToolMessage
+            recursion_limit = max(12, max_retries * 4 + 4)
+
+            if resolved_execution_mode in {"tools_first", "orchestrator_first"}:
+                class ExecState(TypedDict, total=False):
+                    messages: List[Any]
+
+                graph = StateGraph(ExecState)
+
+                async def run_agent_node(state: ExecState):
+                    if not budget.can_continue():
+                        return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
+                    result = await react_agent.ainvoke(
+                        {"messages": state["messages"]},
+                        config={**run_config, "recursion_limit": recursion_limit},
+                    )
+                    return {"messages": result.get("messages", [])}
+
+                graph.add_node("run_agent", run_agent_node)
+                graph.add_edge(START, "run_agent")
+                graph.add_edge("run_agent", END)
+                compiled = graph.compile()
+                result = await compiled.ainvoke({"messages": agent_messages})
+            else:
+                result = await react_agent.ainvoke(
+                    {"messages": agent_messages},
+                    config={**run_config, "recursion_limit": recursion_limit},
+                )
+
             final_messages = result.get("messages", [])
             for msg in final_messages:
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tc in msg.tool_calls:
                         logger.info(
-                            f"[AgentFactory] 🛠️  TOOL_CALL  agent='{agent_config['name']}'  "
-                            f"tool={tc.get('name')!r}  args={json.dumps(tc.get('args', {}), default=str, ensure_ascii=False)[:400]}"
+                            "[AgentFactory] 🛠️ TOOL_CALL agent='%s' mode=%s tool=%r args=%s",
+                            agent_config["name"],
+                            resolved_execution_mode,
+                            tc.get("name"),
+                            json.dumps(tc.get("args", {}), default=str, ensure_ascii=False)[:400],
                         )
                 if isinstance(msg, ToolMessage):
                     logger.info(
-                        f"[AgentFactory] 📨 TOOL_RESULT  tool_call_id={msg.tool_call_id!r}  "
-                        f"preview={str(msg.content)[:400]!r}"
+                        "[AgentFactory] 📨 TOOL_RESULT mode=%s tool_call_id=%r preview=%r",
+                        resolved_execution_mode,
+                        msg.tool_call_id,
+                        str(msg.content)[:400],
                     )
 
-            # Extract final response
+            logger.info(
+                "[AgentFactory] 📊 execution mode=%s actions=%s tool_calls=%s collab_calls=%s stop_reason=%s",
+                resolved_execution_mode,
+                budget.actions_used,
+                budget.tool_calls_used,
+                budget.collab_calls_used,
+                budget.stop_reason(),
+            )
+
             for msg in reversed(final_messages):
                 if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
                     if not (hasattr(msg, "tool_calls") and msg.tool_calls):
                         return msg.content
-            
-            # Fallback: if the last AIMessage has tool_calls but the loop ended, 
-            # or if content is empty, look for the last non-empty AIMessage
+
             for msg in reversed(final_messages):
                 if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
                     return msg.content
-            
-            # If all AIMessages are empty and there were tool calls, the model 
-            # might be waiting for a final nudge or the react_agent didn't finish.
-            # But here we simply report the failure or return a safe default.
+
             logger.warning(f"[AgentFactory] ⚠️ No non-empty final AIMessage found for agent '{agent_config['name']}'.")
             return "Ocorreu um erro ao processar a resposta final. Por favor, tente novamente."
         
@@ -652,7 +860,8 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         agent_config: Dict[str, Any],
         messages: List[Any],
         rag_context: Optional[str] = None,
-        context_data: Optional[Dict[str, Any]] = None
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Invoke an agent with structured JSON output.
@@ -747,7 +956,13 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
                             # Se 'output' ficou vazio, solicitamos apenas a resposta textual num invoke regular
                             if "output" in partial_data and not partial_data["output"]:
                                 logger.warning("[AgentFactory] ⚠️ Campo 'output' omitido, fazendo fallback textual...")
-                                fallback_text = await self.invoke_agent(agent_config, messages, rag_context, context_data)
+                                fallback_text = await self.invoke_agent(
+                                    agent_config,
+                                    messages,
+                                    rag_context,
+                                    context_data,
+                                    execution_mode_override=execution_mode_override,
+                                )
                                 partial_data["output"] = fallback_text
                                 
                             return partial_data
@@ -755,6 +970,12 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
                     logger.error(f"[AgentFactory] ❌ Falha ao recuperar JSON parcial: {inner_e}")
             
             # Fallback final se falhar e não recuperar JSON parcial
-            regular_response = await self.invoke_agent(agent_config, messages, rag_context, context_data)
+            regular_response = await self.invoke_agent(
+                agent_config,
+                messages,
+                rag_context,
+                context_data,
+                execution_mode_override=execution_mode_override,
+            )
             return {"output": regular_response}
 

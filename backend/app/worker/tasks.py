@@ -2176,6 +2176,7 @@ async def process_message_task(
                                 messages=messages,
                                 rag_context=rag_context,
                                 context_data=context_data,
+                                execution_mode_override=(context_data or {}).get("execution_mode"),
                             ),
                             timeout=timeout_seconds
                         )
@@ -2191,6 +2192,7 @@ async def process_message_task(
                                 messages=messages,
                                 rag_context=rag_context,
                                 context_data=context_data,
+                                execution_mode_override=(context_data or {}).get("execution_mode"),
                             ),
                             timeout=timeout_seconds
                         )

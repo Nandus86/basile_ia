@@ -213,6 +213,18 @@
             </v-switch>
           </v-col>
           <v-col cols="12" sm="6">
+            <v-select
+              v-model="formData.execution_mode"
+              :items="executionModeOptions"
+              item-title="label"
+              item-value="value"
+              label="Modo de Execução"
+              prepend-inner-icon="mdi-tune-variant"
+              density="comfortable"
+              hide-details
+            ></v-select>
+          </v-col>
+          <v-col cols="12" sm="6">
             <v-switch
               v-model="formData.is_planner"
               label="Planejador Mestre"
@@ -328,6 +340,11 @@ export default {
     return {
       formValid: false,
       activeProvider: null,
+      executionModeOptions: [
+        { label: 'Balanceado', value: 'balanced' },
+        { label: 'Priorizar Ferramentas', value: 'tools_first' },
+        { label: 'Priorizar Orquestração', value: 'orchestrator_first' },
+      ],
     }
   },
   methods: {

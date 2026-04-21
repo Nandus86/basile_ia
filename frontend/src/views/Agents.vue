@@ -509,6 +509,22 @@
                           </template>
                         </v-switch>
                       </v-col>
+                      <v-col cols="12" sm="6">
+                        <v-select
+                          v-model="formData.execution_mode"
+                          label="Modo de Execução"
+                          :items="[
+                            { label: 'Balanceado', value: 'balanced' },
+                            { label: 'Priorizar Ferramentas', value: 'tools_first' },
+                            { label: 'Priorizar Orquestração', value: 'orchestrator_first' }
+                          ]"
+                          item-title="label"
+                          item-value="value"
+                          prepend-inner-icon="mdi-tune-variant"
+                          hide-details
+                          density="comfortable"
+                        ></v-select>
+                      </v-col>
                     </v-row>
                       <v-expand-transition>
                         <v-alert v-if="formData.is_orchestrator" type="info" variant="tonal" density="compact" class="mt-3 mb-0">
@@ -2342,8 +2358,10 @@ const formData = reactive({
   vector_memory_enabled: false,
   information_bases_global_search_enabled: false,
   is_orchestrator: false,
+  execution_mode: 'balanced',
   is_planner: false,
   is_thinker: false,
+
   thinker_prompt: '',
   thinker_model: 'gpt-4o-mini',
   thinker_ids: [],
@@ -2818,7 +2836,9 @@ function resetForm() {
     vector_memory_enabled: false,
     information_bases_global_search_enabled: false,
     is_orchestrator: false,
+    execution_mode: 'balanced',
     is_planner: false,
+
     is_thinker: false,
     thinker_prompt: '',
     thinker_model: 'gpt-4o-mini',
@@ -3113,6 +3133,7 @@ async function openDialog(agent = null) {
         vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
         information_bases_global_search_enabled: fullAgent.information_bases_global_search_enabled ?? false,
         is_orchestrator: fullAgent.is_orchestrator ?? false,
+        execution_mode: fullAgent.execution_mode || 'balanced',
         is_planner: fullAgent.is_planner ?? false,
         is_thinker: fullAgent.is_thinker ?? false,
         thinker_prompt: fullAgent.thinker_prompt || '',

@@ -25,6 +25,13 @@ class CollaborationStatusEnum(str, Enum):
     BLOCKED = "blocked"
 
 
+class ExecutionModeEnum(str, Enum):
+    """Execution routing mode for tool/collaboration policy"""
+    BALANCED = "balanced"
+    TOOLS_FIRST = "tools_first"
+    ORCHESTRATOR_FIRST = "orchestrator_first"
+
+
 class MCPSummary(BaseModel):
     """Summary of an MCP linked to agent"""
     id: UUID
@@ -89,6 +96,7 @@ class AgentBase(BaseModel):
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
+    execution_mode: ExecutionModeEnum = ExecutionModeEnum.BALANCED
 
 
 class AgentCreate(AgentBase):
@@ -164,6 +172,7 @@ class AgentUpdate(BaseModel):
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
+    execution_mode: Optional[ExecutionModeEnum] = None
 
 
 class AgentResponse(BaseModel):
@@ -212,6 +221,7 @@ class AgentResponse(BaseModel):
     entity_memory_path: Optional[str] = None
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
+    execution_mode: ExecutionModeEnum = ExecutionModeEnum.BALANCED
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []
@@ -241,6 +251,7 @@ class AgentListItem(BaseModel):
     collaborator_count: int = 0
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
+    execution_mode: ExecutionModeEnum = ExecutionModeEnum.BALANCED
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

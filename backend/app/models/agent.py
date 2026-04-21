@@ -1,7 +1,7 @@
 """
 Agent Model - AI agents with hierarchical access and collaboration
 """
-from sqlalchemy import Column, String, Boolean, DateTime, Text, JSON, Enum, ForeignKey, Table
+from sqlalchemy import Column, String, Boolean, DateTime, Text, JSON, Enum, ForeignKey, Table, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
@@ -65,6 +65,13 @@ class CollaborationStatus(str, enum.Enum):
     BLOCKED = "blocked"    # 🚫 Forbidden - never accessible
 
 
+class ExecutionMode(str, enum.Enum):
+    """Execution routing mode for tools vs collaborators"""
+    BALANCED = "balanced"
+    TOOLS_FIRST = "tools_first"
+    ORCHESTRATOR_FIRST = "orchestrator_first"
+
+
 class AgentCollaborator(Base):
     """Defines collaboration permissions between agents"""
     __tablename__ = "agent_collaborators"
@@ -110,6 +117,12 @@ class Agent(Base):
     # Orchestrator mode - hierarchical control over subordinates
     is_orchestrator = Column(Boolean, default=False, nullable=False)
     orchestrator_config = Column(JSON, default=dict)  # Additional orchestrator settings
+    execution_mode = Column(
+        Enum(ExecutionMode, values_callable=lambda x: [e.value for e in x], name='executionmode', create_type=False),
+        default=ExecutionMode.BALANCED,
+        server_default=text("'balanced'"),
+        nullable=False,
+    )
     
     # Response style for collaborator output ("structured" or "natural")
     response_style = Column(String(20), default="structured", nullable=False)
