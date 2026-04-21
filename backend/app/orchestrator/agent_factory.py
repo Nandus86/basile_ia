@@ -330,9 +330,17 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             # Qwen-specific sampling params (only for Qwen models)
             if "qwen" in model_id.lower():
                 qwen_params = ['top_k', 'min_p', 'repetition_penalty']
+                if "model_kwargs" not in kwargs:
+                    kwargs["model_kwargs"] = {}
+                
+                # We use extra_body to send parameters that are not part of the standard 
+                # OpenAI SDK signature to avoid TypeError: unexpected keyword argument
+                if "extra_body" not in kwargs["model_kwargs"]:
+                    kwargs["model_kwargs"]["extra_body"] = {}
+                
                 for param in qwen_params:
                     if param in extra_config and extra_config[param] is not None:
-                        kwargs[param] = extra_config[param]
+                        kwargs["model_kwargs"]["extra_body"][param] = extra_config[param]
 
         # Structured output: force JSON if output_schema is defined
         if agent_config.get("output_schema"):
