@@ -5,13 +5,13 @@ from typing import List, Optional, Dict, Any, TypedDict
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_react_agent
 from langgraph.graph import StateGraph, START, END
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.models.agent import Agent, AccessLevel
+from app.models.agent import Agent, AccessLevel, ExecutionMode, agent_thinker_links
 from app.config import settings
 from app.orchestrator.callbacks import build_cost_callbacks
 
@@ -22,8 +22,8 @@ import urllib.parse
 import hashlib
 import time
 from pydantic import BaseModel, Field
-from langchain.agents.middleware import wrap_model_call, wrap_tool_call
 logger = logging.getLogger(__name__)
+
 
 
 class ToolFirstPlan(BaseModel):
@@ -697,41 +697,37 @@ Cite a fonte quando usar informações do contexto acima.
 
             selected_tools = _select_tools_for_mode(resolved_execution_mode)
 
-            @wrap_model_call
-            def _dynamic_tool_filter(request, handler):
-                allowed_tools = _select_tools_for_mode(resolved_execution_mode)
-                if budget.tool_calls_used >= budget.max_tool_calls:
-                    allowed_tools = [t for t in allowed_tools if str(getattr(t, "name", "")).startswith("consultar_")]
-                return handler(request.override(tools=allowed_tools))
+            # Enforce budget and anti-loop by wrapping each tool's invoke/ainvoke methods
+            def _wrap_tool_with_guard(tool):
+                original_invoke = getattr(tool, "invoke", None)
+                original_ainvoke = getattr(tool, "ainvoke", None)
+                is_collab = tool.name.startswith("consultar_")
 
-            @wrap_tool_call
-            def _guard_tool_calls(request, handler):
-                tool_name = request.tool_call.get("name", "")
-                tool_args = request.tool_call.get("args", {})
-                fingerprint = _fingerprint_tool_call(tool_name, tool_args)
+                if original_invoke:
+                    def sync_wrapped(*args, **kwargs):
+                        fp = _fingerprint_tool_call(tool.name, kwargs)
+                        if fp in seen_fingerprints:
+                            return "Tool call blocked: repeated same arguments in current turn."
+                        if not budget.consume("collab" if is_collab else "tool"):
+                            return f"Tool call blocked: {budget.stop_reason()}."
+                        seen_fingerprints.add(fp)
+                        return original_invoke(*args, **kwargs)
+                    tool.invoke = sync_wrapped
 
-                if fingerprint in seen_fingerprints:
-                    return ToolMessage(
-                        content="Tool call blocked: repeated same arguments in current turn.",
-                        tool_call_id=request.tool_call["id"],
-                    )
+                if original_ainvoke:
+                    async def async_wrapped(*args, **kwargs):
+                        fp = _fingerprint_tool_call(tool.name, kwargs)
+                        if fp in seen_fingerprints:
+                            return "Tool call blocked: repeated same arguments in current turn."
+                        if not budget.consume("collab" if is_collab else "tool"):
+                            return f"Tool call blocked: {budget.stop_reason()}."
+                        seen_fingerprints.add(fp)
+                        return await original_ainvoke(*args, **kwargs)
+                    tool.ainvoke = async_wrapped
 
-                action_type = "collab" if str(tool_name).startswith("consultar_") else "tool"
-                if not budget.consume(action_type):
-                    return ToolMessage(
-                        content=f"Tool call blocked by execution budget ({budget.stop_reason()}).",
-                        tool_call_id=request.tool_call["id"],
-                    )
+                return tool
 
-                seen_fingerprints.add(fingerprint)
-                try:
-                    return handler(request)
-                except Exception as e:
-                    logger.warning("[AgentFactory] Tool execution error tool=%s err=%s", tool_name, e)
-                    return ToolMessage(
-                        content=f"Tool error: {str(e)}",
-                        tool_call_id=request.tool_call["id"],
-                    )
+            selected_tools = [_wrap_tool_with_guard(t) for t in selected_tools]
 
             tool_instructions = f"""
 {skills_reminder}
@@ -756,8 +752,8 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             react_agent = create_react_agent(
                 model=llm,
                 tools=selected_tools,
-                middleware=[_dynamic_tool_filter, _guard_tool_calls],
             )
+
 
             logger.info(
                 "[AgentFactory] 🤖 Invocando ReAct agent='%s' model='%s' mode=%s tools=%s",
