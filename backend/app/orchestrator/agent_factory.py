@@ -698,48 +698,55 @@ Cite a fonte quando usar informações do contexto acima.
             selected_tools = _select_tools_for_mode(resolved_execution_mode)
 
             # Enforce budget and anti-loop by wrapping each tool in a proxy
-            class GuardedTool:
-                """Wrapper that adds budget/anti-loop enforcement to any tool."""
-                def __init__(self, tool, budget, seen_fps, is_collab):
-                    self._tool = tool
-                    self._budget = budget
-                    self._seen_fps = seen_fps
-                    self._is_collab = is_collab
+            # We create proper StructuredTool instances so langgraph ToolNode recognises them
+            from langchain_core.tools import StructuredTool
 
-                def __getattr__(self, name):
-                    return getattr(self._tool, name)
+            def _make_guarded_tool(tool, budget, seen_fps, is_collab):
+                """Create a StructuredTool wrapper with budget/anti-loop enforcement."""
 
-                def invoke(self, *args, **kwargs):
-                    fp = _fingerprint_tool_call(self._tool.name, kwargs)
-                    if fp in self._seen_fps:
+                async def _guarded_ainvoke(**kwargs):
+                    fp = _fingerprint_tool_call(tool.name, kwargs)
+                    if fp in seen_fps:
                         return "Tool call blocked: repeated same arguments in current turn."
-                    if not self._budget.consume("collab" if self._is_collab else "tool"):
-                        return f"Tool call blocked: {self._budget.stop_reason()}."
-                    self._seen_fps.add(fp)
-                    if hasattr(self._tool, "invoke"):
-                        return self._tool.invoke(*args, **kwargs)
-                    elif hasattr(self._tool, "_run"):
-                        return self._tool._run(*args, **kwargs)
+                    if not budget.consume("collab" if is_collab else "tool"):
+                        return f"Tool call blocked: {budget.stop_reason()}."
+                    seen_fps.add(fp)
+                    # Delegate to original tool
+                    if hasattr(tool, "ainvoke"):
+                        return await tool.ainvoke(kwargs)
+                    elif hasattr(tool, "_arun"):
+                        return await tool._arun(**kwargs)
+                    elif hasattr(tool, "invoke"):
+                        return tool.invoke(kwargs)
+                    elif hasattr(tool, "_run"):
+                        return tool._run(**kwargs)
                     else:
-                        raise AttributeError(f"Tool '{self._tool.name}' has no invoke/_run method")
+                        raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
 
-                async def ainvoke(self, *args, **kwargs):
-                    fp = _fingerprint_tool_call(self._tool.name, kwargs)
-                    if fp in self._seen_fps:
+                def _guarded_invoke(**kwargs):
+                    fp = _fingerprint_tool_call(tool.name, kwargs)
+                    if fp in seen_fps:
                         return "Tool call blocked: repeated same arguments in current turn."
-                    if not self._budget.consume("collab" if self._is_collab else "tool"):
-                        return f"Tool call blocked: {self._budget.stop_reason()}."
-                    self._seen_fps.add(fp)
-                    if hasattr(self._tool, "ainvoke"):
-                        return await self._tool.ainvoke(*args, **kwargs)
-                    elif hasattr(self._tool, "_arun"):
-                        return await self._tool._arun(*args, **kwargs)
+                    if not budget.consume("collab" if is_collab else "tool"):
+                        return f"Tool call blocked: {budget.stop_reason()}."
+                    seen_fps.add(fp)
+                    if hasattr(tool, "invoke"):
+                        return tool.invoke(kwargs)
+                    elif hasattr(tool, "_run"):
+                        return tool._run(**kwargs)
                     else:
-                        # fallback to sync invoke
-                        return self.invoke(*args, **kwargs)
+                        raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
+
+                return StructuredTool(
+                    name=tool.name,
+                    description=getattr(tool, "description", "") or tool.name,
+                    func=_guarded_invoke,
+                    coroutine=_guarded_ainvoke,
+                    args_schema=getattr(tool, "args_schema", None),
+                )
 
             selected_tools = [
-                GuardedTool(t, budget, seen_fingerprints, t.name.startswith("consultar_"))
+                _make_guarded_tool(t, budget, seen_fingerprints, t.name.startswith("consultar_"))
                 for t in selected_tools
             ]
 
