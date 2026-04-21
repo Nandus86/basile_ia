@@ -697,37 +697,51 @@ Cite a fonte quando usar informações do contexto acima.
 
             selected_tools = _select_tools_for_mode(resolved_execution_mode)
 
-            # Enforce budget and anti-loop by wrapping each tool's invoke/ainvoke methods
-            def _wrap_tool_with_guard(tool):
-                original_invoke = getattr(tool, "invoke", None)
-                original_ainvoke = getattr(tool, "ainvoke", None)
-                is_collab = tool.name.startswith("consultar_")
+            # Enforce budget and anti-loop by wrapping each tool in a proxy
+            class GuardedTool:
+                """Wrapper that adds budget/anti-loop enforcement to any tool."""
+                def __init__(self, tool, budget, seen_fps, is_collab):
+                    self._tool = tool
+                    self._budget = budget
+                    self._seen_fps = seen_fps
+                    self._is_collab = is_collab
 
-                if original_invoke:
-                    def sync_wrapped(*args, **kwargs):
-                        fp = _fingerprint_tool_call(tool.name, kwargs)
-                        if fp in seen_fingerprints:
-                            return "Tool call blocked: repeated same arguments in current turn."
-                        if not budget.consume("collab" if is_collab else "tool"):
-                            return f"Tool call blocked: {budget.stop_reason()}."
-                        seen_fingerprints.add(fp)
-                        return original_invoke(*args, **kwargs)
-                    tool.invoke = sync_wrapped
+                def __getattr__(self, name):
+                    return getattr(self._tool, name)
 
-                if original_ainvoke:
-                    async def async_wrapped(*args, **kwargs):
-                        fp = _fingerprint_tool_call(tool.name, kwargs)
-                        if fp in seen_fingerprints:
-                            return "Tool call blocked: repeated same arguments in current turn."
-                        if not budget.consume("collab" if is_collab else "tool"):
-                            return f"Tool call blocked: {budget.stop_reason()}."
-                        seen_fingerprints.add(fp)
-                        return await original_ainvoke(*args, **kwargs)
-                    tool.ainvoke = async_wrapped
+                def invoke(self, *args, **kwargs):
+                    fp = _fingerprint_tool_call(self._tool.name, kwargs)
+                    if fp in self._seen_fps:
+                        return "Tool call blocked: repeated same arguments in current turn."
+                    if not self._budget.consume("collab" if self._is_collab else "tool"):
+                        return f"Tool call blocked: {self._budget.stop_reason()}."
+                    self._seen_fps.add(fp)
+                    if hasattr(self._tool, "invoke"):
+                        return self._tool.invoke(*args, **kwargs)
+                    elif hasattr(self._tool, "_run"):
+                        return self._tool._run(*args, **kwargs)
+                    else:
+                        raise AttributeError(f"Tool '{self._tool.name}' has no invoke/_run method")
 
-                return tool
+                async def ainvoke(self, *args, **kwargs):
+                    fp = _fingerprint_tool_call(self._tool.name, kwargs)
+                    if fp in self._seen_fps:
+                        return "Tool call blocked: repeated same arguments in current turn."
+                    if not self._budget.consume("collab" if self._is_collab else "tool"):
+                        return f"Tool call blocked: {self._budget.stop_reason()}."
+                    self._seen_fps.add(fp)
+                    if hasattr(self._tool, "ainvoke"):
+                        return await self._tool.ainvoke(*args, **kwargs)
+                    elif hasattr(self._tool, "_arun"):
+                        return await self._tool._arun(*args, **kwargs)
+                    else:
+                        # fallback to sync invoke
+                        return self.invoke(*args, **kwargs)
 
-            selected_tools = [_wrap_tool_with_guard(t) for t in selected_tools]
+            selected_tools = [
+                GuardedTool(t, budget, seen_fingerprints, t.name.startswith("consultar_"))
+                for t in selected_tools
+            ]
 
             tool_instructions = f"""
 {skills_reminder}
