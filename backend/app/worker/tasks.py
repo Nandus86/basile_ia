@@ -180,7 +180,7 @@ async def _enrich_agent_prompt(
         user_tz = ZoneInfo('America/Sao_Paulo')
 
     now = datetime.now(user_tz)
-    current_time_str = now.strftime(f'%d/%m/%Y %H:%M:%S (Fuso: {tz_name})')
+    current_time_str = now.strftime(f'%A, %d/%m/%Y %H:%M:%S (Fuso: {tz_name})')
     current_iso = now.isoformat()
     
     # [12H WINDOW RULE] Calculate deterministic greeting rule in code

@@ -130,27 +130,181 @@
       </v-col>
     </v-row>
 
-    <v-card variant="outlined" class="mt-3 mb-3" :color="formData.config.is_reasoning_model ? 'purple' : undefined">
-      <v-card-text class="d-flex align-center py-3">
-        <v-switch
-          v-model="formData.config.is_reasoning_model"
-          label="Modelo de Raciocínio"
-          color="purple"
-          hide-details
-          density="comfortable"
-          class="mr-4"
-        ></v-switch>
-        <v-chip v-if="formData.config.is_reasoning_model" color="purple" size="small" variant="tonal">
-          <v-icon start size="14">mdi-head-lightbulb</v-icon>
-          O1 / O3 / DeepSeek R1
-        </v-chip>
-        <span v-else class="text-caption text-medium-emphasis">
-          Ative para modelos como O1, O3-mini, DeepSeek R1 (sem temperature, com reasoning_effort)
-        </span>
-      </v-card-text>
-    </v-card>
-    
-    <v-divider class="my-4"></v-divider>
+     <v-card variant="outlined" class="mt-3 mb-3" :color="formData.config.is_reasoning_model ? 'purple' : undefined">
+       <v-card-text class="d-flex align-center py-3">
+         <v-switch
+           v-model="formData.config.is_reasoning_model"
+           label="Modelo de Raciocínio (Reasoning)"
+           color="purple"
+           hide-details
+           density="comfortable"
+           class="mr-4"
+         ></v-switch>
+         <v-chip v-if="formData.config.is_reasoning_model" color="purple" size="small" variant="tonal">
+           <v-icon start size="14">mdi-head-lightbulb</v-icon>
+           O1 / O3 / DeepSeek R1
+         </v-chip>
+         <span v-else class="text-caption text-medium-emphasis">
+           Ative para modelos como O1, O3-mini, DeepSeek R1 (sem temperature, com reasoning_effort)
+         </span>
+       </v-card-text>
+     </v-card>
+
+     <!-- Parâmetros de Geração (Qwen3 / Sampling) -->
+     <v-card variant="outlined" class="mt-3">
+       <v-card-title class="text-subtitle-2">
+         <v-icon size="18" class="mr-1">mdi-tune</v-icon>
+         Parâmetros de Geração (Sampling)
+       </v-card-title>
+       <v-card-text>
+         <v-row>
+           <!-- Top-P (Nucleus Sampling) -->
+           <v-col cols="12" md="6">
+             <v-text-field
+               v-model.number="formData.config.top_p"
+               label="Top P (Nucleus)"
+               type="number"
+               step="0.05"
+               min="0.01"
+               max="1"
+               hint="Filtro probabilidade acumulada. Padrão Qwen3 Instruct: 0.80 | Thinking: 0.95"
+               persistent-hint
+               prepend-inner-icon="mdi-filter-variant"
+             ></v-text-field>
+           </v-col>
+
+           <!-- Top-K -->
+           <v-col cols="12" md="6">
+             <v-text-field
+               v-model.number="formData.config.top_k"
+               label="Top K"
+               type="number"
+               min="1"
+               max="100"
+               step="1"
+               hint="Limite de tokens mais prováveis. Padrão Qwen3: 20"
+               persistent-hint
+               prepend-inner-icon="mdi-format-list-numbered"
+             ></v-text-field>
+           </v-col>
+
+           <!-- Min-P -->
+           <v-col cols="12" md="6">
+             <v-text-field
+               v-model.number="formData.config.min_p"
+               label="Min P (Probabilidade Mínima)"
+               type="number"
+               step="0.01"
+               min="0"
+               max="1"
+               hint="Filtro absoluto de probabilidade. Padrão: 0.00"
+               persistent-hint
+               prepend-inner-icon="mdi-arrow-collapse-down"
+             ></v-text-field>
+           </v-col>
+
+           <!-- Repetition Penalty -->
+           <v-col cols="12" md="6">
+             <v-text-field
+               v-model.number="formData.config.repetition_penalty"
+               label="Repetition Penalty"
+               type="number"
+               step="0.1"
+               min="1"
+               max="2"
+               hint="Penaliza repetições (1.0 = desativado, >1.0 = mais penalidade)"
+               persistent-hint
+               prepend-inner-icon="mdi-repeat-off"
+             ></v-text-field>
+           </v-col>
+
+           <!-- Presence Penalty -->
+           <v-col cols="12" md="6">
+             <v-text-field
+               v-model.number="formData.config.presence_penalty"
+               label="Presence Penalty"
+               type="number"
+               step="0.1"
+               min="-2"
+               max="2"
+               hint="Penaliza tokens já aparecidos (-2 a +2)"
+               persistent-hint
+               prepend-inner-icon="mdi-text-box-check"
+             ></v-text-field>
+           </v-col>
+
+           <!-- Frequency Penalty -->
+           <v-col cols="12" md="6">
+             <v-text-field
+               v-model.number="formData.config.frequency_penalty"
+               label="Frequency Penalty"
+               type="number"
+               step="0.1"
+               min="-2"
+               max="2"
+               hint="Reduz frequência de palavras repetidas"
+               persistent-hint
+               prepend-inner-icon="mdi-chart-line"
+             ></v-text-field>
+           </v-col>
+         </v-row>
+
+         <v-alert type="info" variant="tonal" density="compact" class="mt-2">
+           <template v-slot:prepend>
+             <v-icon>mdi-information</v-icon>
+           </template>
+           <div>
+             <strong>Configurações recomendadas Qwen3:</strong><br>
+             • <strong>Instruct (padrão):</strong> temp=0.7, top_p=0.80, top_k=20, min_p=0.0<br>
+             • <strong>Thinking (raciocínio):</strong> temp=0.6, top_p=0.95, top_k=20<br>
+             • <strong>JSON estruturado:</strong> habilite "Estilo de Resposta" abaixo e inclua "JSON" no system prompt
+           </div>
+         </v-alert>
+       </v-card-text>
+     </v-card>
+
+     <!-- Estilo de Resposta (Colaboradores) -->
+     <v-card variant="outlined" class="mt-3">
+       <v-card-title class="text-subtitle-2">
+         <v-icon size="18" class="mr-1">mdi-format-text</v-icon>
+         Formato de Resposta (Colaboradores)
+       </v-card-title>
+       <v-card-text>
+         <v-row>
+           <v-col cols="12">
+             <v-select
+               v-model="formData.response_style"
+               label="Estilo de Resposta"
+               :items="responseStyleOptions"
+               item-title="title"
+               item-value="value"
+               prepend-inner-icon="mdi-format-text"
+               persistent-hint
+             ></v-select>
+           </v-col>
+         </v-row>
+         <v-alert v-if="formData.response_style === 'structured'" type="success" variant="tonal" density="compact">
+           <template v-slot:prepend>
+             <v-icon>mdi-check-circle</v-icon>
+           </template>
+           <div>
+             <strong>Modo ESTRUTURADO (JSON) ativado</strong><br>
+             Colaboradores retornarão JSON com campos: <code>achados</code>, <code>dados</code>, <code>recomendacao</code>.
+           </div>
+         </v-alert>
+         <v-alert v-else type="warning" variant="tonal" density="compact">
+           <template v-slot:prepend>
+             <v-icon>mdi-alert</v-icon>
+           </template>
+           <div>
+             <strong>Modo NATURAL (texto livre) ativado</strong><br>
+             Colaboradores responderão em texto direto (menos estruturado, mais flexível).
+           </div>
+         </v-alert>
+       </v-card-text>
+     </v-card>
+
+     <v-divider class="my-4"></v-divider>
     
     <p class="text-subtitle-2 text-medium-emphasis mb-3">
       <v-icon size="18" class="mr-1">mdi-toggle-switch</v-icon>
@@ -336,16 +490,20 @@ export default {
     },
   },
   emits: ['update:activeProvider'],
-  data() {
-    return {
-      formValid: false,
-      activeProvider: null,
-      executionModeOptions: [
-        { label: 'Balanceado', value: 'balanced' },
-        { label: 'Priorizar Ferramentas', value: 'tools_first' },
-        { label: 'Priorizar Orquestração', value: 'orchestrator_first' },
-      ],
-    }
+   data() {
+     return {
+       formValid: false,
+       activeProvider: null,
+       executionModeOptions: [
+         { label: 'Balanceado', value: 'balanced' },
+         { label: 'Priorizar Ferramentas', value: 'tools_first' },
+         { label: 'Priorizar Orquestração', value: 'orchestrator_first' },
+       ],
+       responseStyleOptions: [
+         { title: 'Estruturado (JSON — recomendado para Qwen3)', value: 'structured' },
+         { title: 'Natural (texto livre)', value: 'natural' },
+       ],
+     }
   },
   methods: {
     formatContextLength(tokens) {

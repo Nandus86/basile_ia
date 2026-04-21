@@ -292,20 +292,26 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
     def create_llm(self, agent_config: Dict[str, Any]) -> ChatOpenAI:
         """Create LLM instance for an agent, routing to the correct provider.
         Supports reasoning models (O1, O3, DeepSeek R1) with special parameters.
+        Supports Qwen3 sampling parameters (top_p, top_k, min_p, etc).
         Automatically injects cost-tracking callbacks for LangSmith observability."""
         model_id = agent_config.get("model", "gpt-4o-mini")
         extra_config = agent_config.get("config", {})
         is_reasoning = extra_config.get("is_reasoning_model", False)
-        
+
         # Build kwargs based on model type
         kwargs = {"model": model_id}
-        
+
         if is_reasoning:
             # Reasoning models: no temperature, use reasoning_effort and max_completion_tokens
             reasoning_effort = extra_config.get("reasoning_effort", "medium")
             max_completion_tokens = extra_config.get("max_completion_tokens", 16384)
-            
-            kwargs["temperature"] = 1  # reasoning models require temperature=1
+
+            # Qwen3 thinking models use temperature=0.6, OpenAI O1/O3 use 1.0
+            if "qwen" in model_id.lower():
+                kwargs["temperature"] = 0.6
+            else:
+                kwargs["temperature"] = 1
+
             kwargs["model_kwargs"] = {
                 "reasoning_effort": reasoning_effort,
                 "max_completion_tokens": max_completion_tokens
@@ -314,10 +320,27 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             # Traditional models: use temperature and max_tokens
             kwargs["temperature"] = agent_config.get("temperature", 0.7)
             kwargs["max_tokens"] = agent_config.get("max_tokens", 2048)
-        
+
+            # Universal sampling params (supported by OpenAI and Qwen)
+            universal_params = ['top_p', 'presence_penalty', 'frequency_penalty']
+            for param in universal_params:
+                if param in extra_config and extra_config[param] is not None:
+                    kwargs[param] = extra_config[param]
+
+            # Qwen-specific sampling params (only for Qwen models)
+            if "qwen" in model_id.lower():
+                qwen_params = ['top_k', 'min_p', 'repetition_penalty']
+                for param in qwen_params:
+                    if param in extra_config and extra_config[param] is not None:
+                        kwargs[param] = extra_config[param]
+
+        # Structured output: force JSON if output_schema is defined
+        if agent_config.get("output_schema"):
+            kwargs["response_format"] = {"type": "json_object"}
+
         # Determina o provedor e as credenciais
         provider = agent_config.get("provider")
-        
+
         if provider and provider.is_active:
             # Custom AI Provider (Ollama, Anthropic, etc.)
             kwargs["api_key"] = provider.api_key
@@ -327,16 +350,16 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 # Isso resolve o problema comum de 404 no Ollama (que exige /v1 para compatibilidade OpenAI)
                 if "/v1" not in base_url and "/api" not in base_url:
                     base_url = base_url.rstrip("/") + "/v1"
-                
+
                 kwargs["base_url"] = base_url
-                logger.info(f"[AgentFactory] 🌐 Usando provedor customizado '{provider.name}' na URL '{base_url}' para o modelo '{model_id}'")
+                logger.info(f"[AgentFactory] 🌐 Using custom provider '{provider.name}' at '{base_url}' for model '{model_id}'")
             else:
-                logger.info(f"[AgentFactory] 🌐 Usando provedor customizado '{provider.name}' (sem base_url) para o modelo '{model_id}'")
+                logger.info(f"[AgentFactory] 🌐 Using custom provider '{provider.name}' (no base_url) for model '{model_id}'")
         else:
             # Fallback para lógica padrão (OpenRouter/OpenAI)
             openrouter_specials = ["sambanova", "groq"]
             is_openrouter = "/" in model_id or model_id in openrouter_specials
-            
+
             if is_openrouter:
                 # OpenRouter model
                 kwargs["api_key"] = settings.OPENROUTER_API_KEY
@@ -344,13 +367,13 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             else:
                 # OpenAI direct
                 kwargs["api_key"] = settings.OPENAI_API_KEY
-            
-        # Apply resilience timeout 
+
+        # Apply resilience timeout
         resilience_cfg = agent_config.get("resilience", {})
         timeout_seconds = resilience_cfg.get("timeout_seconds")
         if timeout_seconds:
             kwargs["timeout"] = float(timeout_seconds)
-        
+
         # Inject cost-tracking callbacks (only when LangSmith tracing is active)
         if settings.LANGCHAIN_TRACING_V2:
             kwargs["callbacks"] = build_cost_callbacks(
@@ -358,7 +381,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 openrouter_api_key=settings.OPENROUTER_API_KEY,
                 openai_api_key=settings.OPENAI_API_KEY,
             )
-        
+
         return ChatOpenAI(**kwargs)
     
     def get_run_config(self, agent_config: Dict[str, Any]) -> RunnableConfig:

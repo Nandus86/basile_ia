@@ -213,11 +213,14 @@ Responda APENAS em JSON válido com este formato exato:
             )
         else:
             response_format_block = (
-                "FORMATO DE RESPOSTA FINAL (Use apenas quando já tiver todos os dados):\n"
-                "Você DEVE responder ao coordenador de forma estruturada:\n"
-                "1. **ACHADOS**: O que você encontrou/analisou\n"
-                "2. **DADOS**: Dados coletados, registros encontrados ou ações executadas (apresente os dados reais obtidos das ferramentas)\n"
-                "3. **RECOMENDAÇÃO**: Sua recomendação técnica para a resposta final\n\n"
+                "FORMATO DE RESPOSTA (OBRIGATÓRIO - JSON):\n"
+                "Você DEVE responder APENAS com um objeto JSON contendo:\n"
+                "- `achados` (array): O que você encontrou/analisou\n"
+                "- `dados` (object): Dados coletados, registros, valores numéricos\n"
+                "- `recomendacao` (string): Recomendação técnica para o coordenador\n\n"
+                "Exemplo:\n"
+                '{"achados": ["Encontrado 3 registros"], "dados": {"total": 3, "itens": [...]}, "recomendacao": "Proceder com..."}\n\n'
+                "⚠️ NÃO adicione texto introdutório, explicações ou markdown fora do JSON.\n"
             )
         
         collab_instruction = (

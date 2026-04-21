@@ -2386,13 +2386,20 @@ const formData = reactive({
   true_trigger_match_mode: 'word',
   entity_memory_path: null,
   provider_id: null,
-  config: {
-    is_reasoning_model: false,
-    reasoning_effort: 'medium',
-    max_completion_tokens: 16384,
-    short_term_memory_enabled: true,
-    short_term_memory_ttl_hours: 24
-  },
+     config: {
+       is_reasoning_model: false,
+       reasoning_effort: 'medium',
+       max_completion_tokens: 16384,
+       short_term_memory_enabled: true,
+       short_term_memory_ttl_hours: 24,
+       // Qwen3 sampling parameters (defaults)
+       top_p: 0.8,
+       top_k: 20,
+       min_p: 0.0,
+       repetition_penalty: 1.0,
+       presence_penalty: 0.0,
+       frequency_penalty: 0.0
+     },
   status_updates_enabled: false,
   status_updates_config: {
     initial_delay_seconds: 5,
@@ -2822,52 +2829,54 @@ watch(activeTab, (newTab) => {
 })
 
 function resetForm() {
-  Object.assign(formData, {
-    id: null,
-    name: '',
-    description: '',
-    system_prompt: '',
-    model: 'gpt-4o-mini',
-    temperature: '0.7',
-    max_tokens: '2000',
-    is_active: true,
-    access_level: 'normal',
-    collaboration_enabled: true,
-    vector_memory_enabled: false,
-    information_bases_global_search_enabled: false,
-    is_orchestrator: false,
-    execution_mode: 'balanced',
-    is_planner: false,
+   Object.assign(formData, {
+     id: null,
+     name: '',
+     description: '',
+     system_prompt: '',
+     model: 'gpt-4o-mini',
+     temperature: '0.7',
+     max_tokens: '2000',
+     is_active: true,
+     access_level: 'normal',
+     collaboration_enabled: true,
+     vector_memory_enabled: false,
+     information_bases_global_search_enabled: false,
+     is_orchestrator: false,
+     execution_mode: 'balanced',
+     is_planner: false,
+     response_style: 'structured',   // ← NOVO: default structured (JSON)
 
-    is_thinker: false,
-    thinker_prompt: '',
-    thinker_model: 'gpt-4o-mini',
-    thinker_ids: [],
-    thinker_restrictive: false,
-    planner_prompt: '',
-    planner_model: 'gpt-4o-mini',
-    is_guardrail_active: false,
-    guardrail_prompt: '',
-    guardrail_model: 'gpt-4o-mini',
-    emotional_profile_id: null,
-    emotional_intensity: 'medium',
-    output_schema: null,
-    input_schema: null,
-    transition_input_schema: null,
-    transition_output_schema: null,
-    trigger_keywords: [],
-    true_trigger_keywords: [],
-    true_trigger_match_mode: 'word',
-    entity_memory_path: null,
-    config: {
-      is_reasoning_model: false,
-      reasoning_effort: 'medium',
-      max_completion_tokens: 16384,
-      short_term_memory_enabled: true,
-      short_term_memory_ttl_hours: 24
-    },
-    provider_id: null
-  })
+     is_thinker: false,
+     thinker_prompt: '',
+     thinker_model: 'gpt-4o-mini',
+     thinker_ids: [],
+     thinker_restrictive: false,
+     planner_prompt: '',
+     planner_model: 'gpt-4o-mini',
+     is_guardrail_active: false,
+     guardrail_prompt: '',
+     guardrail_model: 'gpt-4o-mini',
+     emotional_profile_id: null,
+     emotional_intensity: 'medium',
+     output_schema: null,
+     input_schema: null,
+     transition_input_schema: null,
+     transition_output_schema: null,
+     trigger_keywords: [],
+     true_trigger_keywords: [],
+     true_trigger_match_mode: 'word',
+     entity_memory_path: null,
+     config: {
+       is_reasoning_model: false,
+       reasoning_effort: 'medium',
+       max_completion_tokens: 16384,
+       short_term_memory_enabled: true,
+       short_term_memory_ttl_hours: 24
+       // sampling params (top_p, top_k, etc) são opcionais — não incluir aqui
+     },
+     provider_id: null
+   })
   formDataConfigJson.value = JSON.stringify(formData.config, null, 2)
   outputSchemaJson.value = ''
   outputSchemaError.value = ''
