@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any, TypedDict
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain.agents import create_react_agent
+from langgraph.prebuilt import create_react_agent
 from langgraph.graph import StateGraph, START, END
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
