@@ -437,9 +437,10 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             
         return system_prompt
 
-    async def _inject_dynamic_skills(self, agent_config: Dict[str, Any], messages: List[Any], system_prompt: str) -> str:
-        """Inject skills dynamically based on user intent."""
+    async def _get_dynamic_skills_prompt(self, agent_config: Dict[str, Any], messages: List[Any]) -> str:
+        """Get dynamic skills injection prompt based on user intent."""
         from langchain_core.messages import HumanMessage
+        import re
         
         last_user_content = ""
         for msg in reversed(messages):
@@ -448,69 +449,88 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 break
                 
         if not last_user_content:
-            return system_prompt
+            return ""
+            
+        # Strip temporal prefix to not confuse the router
+        last_user_content = re.sub(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*', '', last_user_content).strip()
             
         agent = agent_config.get("agent_model")
         if not agent or not getattr(agent, "skills", None):
-            return system_prompt
+            return ""
             
-        active_skills_for_detection = [s for s in agent.skills if s.is_active]
-        if not active_skills_for_detection:
-            return system_prompt
+        active_skills = [s for s in agent.skills if s.is_active]
+        if not active_skills:
+            return ""
             
+        always_active_skills = [s for s in active_skills if getattr(s, "always_active", False)]
+        regular_skills = [s for s in active_skills if not getattr(s, "always_active", False)]
+        
+        injection_text = ""
+        
         try:
-            from app.orchestrator.skill_router import SkillRouter
             from app.services.skill_detector import get_skill_content_for_capability, extract_all_flows
             
-            router = SkillRouter()
-            skill_route = await router.analyze(last_user_content, active_skills_for_detection)
-            
-            if skill_route:
-                skill = skill_route["skill"]
-                forced = skill_route.get("forced", False)
-                
+            # 1. Always Active Skills
+            for skill in always_active_skills:
                 all_flows = extract_all_flows(skill)
-                
                 if all_flows:
                     flows_text = "\n\n".join([
                         f"### Etapa {f['etapa']}\n{f['flow']}\n" + 
                         ("⚠️ **AGUARDE RESPOSTA DO USUÁRIO ANTES DE CONTINUAR**\n" if f['has_hitl'] else "")
                         for f in all_flows
                     ])
-                    
-                    flow_injection = f"\n---\n\n## 🎯 FLUXO DE EXECUÇÃO - {skill.name}\n\nSiga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:\n\n{flows_text}\n\n---\n"
-                    system_prompt += flow_injection
-                    logger.info(f"[AgentFactory] 🎯 Injected {len(all_flows)} flow(s) from skill '{skill.name}' (via Skill Router)")
+                    flow_injection = f"\n---\n\n## 🎯 FLUXO DE EXECUÇÃO OBRIGATÓRIO - {skill.name}\n\nSiga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:\n\n{flows_text}\n\n---\n"
+                    injection_text += flow_injection
+                    logger.info(f"[AgentFactory] 🎯 Injected always_active flow from skill '{skill.name}'")
                 else:
-                    if forced:
-                        capabilities = skill_route.get("capabilities", [])
-                        injected_count = 0
-                        for cap in capabilities:
-                            cap_content = get_skill_content_for_capability(skill, cap["header"])
-                            if cap_content:
-                                skill_injection = f"\n---\n\n## 🔹 CAPABILITY ATIVADA: {cap['header']}\n\n{cap_content}\n\n---\n"
-                                system_prompt += skill_injection
-                                injected_count += 1
-                        
-                        if injected_count == 0 and skill.content_md:
-                            skill_injection = f"\n---\n\n## 🔹 CAPABILITIES DA SKILL ATIVA: {skill.name}\n\n{skill.content_md}\n\n---\n"
-                            system_prompt += skill_injection
+                    from app.schemas.skill import get_skills_capabilities_summary
+                    caps = get_skills_capabilities_summary(skill)
+                    injected_count = 0
+                    for cap in caps:
+                        cap_content = get_skill_content_for_capability(skill, cap["header"])
+                        if cap_content:
+                            skill_injection = f"\n---\n\n## 🔹 CAPABILITY ATIVADA: {cap['header']} (Obrigatório)\n\n{cap_content}\n\n---\n"
+                            injection_text += skill_injection
+                            injected_count += 1
                             
-                        logger.info(f"[AgentFactory] 🎯 Injected ALL capabilities ({injected_count}) from always_active skill '{skill.name}'")
+                    if injected_count == 0 and skill.content_md:
+                        skill_injection = f"\n---\n\n## 🔹 CAPABILITIES DA SKILL ATIVA: {skill.name}\n\n{skill.content_md}\n\n---\n"
+                        injection_text += skill_injection
+            
+            # 2. Regular Skills via Router
+            if regular_skills:
+                from app.orchestrator.skill_router import SkillRouter
+                router = SkillRouter()
+                skill_route = await router.analyze(last_user_content, regular_skills)
+                
+                if skill_route:
+                    skill = skill_route["skill"]
+                    all_flows = extract_all_flows(skill)
+                    
+                    if all_flows:
+                        flows_text = "\n\n".join([
+                            f"### Etapa {f['etapa']}\n{f['flow']}\n" + 
+                            ("⚠️ **AGUARDE RESPOSTA DO USUÁRIO ANTES DE CONTINUAR**\n" if f['has_hitl'] else "")
+                            for f in all_flows
+                        ])
+                        
+                        flow_injection = f"\n---\n\n## 🎯 FLUXO DE EXECUÇÃO DETECTADO - {skill.name}\n\nO usuário solicitou uma ação que exige este fluxo. Siga as etapas ABAIXO NA ORDEM EXATA, SEM PULAR ETAPAS:\n\n{flows_text}\n\n---\n"
+                        injection_text += flow_injection
+                        logger.info(f"[AgentFactory] 🎯 Injected {len(all_flows)} flow(s) from skill '{skill.name}' (via Skill Router)")
                     else:
                         capability = skill_route.get("capability")
                         if capability:
                             capability_content = get_skill_content_for_capability(skill, capability["header"])
                             if capability_content:
-                                skill_injection = f"\n---\n\n## 🔹 CAPABILITY ATIVADA: {capability['header']}\n\n{capability_content}\n\n---\n"
-                                system_prompt += skill_injection
+                                skill_injection = f"\n---\n\n## 🔹 CAPABILITY ATIVADA: {capability['header']}\n\nO usuário solicitou uma ação que exige esta capability. Siga rigorosamente as instruções:\n\n{capability_content}\n\n---\n"
+                                injection_text += skill_injection
                                 logger.info(f"[AgentFactory] 🎯 Injected skill capability '{capability['header']}' from skill '{skill.name}'")
         except Exception as e:
             import traceback
             logger.error(f"[AgentFactory] Failed to detect and inject skills: {e}")
             traceback.print_exc()
             
-        return system_prompt
+        return injection_text
     
     async def invoke_agent(
         self,
@@ -538,10 +558,10 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         budget_cfg = (agent_config.get("config") or {}).get("execution_budget") or {}
         budget = ExecutionBudget(
-            max_total_actions=int(budget_cfg.get("max_total_actions_per_turn", 4)),
-            max_tool_calls=int(budget_cfg.get("max_tool_calls_per_turn", 3)),
-            max_collab_calls=int(budget_cfg.get("max_collab_calls_per_turn", 1)),
-            max_wall_time_seconds=int(budget_cfg.get("max_wall_time_per_turn_seconds", 25)),
+            max_total_actions=int(budget_cfg.get("max_total_actions_per_turn", 7)),
+            max_tool_calls=int(budget_cfg.get("max_tool_calls_per_turn", 5)),
+            max_collab_calls=int(budget_cfg.get("max_collab_calls_per_turn", 2)),
+            max_wall_time_seconds=int(budget_cfg.get("max_wall_time_per_turn_seconds", 35)),
         )
         seen_fingerprints = set()
 
@@ -650,8 +670,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         # Inject RLHF Training Rules
         system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
         
-        # Inject Dynamic Skills (using new LLM-based router)
-        system_prompt = await self._inject_dynamic_skills(agent_config, messages, system_prompt)
+        # Get Dynamic Skills Prompt (we will append it at the VERY END for maximum attention)
+        dynamic_skills_prompt = await self._get_dynamic_skills_prompt(agent_config, messages)
         
         # Add RAG context if available
         if rag_context:
@@ -797,8 +817,14 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
 - Somente se falhar definitivamente após {max_retries} tentativas, explique ao usuário o motivo da falha.
 - **NUNCA chame a mesma ferramenta com os mesmos argumentos repetidamente.**
 - ⏱️ LIMITE DE TEMPO: Você tem no máximo {timeout_seconds} segundos para completar toda a execução. Priorize as ações mais importantes e evite chamadas desnecessárias de ferramentas.
+- ✅ REGRA DE FINALIZAÇÃO: Se você já possui informação suficiente para responder o usuário, NÃO solicite mais passos. Responda imediatamente com a resposta final, mesmo que você achasse que precisaria de mais dados.
 """
             full_prompt = system_prompt + tool_instructions
+            
+            # AGORA ANEXA AS SKILLS NO FIM DE TUDO!
+            if dynamic_skills_prompt:
+                full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
+                
             agent_messages = [SystemMessage(content=full_prompt)] + messages
 
             react_agent = create_react_agent(
@@ -815,33 +841,52 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 [t.name for t in selected_tools],
             )
 
-            recursion_limit = max(12, max_retries * 4 + 4)
+            recursion_limit = max(25, max_retries * 6 + 8)
 
-            if resolved_execution_mode in {"tools_first", "orchestrator_first"}:
-                class ExecState(TypedDict, total=False):
-                    messages: List[Any]
+            # Tratamento para erro "need more steps" do LangGraph
+            from langgraph.errors import GraphRecursionError
 
-                graph = StateGraph(ExecState)
+            try:
+                if resolved_execution_mode in {"tools_first", "orchestrator_first"}:
+                    class ExecState(TypedDict, total=False):
+                        messages: List[Any]
 
-                async def run_agent_node(state: ExecState):
-                    if not budget.can_continue():
-                        return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
+                    graph = StateGraph(ExecState)
+
+                    async def run_agent_node(state: ExecState):
+                        if not budget.can_continue():
+                            return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
+                        result = await react_agent.ainvoke(
+                            {"messages": state["messages"]},
+                            config={**run_config, "recursion_limit": recursion_limit},
+                        )
+                        return {"messages": result.get("messages", [])}
+
+                    graph.add_node("run_agent", run_agent_node)
+                    graph.add_edge(START, "run_agent")
+                    graph.add_edge("run_agent", END)
+                    compiled = graph.compile()
+                    result = await compiled.ainvoke({"messages": agent_messages})
+                else:
                     result = await react_agent.ainvoke(
-                        {"messages": state["messages"]},
+                        {"messages": agent_messages},
                         config={**run_config, "recursion_limit": recursion_limit},
                     )
-                    return {"messages": result.get("messages", [])}
-
-                graph.add_node("run_agent", run_agent_node)
-                graph.add_edge(START, "run_agent")
-                graph.add_edge("run_agent", END)
-                compiled = graph.compile()
-                result = await compiled.ainvoke({"messages": agent_messages})
-            else:
-                result = await react_agent.ainvoke(
-                    {"messages": agent_messages},
-                    config={**run_config, "recursion_limit": recursion_limit},
-                )
+            except GraphRecursionError as recursion_err:
+                logger.warning(f"[AgentFactory] ⚠️ LangGraph recursion limit atingido, extraindo última resposta válida: {recursion_err}")
+                # Extraímos o estado parcial que o LangGraph retorna mesmo no erro
+                if hasattr(recursion_err, 'args') and len(recursion_err.args) > 1 and 'state' in recursion_err.args[1]:
+                    result = recursion_err.args[1]['state']
+                    logger.info("[AgentFactory] ✅ Recuperado estado parcial do agente")
+                else:
+                    # Fallback: executar LLM diretamente sem ReAct
+                    try:
+                        logger.info("[AgentFactory] 🔄 Fallback para LLM direto sem ferramentas")
+                        response = await llm.ainvoke([SystemMessage(content=full_prompt)] + messages, config=run_config)
+                        return response.content
+                    except Exception as fallback_err:
+                        logger.error(f"[AgentFactory] ❌ Fallback também falhou: {fallback_err}")
+                        return "Desculpe, não consegui processar esta solicitação completamente. Por favor, reformule sua pergunta ou tente novamente."
 
             final_messages = result.get("messages", [])
             for msg in final_messages:
@@ -893,6 +938,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                     f"Consulte e aplique RIGOROSAMENTE as instruções das skills ANTES de responder.\n"
                     f"Se uma skill define um passo-a-passo, siga-o na ORDEM EXATA.\n"
                 )
+                
+            if dynamic_skills_prompt:
+                system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
 
             all_messages = [SystemMessage(content=system_prompt)] + messages
             
@@ -952,8 +1000,8 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         # Inject RLHF Training Rules
         system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
         
-        # Inject Dynamic Skills (using new LLM-based router)
-        system_prompt = await self._inject_dynamic_skills(agent_config, messages, system_prompt)
+        # Get Dynamic Skills Prompt
+        dynamic_skills_prompt = await self._get_dynamic_skills_prompt(agent_config, messages)
         
         # Add RAG context if available
         if rag_context:
@@ -980,6 +1028,10 @@ Você DEVE responder com um objeto JSON estritamente estruturado contendo os seg
 Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, NUNCA o omita.
 """
         
+        # AGORA ANEXA AS SKILLS NO FIM DE TUDO!
+        if dynamic_skills_prompt:
+            system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
+            
         all_messages = [SystemMessage(content=system_prompt)] + messages
         
         try:
