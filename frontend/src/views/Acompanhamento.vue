@@ -83,65 +83,85 @@
 
     <!-- Data Table -->
     <v-card class="glass-card">
-      <v-card-title class="d-flex align-center px-6 py-4">
-        <v-icon class="mr-2" color="primary">mdi-history</v-icon>
-        <span class="text-white font-weight-medium">Histórico de Webhooks</span>
-        <v-spacer></v-spacer>
-        <v-text-field
-          v-model="searchPath"
-          prepend-inner-icon="mdi-magnify"
-          placeholder="Buscar por Path..."
-          variant="outlined"
-          density="compact"
-          hide-details
-          class="mr-3"
-          style="max-width: 180px"
-          @keyup.enter="fetchLogs"
-        ></v-text-field>
-        <v-text-field
-          v-model="searchSessionId"
-          prepend-inner-icon="mdi-identifier"
-          placeholder="Buscar por Session ID..."
-          variant="outlined"
-          density="compact"
-          hide-details
-          class="mr-3"
-          style="max-width: 220px"
-          @keyup.enter="fetchLogs"
-        ></v-text-field>
-        <v-text-field
-          v-model="searchChurchName"
-          prepend-inner-icon="mdi-church"
-          placeholder="Buscar por Igreja..."
-          variant="outlined"
-          density="compact"
-          hide-details
-          class="mr-3"
-          style="max-width: 200px"
-          @keyup.enter="fetchLogs"
-        ></v-text-field>
-        <v-text-field
-          v-model="searchMemberName"
-          prepend-inner-icon="mdi-account"
-          placeholder="Buscar por Nome..."
-          variant="outlined"
-          density="compact"
-          hide-details
-          class="mr-3"
-          style="max-width: 200px"
-          @keyup.enter="fetchLogs"
-        ></v-text-field>
-        <v-select
-          v-model="statusFilter"
-          :items="statusOptions"
-          label="Status"
-          variant="outlined"
-          density="compact"
-          hide-details
-          style="max-width: 180px"
-          clearable
-          @update:model-value="fetchLogs"
-        ></v-select>
+      <v-card-title class="d-flex flex-wrap align-center px-6 py-4" style="gap: 12px;">
+        <div class="d-flex align-center mr-auto w-100 mb-2">
+          <v-icon class="mr-2" color="primary">mdi-history</v-icon>
+          <span class="text-white font-weight-medium">Histórico de Webhooks</span>
+          <v-spacer></v-spacer>
+        </div>
+        <div class="d-flex flex-wrap align-center" style="gap: 12px; width: 100%;">
+          <v-text-field
+            v-model="searchPath"
+            prepend-inner-icon="mdi-magnify"
+            placeholder="Path..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            @keyup.enter="fetchLogs"
+          ></v-text-field>
+          <v-text-field
+            v-model="searchSessionId"
+            prepend-inner-icon="mdi-identifier"
+            placeholder="Session ID..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            @keyup.enter="fetchLogs"
+          ></v-text-field>
+          <v-text-field
+            v-model="searchChurchName"
+            prepend-inner-icon="mdi-church"
+            placeholder="Igreja..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            @keyup.enter="fetchLogs"
+          ></v-text-field>
+          <v-text-field
+            v-model="searchMemberName"
+            prepend-inner-icon="mdi-account"
+            placeholder="Nome..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            @keyup.enter="fetchLogs"
+          ></v-text-field>
+          <v-text-field
+            v-model="searchMessage"
+            prepend-inner-icon="mdi-message-text"
+            placeholder="Mensagem..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            @keyup.enter="fetchLogs"
+          ></v-text-field>
+          <v-text-field
+            v-model="searchResponse"
+            prepend-inner-icon="mdi-robot"
+            placeholder="Resposta..."
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            @keyup.enter="fetchLogs"
+          ></v-text-field>
+          <v-select
+            v-model="statusFilter"
+            :items="statusOptions"
+            label="Status"
+            variant="outlined"
+            density="compact"
+            hide-details
+            style="min-width: 150px; flex: 1;"
+            clearable
+            @update:model-value="fetchLogs"
+          ></v-select>
+        </div>
       </v-card-title>
       
       <v-divider></v-divider>
@@ -724,6 +744,8 @@ const searchPath = ref('')
 const searchSessionId = ref('')
 const searchChurchName = ref('')
 const searchMemberName = ref('')
+const searchMessage = ref('')
+const searchResponse = ref('')
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
@@ -906,6 +928,8 @@ const fetchLogs = async () => {
     if (searchSessionId.value) url += `&session_id=${encodeURIComponent(searchSessionId.value)}`
     if (searchChurchName.value) url += `&church_name=${encodeURIComponent(searchChurchName.value)}`
     if (searchMemberName.value) url += `&member_name=${encodeURIComponent(searchMemberName.value)}`
+    if (searchMessage.value) url += `&user_message=${encodeURIComponent(searchMessage.value)}`
+    if (searchResponse.value) url += `&agent_response=${encodeURIComponent(searchResponse.value)}`
 
     const { data } = await axiosInstance.get(url)
 

@@ -841,7 +841,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 [t.name for t in selected_tools],
             )
 
-            recursion_limit = max(25, max_retries * 6 + 8)
+            recursion_limit = max(150, max_retries * 10 + 50)
 
             # Tratamento para erro "need more steps" do LangGraph
             from langgraph.errors import GraphRecursionError

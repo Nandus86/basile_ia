@@ -34,6 +34,8 @@ async def get_tracking_logs(
     session_id: Optional[str] = None,
     church_name: Optional[str] = None,
     member_name: Optional[str] = None,
+    user_message: Optional[str] = None,
+    agent_response: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Get paginated list of system webhook/job logs (lightweight list view)."""
@@ -49,8 +51,10 @@ async def get_tracking_logs(
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"church_name\":%{church_name}%"))
     if member_name:
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"))
-    if "user_message" in locals() and user_message:
-        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"message\":%{user_message}%"))
+    if user_message:
+        query = query.where(JobLog.request_data.cast(String).ilike(f"%{user_message}%"))
+    if agent_response:
+        query = query.where(JobLog.response_data.cast(String).ilike(f"%{agent_response}%"))
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
