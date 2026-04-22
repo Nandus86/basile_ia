@@ -75,11 +75,11 @@ async def get_tracking_logs(
             
         response_data = log.response_data
         if isinstance(response_data, dict):
-            item.agent_response = response_data.get("response") or response_data.get("output") or response_data.get("resposta")
+            item.agent_response = response_data.get("result") or response_data.get("response") or response_data.get("output") or response_data.get("resposta")
             
             # Algumas vezes a resposta é um dict (ex: OpenRouter output)
             if isinstance(item.agent_response, dict):
-                item.agent_response = item.agent_response.get("output") or item.agent_response.get("response") or str(item.agent_response)
+                item.agent_response = item.agent_response.get("result") or item.agent_response.get("output") or item.agent_response.get("response") or str(item.agent_response)
 
         # Keep list payload small for stable pagination with high limits.
         item.request_data = None
@@ -130,9 +130,9 @@ async def get_job_details(job_id: str, db: AsyncSession = Depends(get_db)):
             response_data = None
             
     if isinstance(response_data, dict):
-        item.agent_response = response_data.get("response") or response_data.get("output") or response_data.get("resposta")
+        item.agent_response = response_data.get("result") or response_data.get("response") or response_data.get("output") or response_data.get("resposta")
         if isinstance(item.agent_response, dict):
-            item.agent_response = item.agent_response.get("output") or item.agent_response.get("response") or str(item.agent_response)
+            item.agent_response = item.agent_response.get("result") or item.agent_response.get("output") or item.agent_response.get("response") or str(item.agent_response)
 
     return item
 
