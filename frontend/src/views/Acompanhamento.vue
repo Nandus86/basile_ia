@@ -164,9 +164,9 @@
         </template>
         
         <template v-slot:item.session_id="{ item }">
-          <span v-if="item.session_id" class="text-body-2 font-weight-medium text-info">
+          <div v-if="item.session_id" class="text-body-2 font-weight-medium text-info text-truncate" style="max-width: 100px" :title="item.session_id">
             {{ item.session_id }}
-          </span>
+          </div>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
@@ -181,14 +181,14 @@
         </template>
 
         <template v-slot:item.user_message="{ item }">
-          <div v-if="item.user_message" class="text-body-2 text-truncate" style="max-width: 250px" :title="item.user_message">
+          <div v-if="item.user_message" class="text-body-2 text-truncate" style="max-width: 180px" :title="item.user_message">
             {{ item.user_message }}
           </div>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
         <template v-slot:item.agent_response="{ item }">
-          <div v-if="item.agent_response" class="text-body-2 text-truncate" style="max-width: 250px" :title="item.agent_response">
+          <div v-if="item.agent_response" class="text-body-2 text-truncate" style="max-width: 180px" :title="item.agent_response">
             {{ item.agent_response }}
           </div>
           <span v-else class="text-medium-emphasis">—</span>
@@ -728,16 +728,16 @@ const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
 const headers = [
-  { title: 'Data/Hora', key: 'created_at', sortable: false },
-  { title: 'Session ID', key: 'session_id', sortable: false },
-  { title: 'Igreja', key: 'church_name', sortable: false },
-  { title: 'Nome', key: 'member_fullname', sortable: false },
-  { title: 'Mensagem (Input)', key: 'user_message', sortable: false },
-  { title: 'Resposta (Output)', key: 'agent_response', sortable: false },
-  { title: 'Webhook Path', key: 'webhook_path', sortable: false },
-  { title: 'Status', key: 'status', sortable: false },
-  { title: 'Tempo', key: 'duration_ms', sortable: false },
-  { title: 'Ação', key: 'actions', sortable: false, align: 'center' }
+  { title: 'Data/Hora', key: 'created_at', sortable: false, width: '120px' },
+  { title: 'Session ID', key: 'session_id', sortable: false, width: '100px' },
+  { title: 'Igreja', key: 'church_name', sortable: false, width: '120px' },
+  { title: 'Nome', key: 'member_fullname', sortable: false, width: '120px' },
+  { title: 'Mensagem (Input)', key: 'user_message', sortable: false, width: '180px' },
+  { title: 'Resposta (Output)', key: 'agent_response', sortable: false, width: '180px' },
+  { title: 'Webhook Path', key: 'webhook_path', sortable: false, width: '120px' },
+  { title: 'Status', key: 'status', sortable: false, width: '100px' },
+  { title: 'Tempo', key: 'duration_ms', sortable: false, width: '100px' },
+  { title: 'Ação', key: 'actions', sortable: false, align: 'center', width: '140px' }
 ]
 
 const dialog = ref(false)
