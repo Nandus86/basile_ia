@@ -416,16 +416,31 @@ Responda APENAS em JSON válido com este formato exato:
             print(f"[Orchestrator] ⚠️ Error in thinker processing for collaborator: {e}")
             traceback.print_exc()
         
-        # Build messages: History + Final Custom Human Message
+        # Build messages from EPHEMERAL STM (isolated per collaborator)
+        # Collaborators do NOT see the orchestrator's main conversation history.
+        # They only see their own prior interactions (if Thinker has pending tasks).
         messages = []
-        for msg in history:
-            timestamp = msg.get("created_at") or msg.get("timestamp")
-            prefix = f"[{timestamp}] " if timestamp else ""
-            
-            if msg.get("role") == "user":
-                messages.append(HumanMessage(content=f"{prefix}{msg['content']}"))
-            elif msg.get("role") == "assistant":
-                messages.append(AIMessage(content=f"{prefix}{msg['content']}"))
+        collab_session_id = context_data.get("session_id") if context_data else None
+        collab_agent_id = str(agent.id)
+        _has_thinker_tasks = False
+
+        if collab_session_id:
+            try:
+                from app.redis_client import get_redis
+                _redis_eph = await get_redis()
+                agent_mem = await _redis_eph.get_agent_memory(collab_session_id, collab_agent_id)
+                if agent_mem and agent_mem.get("task_list") and agent_mem.get("status") == "in_progress":
+                    _has_thinker_tasks = True
+                    ephemeral_msgs = await _redis_eph.get_collab_conversation(collab_session_id, collab_agent_id)
+                    for msg in ephemeral_msgs:
+                        if msg.get("role") == "user":
+                            messages.append(HumanMessage(content=msg["content"]))
+                        elif msg.get("role") == "assistant":
+                            messages.append(AIMessage(content=msg["content"]))
+                    if ephemeral_msgs:
+                        print(f"[Orchestrator] 📂 Loaded {len(ephemeral_msgs)} ephemeral STM messages for '{agent.name}'")
+            except Exception as eph_err:
+                print(f"[Orchestrator] ⚠️ Error loading ephemeral STM: {eph_err}")
 
         # [NESTED ORCHESTRATION] Load collaborator tools for nested orchestrators
         if getattr(agent, "is_orchestrator", False) and getattr(agent, "collaboration_enabled", False):
@@ -537,6 +552,22 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 )
             
             print(f"[Orchestrator] ✅ Collaborator '{agent.name}' responded")
+
+            # ── Ephemeral STM lifecycle ──
+            if collab_session_id:
+                try:
+                    from app.redis_client import get_redis
+                    _redis_post = await get_redis()
+                    if _has_thinker_tasks:
+                        # Save turn to ephemeral STM for continuity
+                        await _redis_post.add_collab_message(collab_session_id, collab_agent_id, "user", orientation or message)
+                        if response_text:
+                            await _redis_post.add_collab_message(collab_session_id, collab_agent_id, "assistant", response_text)
+                        print(f"[Orchestrator] 💾 Saved turn to ephemeral STM for '{agent.name}'")
+                    # If no thinker tasks → don't save (start from zero next time)
+                except Exception as eph_save_err:
+                    print(f"[Orchestrator] ⚠️ Error saving ephemeral STM: {eph_save_err}")
+
             return (agent.name, response_text)
             
         except Exception as e:
@@ -605,12 +636,12 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
             
         print(f"[Orchestrator] 🔄 Consulting {len(selected_collaborators)} selected collaborators (from {len(decision['agents_to_consult'])} requested)")
         
-        conversation_history = history or []
+        
         tasks = [
             self._invoke_collaborator(
                 agent=collaborator,
                 message=message,
-                history=conversation_history,
+                history=[],  # Collaborators now use their own ephemeral STM
                 context=context,
                 context_data=context_data,
                 orientation=orientation,
@@ -668,8 +699,9 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                                                 # Check if all completed
                                                 all_completed = all(t.get("completed", False) for t in task_list)
                                                 if all_completed:
-                                                    print(f"[Orchestrator] 🧠 All tasks completed for '{name}', clearing memory...")
+                                                    print(f"[Orchestrator] 🧠 All tasks completed for '{name}', clearing memory + ephemeral STM...")
                                                     await _redis.delete_agent_memory(session_id, str(collaborator.id))
+                                                    await _redis.clear_collab_conversation(session_id, str(collaborator.id))
                                                 break
                     except Exception as te:
                         print(f"[Orchestrator] ⚠️ Error updating Thinker memory: {te}")

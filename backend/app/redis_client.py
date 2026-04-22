@@ -341,6 +341,49 @@ class RedisClient:
         await self.set_agent_memory(session_id, agent_id, current, ttl_seconds)
         return True
 
+    # ─── Collaborator Ephemeral STM ──────────────────────────
+
+    async def add_collab_message(
+        self,
+        session_id: str,
+        collab_agent_id: str,
+        role: str,
+        content: str,
+        ttl_seconds: int = 3600
+    ):
+        """
+        Add a message to a collaborator's ephemeral STM.
+        Key format: collab_stm:{session_id}:{collab_agent_id}
+        This memory is isolated per collaborator — not shared with the orchestrator's STM.
+        """
+        client = await self.connect()
+        key = f"collab_stm:{session_id}:{collab_agent_id}"
+        message = json.dumps({"role": role, "content": content})
+        await client.rpush(key, message)
+        await client.expire(key, ttl_seconds)
+
+    async def get_collab_conversation(
+        self,
+        session_id: str,
+        collab_agent_id: str,
+        limit: int = 20
+    ) -> List[dict]:
+        """Get a collaborator's ephemeral conversation history."""
+        client = await self.connect()
+        key = f"collab_stm:{session_id}:{collab_agent_id}"
+        messages = await client.lrange(key, -limit, -1)
+        return [json.loads(m) for m in messages]
+
+    async def clear_collab_conversation(
+        self,
+        session_id: str,
+        collab_agent_id: str
+    ):
+        """Destroy a collaborator's ephemeral STM."""
+        client = await self.connect()
+        key = f"collab_stm:{session_id}:{collab_agent_id}"
+        await client.delete(key)
+
 
 # Global instance
 redis_client = RedisClient()

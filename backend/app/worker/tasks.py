@@ -1118,12 +1118,11 @@ async def _build_collaborator_tools(
         async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner, _p_prompt=_planner_prompt, _p_model=_planner_model, _r_style=_response_style) -> str:
             """
             Invoke a collaborator agent with the given instruction.
+            Uses CollaboratorExecutor for isolated ephemeral history management.
             Args:
                 instrucao: Clear instruction of what this specialist agent should do
             """
             try:
-                orch = AgentOrchestrator(_database)
-                
                 final_instruction = instrucao
                 
                 if _planner_enabled:
@@ -1157,13 +1156,13 @@ async def _build_collaborator_tools(
                     except Exception as planner_err:
                         print(f"[CollabTool] ⚠️ Erro no Planner LLM, enviando instrução original. Erro: {planner_err}")
 
-                name, response = await orch._invoke_collaborator(
-                    agent=_agent,
-                    message=final_instruction,
-                    history=[],
-                    context="",
+                from app.services.collaborator_executor import CollaboratorExecutor
+                executor = CollaboratorExecutor(db=_database)
+                name, response = await executor.invoke(
+                    collaborator=_agent,
+                    instruction=final_instruction,
+                    session_id=_ctx.get("session_id") if _ctx else None,
                     context_data=_ctx,
-                    orientation=final_instruction,
                     response_style=_r_style,
                 )
                 print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
