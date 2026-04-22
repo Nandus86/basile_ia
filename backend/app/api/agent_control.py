@@ -27,9 +27,13 @@ class HumanResponseRequest(BaseModel):
 
 
 class ActiveAgentRequest(BaseModel):
-    """Payload to reactivate an agent for a session."""
+    """Payload to activate or deactivate an agent for a session."""
     session_id: str = Field(..., description="Session identifier")
-    active: bool = Field(..., description="Must be true to reactivate the agent")
+    active: bool = Field(..., description="True to reactivate the agent, False to deactivate/pause")
+    timeout_minutes: Optional[int] = Field(
+        None,
+        description="Only used when active=false. If provided, agent pauses temporarily and reactivates after this many minutes. If omitted, pause is permanent until manual reactivation."
+    )
 
 
 @router.post("/humanResponse")
@@ -86,23 +90,44 @@ async def human_response(request: HumanResponseRequest):
 @router.post("/activeAgent")
 async def activate_agent(request: ActiveAgentRequest):
     """
-    Reactivate an agent for a session_id.
-    Removes the agent_pause key from Redis.
+    Activate or deactivate an agent for a session_id.
+    - active=true  → removes agent_pause from Redis (reactivates)
+    - active=false → sets agent_pause in Redis (deactivates/pauses)
+      Optional timeout_minutes for temporary pause.
     """
-    if not request.active:
-        raise HTTPException(status_code=400, detail="active must be true")
+    if request.active:
+        # ── Reactivate agent ──
+        try:
+            is_paused = await redis_client.is_agent_paused(request.session_id)
+            await redis_client.remove_agent_pause(request.session_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to remove agent pause: {str(e)}")
 
-    try:
-        is_paused = await redis_client.is_agent_paused(request.session_id)
-        await redis_client.remove_agent_pause(request.session_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to remove agent pause: {str(e)}")
+        return {
+            "status": "active",
+            "session_id": request.session_id,
+            "was_paused": is_paused,
+        }
+    else:
+        # ── Deactivate / pause agent ──
+        mode = "fixed"
+        timeout = None
+        try:
+            if request.timeout_minutes and request.timeout_minutes > 0:
+                await redis_client.set_agent_pause(request.session_id, request.timeout_minutes)
+                mode = "temporary"
+                timeout = request.timeout_minutes
+            else:
+                await redis_client.set_agent_pause(request.session_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to set agent pause: {str(e)}")
 
-    return {
-        "status": "active",
-        "session_id": request.session_id,
-        "was_paused": is_paused,
-    }
+        return {
+            "status": "paused",
+            "session_id": request.session_id,
+            "mode": mode,
+            "timeout_minutes": timeout,
+        }
 
 
 @router.get("/status/{session_id}")
