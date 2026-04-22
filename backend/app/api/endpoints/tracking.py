@@ -49,6 +49,8 @@ async def get_tracking_logs(
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"church_name\":%{church_name}%"))
     if member_name:
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"))
+    if "user_message" in locals() and user_message:
+        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"message\":%{user_message}%"))
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
@@ -69,6 +71,11 @@ async def get_tracking_logs(
             member = request_data.get("member") or {}
             item.church_name = church.get("church_name")
             item.member_fullname = member.get("fullname")
+            item.user_message = request_data.get("message")
+            
+        response_data = log.response_data
+        if isinstance(response_data, dict):
+            item.agent_response = response_data.get("response")
 
         # Keep list payload small for stable pagination with high limits.
         item.request_data = None
@@ -109,6 +116,17 @@ async def get_job_details(job_id: str, db: AsyncSession = Depends(get_db)):
         member = request_data.get("member") or {}
         item.church_name = church.get("church_name")
         item.member_fullname = member.get("fullname")
+        item.user_message = request_data.get("message")
+        
+    response_data = job_log.response_data
+    if isinstance(response_data, str):
+        try:
+            response_data = json.loads(response_data)
+        except json.JSONDecodeError:
+            response_data = None
+            
+    if isinstance(response_data, dict):
+        item.agent_response = response_data.get("response")
 
     return item
 

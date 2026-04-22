@@ -179,6 +179,20 @@
           <span v-if="item.member_fullname" class="text-body-2">{{ item.member_fullname }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
+
+        <template v-slot:item.user_message="{ item }">
+          <div v-if="item.user_message" class="text-body-2 text-truncate" style="max-width: 250px" :title="item.user_message">
+            {{ item.user_message }}
+          </div>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
+        <template v-slot:item.agent_response="{ item }">
+          <div v-if="item.agent_response" class="text-body-2 text-truncate" style="max-width: 250px" :title="item.agent_response">
+            {{ item.agent_response }}
+          </div>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
         
         <template v-slot:item.status="{ item }">
           <v-chip :color="getStatusColor(item.status)" size="small" variant="tonal">
@@ -718,6 +732,8 @@ const headers = [
   { title: 'Session ID', key: 'session_id', sortable: false },
   { title: 'Igreja', key: 'church_name', sortable: false },
   { title: 'Nome', key: 'member_fullname', sortable: false },
+  { title: 'Mensagem (Input)', key: 'user_message', sortable: false },
+  { title: 'Resposta (Output)', key: 'agent_response', sortable: false },
   { title: 'Webhook Path', key: 'webhook_path', sortable: false },
   { title: 'Status', key: 'status', sortable: false },
   { title: 'Tempo', key: 'duration_ms', sortable: false },

@@ -20,6 +20,8 @@ class JobLogSchema(BaseModel):
     session_id: Optional[str] = None
     church_name: Optional[str] = None
     member_fullname: Optional[str] = None
+    user_message: Optional[str] = None
+    agent_response: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
