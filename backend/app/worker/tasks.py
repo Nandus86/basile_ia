@@ -14,6 +14,7 @@ import re
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, Field
 
 from app.database import AsyncSessionLocal
 from app.redis_client import redis_client, get_redis
@@ -955,6 +956,11 @@ def _match_true_trigger_keyword(message: str, keyword: str, mode: str) -> bool:
     return re.search(rf"(?<!\w){escaped}(?!\w)", message_norm) is not None
 
 
+class _ConsultarAgenteInput(BaseModel):
+    """Schema for collaborator tool input — only 'instrucao' is visible to the LLM."""
+    instrucao: str = Field(description="Instrução clara e técnica do que o agente especialista deve fazer. Inclua todo o contexto necessário.")
+
+
 async def _build_collaborator_tools(
     db,
     agent_model,
@@ -1106,75 +1112,81 @@ async def _build_collaborator_tools(
         if len(tool_desc) > 1000:
             tool_desc = tool_desc[:997] + "..."
 
-        # Create the tool executor (closure captures collab)
-        _collab = collab
-        _db = db
-        _context_data = context_data
-        _is_planner = getattr(collab, "is_planner", False)
-        _planner_prompt = getattr(collab, "planner_prompt", None)
-        _planner_model = getattr(collab, "planner_model", None)
-        _response_style = getattr(collab, "response_style", "structured")
+        # Create the tool executor using a factory function so that closure
+        # variables are captured WITHOUT appearing in the function signature.
+        # Previously, these were default parameters (e.g. _agent=_collab)
+        # which StructuredTool.from_function included in the args_schema,
+        # confusing the LLM into NOT calling the tool.
+        def _make_collab_invoker(
+            _agent, _database, _ctx, _planner_enabled, _p_prompt, _p_model, _r_style
+        ):
+            async def _invoke_collab(instrucao: str) -> str:
+                """Invoke a collaborator agent with the given instruction."""
+                try:
+                    final_instruction = instrucao
+                    
+                    if _planner_enabled:
+                        try:
+                            from langchain_openai import ChatOpenAI
+                            from langchain_core.messages import SystemMessage, HumanMessage
+                            from app.config import settings
+                            import json
+                            
+                            planner_llm = ChatOpenAI(
+                                model=_p_model or "gpt-4o-mini",
+                                temperature=0.7,
+                                api_key=settings.OPENAI_API_KEY
+                            )
+                            
+                            planner_prompt = _p_prompt or (
+                                "Você é o Planejador Mestre do Orquestrador. "
+                                "Sua função é pegar uma instrução e quebrá-la em um checklist de passos granulares (Tasks) "
+                                "para outro agente técnico executar. O agente que receberá isto só terminará o trabalho quando finalizar todas as tarefas. "
+                                "Responda APENAS com o texto a ser enviado, incluindo o checklist em formato Markdown '- [ ] Nome da tarefa'."
+                            )
+                            
+                            planner_resp = await planner_llm.ainvoke([
+                                SystemMessage(content=planner_prompt),
+                                HumanMessage(content=f"Crie as tasks para a seguinte instrução:\n{instrucao}")
+                            ])
+                            
+                            tasks_str = planner_resp.content
+                            final_instruction = f"INSTRUÇÃO ORIGINAL:\n{instrucao}\n\nO ORQUESTRADOR DEFINIU AS SEGUINTES TAREFAS (RESOLVA-AS E RESPONDA COM O RESULTADO):\n{tasks_str}"
+                            print(f"[CollabTool] 📋 Planner gerou tasks para '{_agent.name}'")
+                        except Exception as planner_err:
+                            print(f"[CollabTool] ⚠️ Erro no Planner LLM, enviando instrução original. Erro: {planner_err}")
 
-        async def _invoke_collab(instrucao: str, _agent=_collab, _database=_db, _ctx=_context_data, _planner_enabled=_is_planner, _p_prompt=_planner_prompt, _p_model=_planner_model, _r_style=_response_style) -> str:
-            """
-            Invoke a collaborator agent with the given instruction.
-            Uses CollaboratorExecutor for isolated ephemeral history management.
-            Args:
-                instrucao: Clear instruction of what this specialist agent should do
-            """
-            try:
-                final_instruction = instrucao
-                
-                if _planner_enabled:
-                    try:
-                        from langchain_openai import ChatOpenAI
-                        from langchain_core.messages import SystemMessage, HumanMessage
-                        from app.config import settings
-                        import json
-                        
-                        planner_llm = ChatOpenAI(
-                            model=_p_model or "gpt-4o-mini",
-                            temperature=0.7,
-                            api_key=settings.OPENAI_API_KEY
-                        )
-                        
-                        planner_prompt = _p_prompt or (
-                            "Você é o Planejador Mestre do Orquestrador. "
-                            "Sua função é pegar uma instrução e quebrá-la em um checklist de passos granulares (Tasks) "
-                            "para outro agente técnico executar. O agente que receberá isto só terminará o trabalho quando finalizar todas as tarefas. "
-                            "Responda APENAS com o texto a ser enviado, incluindo o checklist em formato Markdown '- [ ] Nome da tarefa'."
-                        )
-                        
-                        planner_resp = await planner_llm.ainvoke([
-                            SystemMessage(content=planner_prompt),
-                            HumanMessage(content=f"Crie as tasks para a seguinte instrução:\n{instrucao}")
-                        ])
-                        
-                        tasks_str = planner_resp.content
-                        final_instruction = f"INSTRUÇÃO ORIGINAL:\n{instrucao}\n\nO ORQUESTRADOR DEFINIU AS SEGUINTES TAREFAS (RESOLVA-AS E RESPONDA COM O RESULTADO):\n{tasks_str}"
-                        print(f"[CollabTool] 📋 Planner gerou tasks para '{_agent.name}'")
-                    except Exception as planner_err:
-                        print(f"[CollabTool] ⚠️ Erro no Planner LLM, enviando instrução original. Erro: {planner_err}")
+                    from app.services.collaborator_executor import CollaboratorExecutor
+                    executor = CollaboratorExecutor(db=_database)
+                    name, response = await executor.invoke(
+                        collaborator=_agent,
+                        instruction=final_instruction,
+                        session_id=_ctx.get("session_id") if _ctx else None,
+                        context_data=_ctx,
+                        response_style=_r_style,
+                    )
+                    print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
+                    return response or f"Agente {name} não retornou resposta."
+                except Exception as e:
+                    print(f"[CollabTool] ❌ Error invoking '{_agent.name}': {e}")
+                    return f"Erro ao consultar agente {_agent.name}: {str(e)}"
+            return _invoke_collab
 
-                from app.services.collaborator_executor import CollaboratorExecutor
-                executor = CollaboratorExecutor(db=_database)
-                name, response = await executor.invoke(
-                    collaborator=_agent,
-                    instruction=final_instruction,
-                    session_id=_ctx.get("session_id") if _ctx else None,
-                    context_data=_ctx,
-                    response_style=_r_style,
-                )
-                print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
-                return response or f"Agente {name} não retornou resposta."
-            except Exception as e:
-                print(f"[CollabTool] ❌ Error invoking '{_agent.name}': {e}")
-                return f"Erro ao consultar agente {_agent.name}: {str(e)}"
+        invoker = _make_collab_invoker(
+            _agent=collab,
+            _database=db,
+            _ctx=context_data,
+            _planner_enabled=getattr(collab, "is_planner", False),
+            _p_prompt=getattr(collab, "planner_prompt", None),
+            _p_model=getattr(collab, "planner_model", None),
+            _r_style=getattr(collab, "response_style", "structured"),
+        )
 
         tool = StructuredTool.from_function(
-            coroutine=_invoke_collab,
+            coroutine=invoker,
             name=tool_name,
             description=tool_desc,
+            args_schema=_ConsultarAgenteInput,
             return_direct=False
         )
         tools.append(tool)
