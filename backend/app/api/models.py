@@ -35,16 +35,52 @@ class ModelsResponse(BaseModel):
 
 
 # ─── OpenAI models (well-known, stable list) ─────────────────────────────────
-OPENAI_MODELS = [
-    {"id": "gpt-4o", "name": "GPT-4o", "provider": "openai", "context_length": 128000},
-    {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "provider": "openai", "context_length": 128000},
-    {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "provider": "openai", "context_length": 128000},
-    {"id": "gpt-4", "name": "GPT-4", "provider": "openai", "context_length": 8192},
-    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "provider": "openai", "context_length": 16385},
-    {"id": "o1", "name": "O1", "provider": "openai", "context_length": 200000},
-    {"id": "o1-mini", "name": "O1 Mini", "provider": "openai", "context_length": 128000},
-    {"id": "o3-mini", "name": "O3 Mini", "provider": "openai", "context_length": 200000},
-]
+async def fetch_openai_models() -> List[Dict[str, Any]]:
+    """Fetch available models directly from OpenAI API"""
+    if not settings.OPENAI_API_KEY:
+        return []
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={
+                    "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            raw_models = data.get("data", [])
+            logger.info(f"OpenAI API returned {len(raw_models)} models")
+            
+            models = []
+            for m in raw_models:
+                model_id = m.get("id", "")
+                
+                # Optionally filter for text/chat models only if necessary, but OpenAI returns all (whisper, tts, dall-e, etc)
+                # We'll just include all models or focus on gpt/o1/o3 lines if preferable. Let's include all to be safe.
+                
+                models.append({
+                    "id": model_id,
+                    "name": model_id,
+                    "provider": "openai",
+                    "context_length": 128000, # OpenAI API doesn't return context length, so default
+                })
+            
+            # Sort models alphabetically
+            models.sort(key=lambda x: x["name"])
+            return models
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch OpenAI models: {e}")
+        # Fallback to standard ones if API fails
+        return [
+            {"id": "gpt-4o", "name": "gpt-4o", "provider": "openai", "context_length": 128000},
+            {"id": "gpt-4o-mini", "name": "gpt-4o-mini", "provider": "openai", "context_length": 128000},
+            {"id": "o1-mini", "name": "o1-mini", "provider": "openai", "context_length": 128000},
+            {"id": "o3-mini", "name": "o3-mini", "provider": "openai", "context_length": 200000},
+        ]
 
 
 async def fetch_openrouter_models() -> List[Dict[str, Any]]:
@@ -131,7 +167,8 @@ async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
     all_models = []
     
     if settings.OPENAI_API_KEY:
-        all_models.extend(OPENAI_MODELS)
+        openai_models = await fetch_openai_models()
+        all_models.extend(openai_models)
     
     # Fetch OpenRouter models
     openrouter_models = await fetch_openrouter_models()

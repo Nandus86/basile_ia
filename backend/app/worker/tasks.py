@@ -645,6 +645,10 @@ async def _enrich_agent_prompt(
                     mandatory_end_lines = [f"- Você DEVE chamar a tool '{tool_name}' NO FINAL, imediatamente antes da resposta final ao usuário." for tool_name in always_end_tool_names]
                     mandatory_end_str = "\n\n⏹️ TOOLS OBRIGATÓRIAS NO FINAL:\n" + "\n".join(mandatory_end_lines)
                 
+                # Injeta a lista de ferramentas obrigatórias para o LangGraph forçar a execução (bypass do LLM)
+                agent_config["always_start_tools"] = always_start_tool_names
+                agent_config["always_end_tools"] = always_end_tool_names
+                
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                     f"\n\n## Agentes Especialistas Disponíveis\n\n"
                     f"Você tem acesso a agentes especialistas que podem ser acionados como ferramentas. "

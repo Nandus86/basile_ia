@@ -748,6 +748,19 @@ Cite a fonte quando usar informações do contexto acima.
 
             selected_tools = _select_tools_for_mode(resolved_execution_mode)
 
+            # 🔥 STATE E TRAVAS LÓGICAS (LangGraph)
+            locks = {
+                "selected_agent": None,
+                "tool_called": False,
+                "collab_called": False
+            }
+
+            always_start_queue = agent_config.get("always_start_tools", [])
+            always_end_queue = agent_config.get("always_end_tools", [])
+
+            def is_mandatory_tool(name: str) -> bool:
+                return name in always_start_queue or name in always_end_queue
+
             # Enforce budget and anti-loop by wrapping each tool in a proxy
             # We create proper StructuredTool instances so langgraph ToolNode recognises them
             from langchain_core.tools import StructuredTool
@@ -756,6 +769,18 @@ Cite a fonte quando usar informações do contexto acima.
                 """Create a StructuredTool wrapper with budget/anti-loop enforcement."""
 
                 async def _guarded_ainvoke(**kwargs):
+                    if is_collab:
+                        detected_agent = tool.name
+                        if not is_mandatory_tool(detected_agent):
+                            if locks["selected_agent"] is None:
+                                locks["selected_agent"] = detected_agent
+                            elif locks["selected_agent"] != detected_agent:
+                                return f"Erro: Troca de especialista não permitida. Você já chamou o especialista '{locks['selected_agent']}' neste turno."
+                        locks["collab_called"] = True
+                    
+                    if not is_mandatory_tool(tool.name):
+                        locks["tool_called"] = True
+                    
                     fp = _fingerprint_tool_call(tool.name, kwargs)
                     if fp in seen_fps:
                         return "Tool call blocked: repeated same arguments in current turn."
@@ -775,6 +800,18 @@ Cite a fonte quando usar informações do contexto acima.
                         raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
 
                 def _guarded_invoke(**kwargs):
+                    if is_collab:
+                        detected_agent = tool.name
+                        if not is_mandatory_tool(detected_agent):
+                            if locks["selected_agent"] is None:
+                                locks["selected_agent"] = detected_agent
+                            elif locks["selected_agent"] != detected_agent:
+                                return f"Erro: Troca de especialista não permitida. Você já chamou o especialista '{locks['selected_agent']}' neste turno."
+                        locks["collab_called"] = True
+                        
+                    if not is_mandatory_tool(tool.name):
+                        locks["tool_called"] = True
+                    
                     fp = _fingerprint_tool_call(tool.name, kwargs)
                     if fp in seen_fps:
                         return "Tool call blocked: repeated same arguments in current turn."
@@ -827,14 +864,106 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 
             agent_messages = [SystemMessage(content=full_prompt)] + messages
 
-            react_agent = create_react_agent(
-                model=llm,
-                tools=selected_tools,
-            )
+            # --- CUSTOM LANGGRAPH STATE GRAPH ---
+            from langgraph.graph import StateGraph, START, END
+            from langgraph.graph.message import add_messages
+            from langgraph.prebuilt import ToolNode
+            from typing import Annotated, Sequence
 
+            class AgentExecState(TypedDict, total=False):
+                messages: Annotated[Sequence[Any], add_messages]
+
+            llm_with_tools = llm.bind_tools(selected_tools)
+            tool_node = ToolNode(selected_tools)
+
+            async def call_model_node(state: AgentExecState):
+                if not budget.can_continue():
+                    return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
+                
+                # Check called tools to force always_start
+                called_tools = set()
+                for msg in state["messages"]:
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            called_tools.add(tc["name"])
+                
+                for t_name in always_start_queue:
+                    if t_name not in called_tools:
+                        logger.info(f"[AgentFactory] 🔒 Forcing always_start tool: {t_name}")
+                        llm_forced = llm.bind_tools(selected_tools, tool_choice=t_name)
+                        response = await llm_forced.ainvoke(state["messages"], config=run_config)
+                        return {"messages": [response]}
+                
+                response = await llm_with_tools.ainvoke(state["messages"], config=run_config)
+                return {"messages": [response]}
+
+            async def call_tools_node(state: AgentExecState):
+                result = await tool_node.ainvoke(state)
+                # FORÇAR FINALIZAÇÃO: Se chamou um colaborador (ou a ferramenta exige parada)
+                # O LangGraph espera uma AIMessage caso a gente retorne END logo em seguida
+                if locks.get("tool_called"):
+                    tool_messages = result.get("messages", [])
+                    contents = []
+                    for msg in tool_messages:
+                        if isinstance(msg, ToolMessage):
+                            contents.append(str(msg.content))
+                    if contents:
+                        final_ai = AIMessage(content="\n\n".join(contents))
+                        return {"messages": tool_messages + [final_ai]}
+                return result
+
+            def should_continue_edge(state: AgentExecState) -> str:
+                last_msg = state["messages"][-1]
+                if not getattr(last_msg, "tool_calls", None):
+                    # Check if there are always_end tools pending
+                    called_tools = set()
+                    for msg in state["messages"]:
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                called_tools.add(tc["name"])
+                    
+                    for t_name in always_end_queue:
+                        if t_name not in called_tools:
+                            return "force_end"
+                    return END
+                return "tools"
+
+            def after_tools_edge(state: AgentExecState) -> str:
+                # 2. Trava de execução única / 3. Forçar finalização
+                # "agent -> tool -> FINAL. Não permitir voltar pro agent depois do tool"
+                if locks.get("tool_called"):
+                    return END
+                return "agent"
+
+            async def force_end_node(state: AgentExecState):
+                # The LLM tried to stop, but we have mandatory end tools.
+                called_tools = set()
+                for msg in state["messages"]:
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            called_tools.add(tc["name"])
+                
+                for t_name in always_end_queue:
+                    if t_name not in called_tools:
+                        logger.info(f"[AgentFactory] 🔒 Forcing always_end tool: {t_name}")
+                        llm_forced = llm.bind_tools(selected_tools, tool_choice=t_name)
+                        response = await llm_forced.ainvoke(state["messages"], config=run_config)
+                        return {"messages": [response]}
+                return {"messages": []}
+
+            agent_graph = StateGraph(AgentExecState)
+            agent_graph.add_node("agent", call_model_node)
+            agent_graph.add_node("tools", call_tools_node)
+            agent_graph.add_node("force_end", force_end_node)
+            agent_graph.add_edge(START, "agent")
+            agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
+            agent_graph.add_conditional_edges("tools", after_tools_edge, ["agent", END])
+            agent_graph.add_edge("force_end", "tools")
+            
+            react_agent = agent_graph.compile()
 
             logger.info(
-                "[AgentFactory] 🤖 Invocando ReAct agent='%s' model='%s' mode=%s tools=%s",
+                "[AgentFactory] 🤖 Invocando Custom Agent Graph='%s' model='%s' mode=%s tools=%s",
                 agent_config["name"],
                 agent_config["model"],
                 resolved_execution_mode,
@@ -847,31 +976,10 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             from langgraph.errors import GraphRecursionError
 
             try:
-                if resolved_execution_mode in {"tools_first", "orchestrator_first"}:
-                    class ExecState(TypedDict, total=False):
-                        messages: List[Any]
-
-                    graph = StateGraph(ExecState)
-
-                    async def run_agent_node(state: ExecState):
-                        if not budget.can_continue():
-                            return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
-                        result = await react_agent.ainvoke(
-                            {"messages": state["messages"]},
-                            config={**run_config, "recursion_limit": recursion_limit},
-                        )
-                        return {"messages": result.get("messages", [])}
-
-                    graph.add_node("run_agent", run_agent_node)
-                    graph.add_edge(START, "run_agent")
-                    graph.add_edge("run_agent", END)
-                    compiled = graph.compile()
-                    result = await compiled.ainvoke({"messages": agent_messages})
-                else:
-                    result = await react_agent.ainvoke(
-                        {"messages": agent_messages},
-                        config={**run_config, "recursion_limit": recursion_limit},
-                    )
+                result = await react_agent.ainvoke(
+                    {"messages": agent_messages},
+                    config={**run_config, "recursion_limit": recursion_limit},
+                )
             except GraphRecursionError as recursion_err:
                 logger.warning(f"[AgentFactory] ⚠️ LangGraph recursion limit atingido, extraindo última resposta válida: {recursion_err}")
                 # Extraímos o estado parcial que o LangGraph retorna mesmo no erro
