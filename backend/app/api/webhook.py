@@ -239,7 +239,8 @@ async def process_message_structured(
         stm_enabled = True
         stm_ttl_seconds = 86400
         if agent and agent.config:
-            stm_enabled = agent.config.get("short_term_memory_enabled", True)
+            global_memory_enabled = agent.config.get("memory_enabled", True)
+            stm_enabled = agent.config.get("short_term_memory_enabled", True) and global_memory_enabled
             stm_ttl_hours = agent.config.get("short_term_memory_ttl_hours", 24)
             stm_ttl_seconds = int(stm_ttl_hours * 3600)
             

@@ -405,7 +405,8 @@ async def _enrich_agent_prompt(
             print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
 
     # 3. Vector Memory (contact-level + agent-level)
-    vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False)
+    global_memory_enabled = agent_config.get("config", {}).get("memory_enabled", True)
+    vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False) and global_memory_enabled
     if vector_memory_enabled and agent_id and session_id:
         try:
             from app.weaviate_client import get_weaviate
@@ -758,7 +759,8 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
     stm_ttl_seconds = 86400
     if agent_config and "config" in agent_config:
         cfg = agent_config["config"]
-        stm_enabled = cfg.get("short_term_memory_enabled", True)
+        global_memory_enabled = cfg.get("memory_enabled", True)
+        stm_enabled = cfg.get("short_term_memory_enabled", True) and global_memory_enabled
         stm_ttl_hours = cfg.get("short_term_memory_ttl_hours", 24)
         stm_ttl_seconds = int(stm_ttl_hours * 3600)
     return stm_enabled, stm_ttl_seconds
@@ -1829,7 +1831,8 @@ async def process_message_task(
 
             # ── agent_id provided: execute directly ──
             stm_enabled, stm_ttl_seconds = _resolve_stm_config(agent_config)
-            vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False)
+            global_memory_enabled = agent_config.get("config", {}).get("memory_enabled", True)
+            vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False) and global_memory_enabled
 
             # STM: load history
             history = []

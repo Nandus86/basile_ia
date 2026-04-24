@@ -90,7 +90,7 @@ class Supervisor:
                 state["current_agent_name"] = agent_config["name"]
                 state["current_agent_config"] = agent_config
                 state["next_action"] = "execute"
-                state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False)
+                state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False) and agent_config.get("config", {}).get("memory_enabled", True)
                 
                 # Load orchestrator loop config
                 if getattr(agent, "is_orchestrator", False):
@@ -114,7 +114,7 @@ class Supervisor:
             state["current_agent_name"] = agent_config["name"]
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
-            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
+            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False) and agent_config.get("config", {}).get("memory_enabled", True)
             if getattr(agents[0], "is_orchestrator", False):
                 state["orchestrator_loop_config"] = getattr(agents[0], "orchestrator_config", {}) or {}
             return state
@@ -192,7 +192,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
                     state["current_agent_name"] = agent_config["name"]
                     state["current_agent_config"] = agent_config
                     state["next_action"] = "execute"
-                    state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False)
+                    state["vector_memory_enabled"] = getattr(agent, "vector_memory_enabled", False) and agent_config.get("config", {}).get("memory_enabled", True)
                     if getattr(agent, "is_orchestrator", False):
                         state["orchestrator_loop_config"] = getattr(agent, "orchestrator_config", {}) or {}
                     print(f"[Supervisor] LLM selected: {agent_config['name']}")
@@ -204,7 +204,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
             state["current_agent_name"] = agent_config["name"]
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
-            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
+            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False) and agent_config.get("config", {}).get("memory_enabled", True)
             
         except Exception as e:
             print(f"[Supervisor] Router error: {e}")
@@ -213,7 +213,7 @@ Responda APENAS com o ID do agente (UUID). Sem explicações."""
             state["current_agent_name"] = agent_config["name"]
             state["current_agent_config"] = agent_config
             state["next_action"] = "execute"
-            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False)
+            state["vector_memory_enabled"] = getattr(agents[0], "vector_memory_enabled", False) and agent_config.get("config", {}).get("memory_enabled", True)
         
         return state
     

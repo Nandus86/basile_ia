@@ -347,9 +347,10 @@
               color="deep-purple"
               hide-details
               density="comfortable"
+              :disabled="formData.config.memory_enabled === false"
             >
               <template v-slot:prepend>
-                <v-icon :color="formData.vector_memory_enabled ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
+                <v-icon :color="formData.vector_memory_enabled && formData.config.memory_enabled !== false ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
               </template>
             </v-switch>
           </v-col>
@@ -418,7 +419,7 @@
       Memória de Curto Prazo
     </p>
     
-    <v-card variant="outlined">
+    <v-card variant="outlined" class="mb-4">
       <v-card-text class="pt-4 pb-4">
         <v-row>
           <v-col cols="12" md="6">
@@ -428,9 +429,10 @@
               color="teal"
               hide-details
               density="comfortable"
+              :disabled="formData.config.memory_enabled === false"
             >
               <template v-slot:prepend>
-                <v-icon :color="formData.config.short_term_memory_enabled ? 'teal' : 'grey'">mdi-history</v-icon>
+                <v-icon :color="formData.config.short_term_memory_enabled && formData.config.memory_enabled !== false ? 'teal' : 'grey'">mdi-history</v-icon>
               </template>
             </v-switch>
           </v-col>
@@ -441,10 +443,32 @@
             type="number"
             :rules="[v => (!v || !isNaN(v)) || 'Valor numérico inválido', v => (!v || (v >= 1 && v <= 720)) || 'Tempo deve ser entre 1 e 720 horas']"
             prepend-inner-icon="mdi-clock-outline"
-            :disabled="!formData.config.short_term_memory_enabled"
+            :disabled="!formData.config.short_term_memory_enabled || formData.config.memory_enabled === false"
             hint="Tempo que o agente lembrará da conversa"
             persistent-hint
           ></v-text-field>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
+
+    <v-card variant="outlined" class="mb-4">
+      <v-card-text class="pt-2 pb-2">
+        <v-row align="center">
+          <v-col cols="12">
+            <v-switch
+              v-model="formData.config.memory_enabled"
+              label="Habilitar Sistema de Memórias"
+              color="primary"
+              hide-details
+              density="comfortable"
+              hint="Se desativado, o agente não utilizará NENHUM tipo de memória."
+              persistent-hint
+            >
+              <template v-slot:prepend>
+                <v-icon :color="formData.config.memory_enabled !== false ? 'primary' : 'grey'">mdi-database-eye-off</v-icon>
+              </template>
+            </v-switch>
           </v-col>
         </v-row>
       </v-card-text>

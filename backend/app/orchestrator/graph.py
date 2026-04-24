@@ -101,7 +101,7 @@ async def select_specialist_agent(state: OrchestratorState, db: AsyncSession) ->
             "max_tokens": int(agent.max_tokens),
             "access_level": agent.access_level.value,
             "collaboration_enabled": agent.collaboration_enabled,
-            "vector_memory_enabled": getattr(agent, "vector_memory_enabled", False)
+            "vector_memory_enabled": getattr(agent, "vector_memory_enabled", False) and (agent.config.get("memory_enabled", True) if getattr(agent, "config", None) else True)
         }
         state["agent_used"] = agent.name
         state["agent_model"] = agent  # Store full model for orchestration
