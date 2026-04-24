@@ -1,5 +1,5 @@
 <template>
-  <div class="tracking-page">
+  <div class="tracking-page" style="overflow-y:auto; max-height:90vh; padding-bottom:40px;">
     <!-- Header -->
     <div class="page-header">
       <div class="header-content">
@@ -38,7 +38,7 @@
     <v-row class="mb-6">
       <v-col cols="12" md="6">
         <v-card class="glass-card h-100">
-          <v-card-text class="pa-6">
+          <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
             <h3 class="text-subtitle-1 font-weight-medium text-white mb-4 d-flex align-center">
               <v-icon class="mr-2" size="20" color="primary">mdi-chart-donut</v-icon>
               Status dos Jobs Processados
@@ -60,7 +60,7 @@
       
       <v-col cols="12" md="6">
         <v-card class="glass-card h-100">
-          <v-card-text class="pa-6">
+          <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
             <h3 class="text-subtitle-1 font-weight-medium text-white mb-4 d-flex align-center">
               <v-icon class="mr-2" size="20" color="info">mdi-chart-bar</v-icon>
               Top 5 Webhooks Processados
@@ -90,7 +90,7 @@
       
       <v-divider></v-divider>
 
-      <v-card-text class="px-6 py-4">
+      <v-card-text class="px-6 py-4" style="max-height: 65vh; overflow-y:auto; padding-bottom: 20px;">
         <v-row dense>
           <v-col cols="12" sm="6" md="3">
             <v-text-field v-model="searchPath" prepend-inner-icon="mdi-magnify" placeholder="Buscar Path..." variant="outlined" density="compact" hide-details @keyup.enter="fetchLogs"></v-text-field>
@@ -223,7 +223,7 @@
           <v-btn icon="mdi-close" variant="text" @click="dialog = false" color="white"></v-btn>
         </v-card-title>
         
-        <v-card-text class="pa-6">
+        <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
           <v-row class="mb-4">
             <v-col cols="12" sm="6">
               <div class="text-caption text-medium-emphasis mb-1">Path do Webhook</div>
@@ -502,7 +502,7 @@
                 Campanha: {{ dispSelected.service_id }}
                 <v-chip size="small" class="ml-2" :color="dispSelected.status === 'running' ? 'success' : dispSelected.status === 'paused' ? 'warning' : 'info'">{{ dispSelected.status.toUpperCase() }}</v-chip>
              </v-card-title>
-             <v-card-text class="pa-6">
+             <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
                 <v-row>
                   <v-col cols="4"><div class="text-caption text-medium-emphasis">Total</div><div class="text-h6">{{ dispSelected.total }}</div></v-col>
                   <v-col cols="4"><div class="text-caption text-medium-emphasis">Enviados</div><div class="text-h6 text-success">{{ dispSelected.sent }}</div></v-col>
