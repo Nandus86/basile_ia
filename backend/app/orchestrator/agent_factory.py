@@ -874,19 +874,23 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 messages: Annotated[Sequence[Any], add_messages]
 
             llm_with_tools = llm.bind_tools(selected_tools)
+            # ToolNode puro: sem injeção de mensagem falsa
             tool_node = ToolNode(selected_tools)
+
+            def _get_called_tool_names(state: AgentExecState) -> set:
+                called = set()
+                for msg in state["messages"]:
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            called.add(tc["name"])
+                return called
 
             async def call_model_node(state: AgentExecState):
                 if not budget.can_continue():
                     return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
-                
-                # Check called tools to force always_start
-                called_tools = set()
-                for msg in state["messages"]:
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            called_tools.add(tc["name"])
-                
+
+                # Forçar always_start se ainda não foi chamada
+                called_tools = _get_called_tool_names(state)
                 for t_name in always_start_queue:
                     if t_name not in called_tools:
                         logger.info(f"[AgentFactory] 🔒 Forcing always_start tool: {t_name}")
@@ -898,66 +902,34 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                             )
                             response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
                             return {"messages": [response]}
-                
+
                 response = await llm_with_tools.ainvoke(state["messages"], config=run_config)
                 return {"messages": [response]}
 
-            async def call_tools_node(state: AgentExecState):
-                result = await tool_node.ainvoke(state)
-                # FORÇAR FINALIZAÇÃO: Se chamou um colaborador (ou a ferramenta exige parada)
-                # O LangGraph espera uma AIMessage caso a gente retorne END logo em seguida
-                if locks.get("tool_called"):
-                    tool_messages = result.get("messages", [])
-                    contents = []
-                    for msg in tool_messages:
-                        if isinstance(msg, ToolMessage):
-                            contents.append(str(msg.content))
-                    if contents:
-                        final_ai = AIMessage(content="\n\n".join(contents))
-                        return {"messages": tool_messages + [final_ai]}
-                return result
-
             def should_continue_edge(state: AgentExecState) -> str:
+                """Aresta do agente: se o LLM não pediu nenhuma tool, verifica se always_end está pendente."""
                 last_msg = state["messages"][-1]
                 if not getattr(last_msg, "tool_calls", None):
-                    # Check if there are always_end tools pending
-                    called_tools = set()
-                    for msg in state["messages"]:
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                called_tools.add(tc["name"])
-                    
+                    called_tools = _get_called_tool_names(state)
                     for t_name in always_end_queue:
                         if t_name not in called_tools:
+                            logger.info(f"[AgentFactory] 🔒 LLM tentou parar sem chamar always_end '{t_name}', redirecionando para force_end.")
                             return "force_end"
                     return END
                 return "tools"
 
             def after_tools_edge(state: AgentExecState) -> str:
-                # 2. Trava de execução única / 3. Forçar finalização
-                # "agent -> tool -> FINAL. Não permitir voltar pro agent depois do tool"
-                if locks.get("tool_called"):
-                    # Verifica se há always_end tools pendentes antes de forçar o END
-                    called_tools = set()
-                    for msg in state["messages"]:
-                        if hasattr(msg, "tool_calls") and msg.tool_calls:
-                            for tc in msg.tool_calls:
-                                called_tools.add(tc["name"])
-                    
-                    for t_name in always_end_queue:
-                        if t_name not in called_tools:
-                            return "force_end"
-                    return END
+                """Após execução de tools: sempre volta para o agente decidir o próximo passo.
+                O controle de fluxo (parar, continuar, delegar) fica no LLM e nas travas do guarded_tool.
+                O budget interrompe se necessário.
+                """
                 return "agent"
 
             async def force_end_node(state: AgentExecState):
-                # The LLM tried to stop, but we have mandatory end tools.
-                called_tools = set()
-                for msg in state["messages"]:
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            called_tools.add(tc["name"])
-                
+                """Intercept quando o LLM tentou parar sem chamar always_end_queue.
+                Força o LLM a chamar a ferramenta obrigatória de finalização.
+                """
+                called_tools = _get_called_tool_names(state)
                 for t_name in always_end_queue:
                     if t_name not in called_tools:
                         logger.info(f"[AgentFactory] 🔒 Forcing always_end tool: {t_name}")
@@ -965,21 +937,22 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                         if forced_tool_obj:
                             llm_forced = llm.bind_tools([forced_tool_obj])
                             force_msg = SystemMessage(
-                                content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR O ATENDIMENTO. Extraia e sintetize o contexto para gerar a instrução final da ferramenta. Não responda com texto livre para o usuário."
+                                content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR O ATENDIMENTO. Sintetize todo o contexto da conversa e dos especialistas já consultados para gerar a instrução final. Não responda com texto livre."
                             )
                             response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
                             return {"messages": [response]}
+                # Sem pending, retorna vazio (não deve acontecer)
                 return {"messages": []}
 
             agent_graph = StateGraph(AgentExecState)
             agent_graph.add_node("agent", call_model_node)
-            agent_graph.add_node("tools", call_tools_node)
+            agent_graph.add_node("tools", tool_node)  # ToolNode nativo, sem customização
             agent_graph.add_node("force_end", force_end_node)
             agent_graph.add_edge(START, "agent")
             agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-            agent_graph.add_conditional_edges("tools", after_tools_edge, ["agent", "force_end", END])
-            agent_graph.add_edge("force_end", "tools")
-            
+            agent_graph.add_edge("tools", "agent")     # Sempre volta ao agente para decidir o próximo passo
+            agent_graph.add_edge("force_end", "tools") # Força execução da always_end e volta para agent finalizar
+
             react_agent = agent_graph.compile()
 
             logger.info(
