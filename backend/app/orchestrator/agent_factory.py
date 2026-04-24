@@ -890,9 +890,14 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 for t_name in always_start_queue:
                     if t_name not in called_tools:
                         logger.info(f"[AgentFactory] 🔒 Forcing always_start tool: {t_name}")
-                        llm_forced = llm.bind_tools(selected_tools, tool_choice=t_name)
-                        response = await llm_forced.ainvoke(state["messages"], config=run_config)
-                        return {"messages": [response]}
+                        forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
+                        if forced_tool_obj:
+                            llm_forced = llm.bind_tools([forced_tool_obj])
+                            force_msg = SystemMessage(
+                                content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA MESMO. Não faça mais nada e não responda com texto livre."
+                            )
+                            response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
+                            return {"messages": [response]}
                 
                 response = await llm_with_tools.ainvoke(state["messages"], config=run_config)
                 return {"messages": [response]}
@@ -956,9 +961,14 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 for t_name in always_end_queue:
                     if t_name not in called_tools:
                         logger.info(f"[AgentFactory] 🔒 Forcing always_end tool: {t_name}")
-                        llm_forced = llm.bind_tools(selected_tools, tool_choice=t_name)
-                        response = await llm_forced.ainvoke(state["messages"], config=run_config)
-                        return {"messages": [response]}
+                        forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
+                        if forced_tool_obj:
+                            llm_forced = llm.bind_tools([forced_tool_obj])
+                            force_msg = SystemMessage(
+                                content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR O ATENDIMENTO. Extraia e sintetize o contexto para gerar a instrução final da ferramenta. Não responda com texto livre para o usuário."
+                            )
+                            response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
+                            return {"messages": [response]}
                 return {"messages": []}
 
             agent_graph = StateGraph(AgentExecState)
