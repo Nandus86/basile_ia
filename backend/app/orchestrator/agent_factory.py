@@ -932,6 +932,16 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 # 2. Trava de execução única / 3. Forçar finalização
                 # "agent -> tool -> FINAL. Não permitir voltar pro agent depois do tool"
                 if locks.get("tool_called"):
+                    # Verifica se há always_end tools pendentes antes de forçar o END
+                    called_tools = set()
+                    for msg in state["messages"]:
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                called_tools.add(tc["name"])
+                    
+                    for t_name in always_end_queue:
+                        if t_name not in called_tools:
+                            return "force_end"
                     return END
                 return "agent"
 
@@ -957,7 +967,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             agent_graph.add_node("force_end", force_end_node)
             agent_graph.add_edge(START, "agent")
             agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-            agent_graph.add_conditional_edges("tools", after_tools_edge, ["agent", END])
+            agent_graph.add_conditional_edges("tools", after_tools_edge, ["agent", "force_end", END])
             agent_graph.add_edge("force_end", "tools")
             
             react_agent = agent_graph.compile()
