@@ -418,6 +418,19 @@
       <v-icon size="18" class="mr-1">mdi-memory</v-icon>
       Memória de Curto Prazo
     </p>
+
+    <v-switch
+      v-model="formData.config.memory_enabled"
+      label="Habilitar Sistema de Memória"
+      color="primary"
+      hide-details
+      density="comfortable"
+      class="mb-2"
+    >
+      <template v-slot:prepend>
+        <v-icon :color="formData.config.memory_enabled !== false ? 'primary' : 'grey'">mdi-database-eye-off</v-icon>
+      </template>
+    </v-switch>
     
     <v-card variant="outlined" class="mb-4">
       <v-card-text class="pt-4 pb-4">
@@ -452,27 +465,7 @@
       </v-card-text>
     </v-card>
 
-    <v-card variant="outlined" class="mb-4">
-      <v-card-text class="pt-2 pb-2">
-        <v-row align="center">
-          <v-col cols="12">
-            <v-switch
-              v-model="formData.config.memory_enabled"
-              label="Habilitar Sistema de Memórias"
-              color="primary"
-              hide-details
-              density="comfortable"
-              hint="Se desativado, o agente não utilizará NENHUM tipo de memória."
-              persistent-hint
-            >
-              <template v-slot:prepend>
-                <v-icon :color="formData.config.memory_enabled !== false ? 'primary' : 'grey'">mdi-database-eye-off</v-icon>
-              </template>
-            </v-switch>
-          </v-col>
-        </v-row>
-      </v-card-text>
-    </v-card>
+
   </v-form>
 </template>
 
