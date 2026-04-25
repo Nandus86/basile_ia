@@ -490,9 +490,10 @@
                           color="deep-purple"
                           hide-details
                           density="comfortable"
+                          :disabled="formData.config.memory_enabled === false"
                         >
                           <template v-slot:prepend>
-                            <v-icon :color="formData.vector_memory_enabled ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
+                            <v-icon :color="formData.vector_memory_enabled && formData.config.memory_enabled !== false ? 'deep-purple' : 'grey'">mdi-brain</v-icon>
                           </template>
                         </v-switch>
                       </v-col>
@@ -598,6 +599,19 @@
                   <v-icon size="18" class="mr-1">mdi-memory</v-icon>
                   Memória de Curto Prazo
                 </p>
+
+                <v-switch
+                  v-model="formData.config.memory_enabled"
+                  label="Habilitar Sistema de Memória"
+                  color="primary"
+                  hide-details
+                  density="comfortable"
+                  class="mb-2"
+                >
+                  <template v-slot:prepend>
+                    <v-icon :color="formData.config.memory_enabled !== false ? 'primary' : 'grey'">mdi-database-eye-off</v-icon>
+                  </template>
+                </v-switch>
                 
                 <v-card variant="outlined">
                   <v-card-text class="pt-4 pb-4">
@@ -609,9 +623,10 @@
                           color="teal"
                           hide-details
                           density="comfortable"
+                          :disabled="formData.config.memory_enabled === false"
                         >
                           <template v-slot:prepend>
-                            <v-icon :color="formData.config.short_term_memory_enabled ? 'teal' : 'grey'">mdi-history</v-icon>
+                            <v-icon :color="formData.config.short_term_memory_enabled && formData.config.memory_enabled !== false ? 'teal' : 'grey'">mdi-history</v-icon>
                           </template>
                         </v-switch>
                       </v-col>
@@ -623,7 +638,7 @@
                           min="1"
                           max="720"
                           prepend-inner-icon="mdi-clock-outline"
-                          :disabled="!formData.config.short_term_memory_enabled"
+                          :disabled="!formData.config.short_term_memory_enabled || formData.config.memory_enabled === false"
                           hint="Tempo que o agente lembrará da conversa"
                           persistent-hint
                         ></v-text-field>
@@ -2872,7 +2887,8 @@ function resetForm() {
        reasoning_effort: 'medium',
        max_completion_tokens: 16384,
        short_term_memory_enabled: true,
-       short_term_memory_ttl_hours: 24
+       short_term_memory_ttl_hours: 24,
+       memory_enabled: true
        // sampling params (top_p, top_k, etc) são opcionais — não incluir aqui
      },
      provider_id: null
@@ -3174,6 +3190,7 @@ async function openDialog(agent = null) {
           max_completion_tokens: fullAgent.config?.max_completion_tokens || 16384,
           short_term_memory_enabled: fullAgent.config?.short_term_memory_enabled ?? true,
           short_term_memory_ttl_hours: fullAgent.config?.short_term_memory_ttl_hours || 24,
+          memory_enabled: fullAgent.config?.memory_enabled ?? true,
           ...(fullAgent.config || {})
         },
         status_updates_enabled: fullAgent.status_updates_enabled ?? false,
