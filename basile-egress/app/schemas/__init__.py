@@ -1,0 +1,1 @@
+# Empty file to mark schemas as a Python package

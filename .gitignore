@@ -58,7 +58,4 @@ _bmad-output/
 !requirements.txt
 implementation_plan.md
 
-# Microservices
-basile-ingress/
-basile-egress/
 
