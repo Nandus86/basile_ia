@@ -31,7 +31,7 @@ class WeaviateClient:
                     import os
                     parsed = urlparse(settings.WEAVIATE_URL)
                     headers = {}
-                    openai_key = os.environ.get("OPENAI_API_KEY", "")
+                    openai_key = settings.OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY", "")
                     if openai_key:
                         headers["X-Openai-Api-Key"] = openai_key
                     
