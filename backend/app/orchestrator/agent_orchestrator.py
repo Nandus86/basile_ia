@@ -211,7 +211,7 @@ Responda APENAS em JSON válido com este formato exato:
                 "Responda de forma direta e objetiva ao coordenador.\n"
                 "Apresente os resultados obtidos de forma clara e natural, sem formatação estruturada rígida.\n\n"
             )
-        else:
+        elif response_style == "structured":
             response_format_block = (
                 "FORMATO DE RESPOSTA (OBRIGATÓRIO - JSON):\n"
                 "Você DEVE responder APENAS com um objeto JSON contendo:\n"
@@ -221,6 +221,17 @@ Responda APENAS em JSON válido com este formato exato:
                 "Exemplo:\n"
                 '{"achados": ["Encontrado 3 registros"], "dados": {"total": 3, "itens": [...]}, "recomendacao": "Proceder com..."}\n\n'
                 "⚠️ NÃO adicione texto introdutório, explicações ou markdown fora do JSON.\n"
+            )
+        else:
+            # Default: final_response — collaborator writes the FINAL message for the end user
+            response_format_block = (
+                "FORMATO DE RESPOSTA FINAL (OBRIGATÓRIO):\n"
+                "Gere a RESPOSTA FINAL exatamente como ela será enviada ao USUÁRIO FINAL.\n"
+                "Escreva como se VOCÊ estivesse falando diretamente com o usuário da conversa.\n"
+                "O coordenador NÃO vai reescrever sua resposta — ela será usada como está.\n"
+                "Use tom natural, amigável e coerente com o contexto da conversa.\n\n"
+                "⚠️ NÃO inclua JSON, metadados, ou texto técnico.\n"
+                "⚠️ NÃO diga 'recomendo que o coordenador...' — VOCÊ é quem responde ao usuário.\n"
             )
         
         collab_instruction = (
@@ -234,12 +245,27 @@ Responda APENAS em JSON válido com este formato exato:
             "- Somente APÓS executar as ferramentas necessárias e obter os resultados reais, você deve gerar sua resposta final.\n\n"
             + response_format_block
             + "REGRAS ABSOLUTAS:\n"
-            "- NÃO fale como se estivesse conversando com o usuário final\n"
-            "- NÃO use saudações, despedidas ou tom casual\n"
-            "- NÃO repita informações que o coordenador já possui\n"
-            "- Reporte de forma TÉCNICA e DIRETA ao coordenador\n"
-            "- O coordenador irá sintetizar sua resposta, portanto seja objetivo\n"
         )
+
+        if response_style == "structured":
+            # Legacy structured mode: technical report to coordinator
+            collab_instruction += (
+                "- NÃO fale como se estivesse conversando com o usuário final\n"
+                "- NÃO use saudações, despedidas ou tom casual\n"
+                "- NÃO repita informações que o coordenador já possui\n"
+                "- Reporte de forma TÉCNICA e DIRETA ao coordenador\n"
+                "- O coordenador irá sintetizar sua resposta, portanto seja objetivo\n"
+            )
+        else:
+            # final_response / natural: write the actual end-user message
+            collab_instruction += (
+                "- Escreva a resposta PRONTA para o USUÁRIO FINAL da conversa\n"
+                "- Use o tom e estilo que o usuário espera (amigável, profissional, conforme o contexto)\n"
+                "- NÃO inclua metadados, JSON interno, ou texto técnico na resposta\n"
+                "- NÃO diga 'recomendo que o coordenador faça X' — VOCÊ é quem faz\n"
+                "- NÃO repita informações que já estão no histórico da conversa\n"
+                "- Seja conciso e direto, mas mantenha a cordialidade\n"
+            )
         if context:
             collab_instruction += f"\n\n[CONTEXTO ADICIONAL]:\n{context}"
             
@@ -647,7 +673,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 orientation=orientation,
                 primary_agent=primary_agent,
                 monitor=monitor,
-                response_style=getattr(collaborator, 'response_style', 'structured'),
+                response_style=getattr(collaborator, 'response_style', 'final_response'),
             )
             for collaborator, orientation in selected_collaborators
         ]
@@ -777,7 +803,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 orientation=orientation,
                 primary_agent=primary_agent,
                 monitor=monitor,
-                response_style=getattr(collaborator, 'response_style', 'structured'),
+                response_style=getattr(collaborator, 'response_style', 'final_response'),
             )
             for collaborator, orientation in selected_collaborators
         ]
@@ -808,11 +834,13 @@ CONTRIBUIÇÕES DOS ESPECIALISTAS:
 {collab_text}
 
 TAREFA:
-Combine as informações em uma resposta única, coesa e natural.
+As respostas dos especialistas JÁ SÃO mensagens finais prontas para o usuário.
+- Se houve UM especialista com resposta clara e completa, use a resposta dele diretamente
+- Se houve MÚLTIPLOS, combine de forma natural preservando o conteúdo original
 - Não mencione que recebeu informações de outros agentes
 - Mantenha sua personalidade e tom
-- Integre as informações de forma fluida
-- Se houver contradições, priorize sua resposta inicial
+- Se houver contradições, priorize a resposta mais completa e precisa
+- NÃO reescreva respostas que já estão prontas para o usuário — apenas repasse
 """
         try:
             response = await self.llm.ainvoke([SystemMessage(content=combine_prompt)])
