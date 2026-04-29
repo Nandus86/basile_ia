@@ -16,7 +16,13 @@ def get_nested_value(data: dict, path: str) -> Any:
             else:
                 return None
         return value
-    return data.get(path)
+    # If not using dot notation, try direct key
+    if path in data:
+        return data[path]
+    # Fallback to check if it's wrapped in 'body'
+    if "body" in data and isinstance(data["body"], dict) and path in data["body"]:
+        return data["body"][path]
+    return None
 
 
 def set_nested_value(data: dict, path: str, value: Any) -> None:
@@ -87,7 +93,10 @@ def normalize_webhook_payload(
             normalized["session_id"] = f"session_{uuid.uuid4().hex[:8]}"
     
     if "message" not in normalized:
-        if message_required:
+        message_value = get_nested_value(payload, "message")
+        if message_value is not None:
+            normalized["message"] = message_value
+        elif message_required:
             raise ValueError("message is required but not found in payload")
         else:
             normalized["message"] = ""
