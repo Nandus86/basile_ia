@@ -58,7 +58,9 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-basile}:${POSTGRES_PASSWORD:-basile123}@basile-postgres:5432/${POSTGRES_DB:-basile_db}
       - REDIS_URL=redis://basile-redis:6379
-      - WEAVIATE_URL=http://basile-weaviate:8080
+      - WEAVIATE_URL=${WEAVIATE_URL:-http://basile-weaviate:8080}
+      - WEAVIATE_GRPC_PORT=${WEAVIATE_GRPC_PORT:-50051}
+      - WEAVIATE_API_KEY=${WEAVIATE_API_KEY:-}
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
@@ -102,7 +104,9 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-basile}:${POSTGRES_PASSWORD:-basile123}@basile-postgres:5432/${POSTGRES_DB:-basile_db}
       - REDIS_URL=redis://basile-redis:6379
-      - WEAVIATE_URL=http://basile-weaviate:8080
+      - WEAVIATE_URL=${WEAVIATE_URL:-http://basile-weaviate:8080}
+      - WEAVIATE_GRPC_PORT=${WEAVIATE_GRPC_PORT:-50051}
+      - WEAVIATE_API_KEY=${WEAVIATE_API_KEY:-}
       - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}

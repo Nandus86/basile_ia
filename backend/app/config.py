@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     
     # Weaviate
     WEAVIATE_URL: str = "http://localhost:8086"
+    WEAVIATE_GRPC_PORT: int = 50051
+    WEAVIATE_API_KEY: str = ""
     
     # RabbitMQ
     RABBITMQ_URL: str = "amqp://basile:basile_secret@localhost:5672/"

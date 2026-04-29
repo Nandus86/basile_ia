@@ -34,14 +34,24 @@ class WeaviateClient:
                     openai_key = os.environ.get("OPENAI_API_KEY", "")
                     if openai_key:
                         headers["X-Openai-Api-Key"] = openai_key
+                    
+                    # Auth: use API key from env if provided (for Weaviate Cloud)
+                    auth_credentials = None
+                    if settings.WEAVIATE_API_KEY:
+                        auth_credentials = Auth.api_key(settings.WEAVIATE_API_KEY)
+                    
+                    grpc_port = settings.WEAVIATE_GRPC_PORT or 50051
+                    is_secure = parsed.scheme == "https"
+                    
                     self.client = weaviate.connect_to_custom(
                         http_host=parsed.hostname,
                         http_port=parsed.port or 8080,
-                        http_secure=parsed.scheme == "https",
+                        http_secure=is_secure,
                         grpc_host=parsed.hostname,
-                        grpc_port=50051,
-                        grpc_secure=False,
-                        headers=headers
+                        grpc_port=grpc_port,
+                        grpc_secure=is_secure,
+                        headers=headers,
+                        auth_credentials=auth_credentials
                     )
         return self.client
     
