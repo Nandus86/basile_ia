@@ -32,6 +32,16 @@ export default defineConfig({
                         }
                     })
                 }
+            },
+            '/ingress-api': {
+                target: process.env.VITE_INGRESS_URL || 'http://localhost:8011',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/ingress-api/, '')
+            },
+            '/egress-api': {
+                target: process.env.VITE_EGRESS_URL || 'http://localhost:8012',
+                changeOrigin: true,
+                rewrite: (path) => path.replace(/^\/egress-api/, '')
             }
         }
     },

@@ -61,16 +61,6 @@ const routes = [
         component: () => import('@/views/Acompanhamento.vue')
       },
       {
-        path: 'backup-restore',
-        name: 'BackupRestore',
-        component: () => import('@/views/BackupRestore.vue')
-      },
-      {
-        path: 'acompanhamento',
-        name: 'Acompanhamento',
-        component: () => import('@/views/Acompanhamento.vue')
-      },
-      {
         path: 'vfs-knowledge',
         name: 'VFSKnowledge',
         component: () => import('@/views/VFSKnowledge.vue')
@@ -94,6 +84,16 @@ const routes = [
         path: 'disparador',
         name: 'Disparador',
         component: () => import('@/views/Disparador.vue')
+      },
+      {
+        path: 'ingress',
+        name: 'Ingress',
+        component: () => import('@/views/Ingress.vue')
+      },
+      {
+        path: 'egress',
+        name: 'Egress',
+        component: () => import('@/views/Egress.vue')
       }
     ]
   },
