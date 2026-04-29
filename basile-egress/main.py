@@ -26,7 +26,8 @@ app = FastAPI(
     title="basile-egress",
     description="Result Output Service - Sends results to external webhooks",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/egress-api"
 )
 
 app.add_middleware(

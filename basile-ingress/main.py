@@ -46,7 +46,8 @@ app = FastAPI(
     title="basile-ingress",
     description="Webhook Entry Service — Normalizes, forwards, and queues incoming webhooks",
     version="1.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/ingress-api"
 )
 
 app.add_middleware(
