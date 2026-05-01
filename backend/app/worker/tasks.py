@@ -1748,6 +1748,7 @@ async def process_message_task(
     context_data: Optional[Dict[str, Any]] = None,
     transition_data: Optional[Dict[str, Any]] = None,
     callback_url: Optional[str] = None,
+    monitor_instance: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Background task: process a message.
@@ -1766,7 +1767,8 @@ async def process_message_task(
 
     agent = None
     agent_config = None
-    monitor = None
+    monitor = monitor_instance
+    monitor_created_here = False
 
     trigger_results = None
 
@@ -1805,7 +1807,7 @@ async def process_message_task(
                                 transition_data = t_data
 
             # Job Status Updates Monitor - Sync with consumer logic
-            if callback_url:
+            if not monitor and callback_url:
                 is_structured = bool(agent_config.get("output_schema")) if agent_config else False
 
                 monitor = StatusMonitor(
@@ -1820,9 +1822,10 @@ async def process_message_task(
                     is_structured=is_structured
                 )
                 await monitor.start()
+                monitor_created_here = True
 
-                # Generate contextual moment message based on agent identity
-                if agent and agent_config:
+            # Generate contextual moment message based on agent identity
+            if agent and agent_config and monitor:
                     try:
                         _tools_parts = []
                         if hasattr(agent, 'mcps') and agent.mcps:
@@ -2515,7 +2518,7 @@ async def process_message_task(
             }
     finally:
         # Stop StatusMonitor to prevent resource leaks
-        if monitor:
+        if monitor and monitor_created_here:
             try:
                 await monitor.stop()
             except Exception:

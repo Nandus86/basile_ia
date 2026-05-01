@@ -322,7 +322,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             user_access_level=user_access_level,
                             context_data=context_data,
                             transition_data=None, # Passed later
-                            callback_url=None     # Handled later by consumer loop
+                            callback_url=None,     # Handled later by consumer loop
+                            monitor_instance=monitor
                         )
                         
                         if response_data.get("status") == "failed":
