@@ -1675,6 +1675,70 @@ async def _check_anti_bot_guard(session_id: str, history: list) -> bool:
         return False  # Never block on error — fail open
 
 
+async def _generate_moment_message(
+    agent_name: str,
+    agent_description: str,
+    user_message: str,
+    tools_info: str = "",
+) -> str:
+    """
+    Generate a contextual, human-friendly status message using a lightweight LLM call.
+    The message describes what the agent is doing, based on its identity and the user's request.
+    Returns a short gerund phrase like: "verificando os visitantes do condomínio"
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage
+        import asyncio
+
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            api_key=settings.OPENAI_API_KEY,
+            max_tokens=30,
+        )
+
+        prompt = (
+            "Gere UMA frase curta descrevendo o que o assistente está fazendo AGORA, "
+            "com base no agente e na mensagem do usuário.\n\n"
+            "REGRAS:\n"
+            "- Máximo 80 caracteres\n"
+            "- Letras minúsculas\n"
+            "- Sem pontuação final, sem emoji\n"
+            "- NÃO comece com 'estou' (o sistema já adiciona isso)\n"
+            "- Use gerúndio (verificando, consultando, buscando...)\n"
+            "- Seja específico ao contexto do agente e da mensagem\n\n"
+            "Exemplos:\n"
+            "- verificando os visitantes do condomínio\n"
+            "- consultando o histórico de reservas\n"
+            "- buscando informações sobre o pedido\n"
+            "- analisando os dados financeiros\n"
+            "- preparando o relatório solicitado\n\n"
+            f"Agente: {agent_name}\n"
+            f"Descrição: {(agent_description or 'N/A')[:200]}\n"
+        )
+        if tools_info:
+            prompt += f"Ferramentas/Capacidades: {tools_info[:200]}\n"
+        prompt += (
+            f"Mensagem do usuário: {user_message[:150]}\n\n"
+            "Frase (responda APENAS a frase, nada mais):"
+        )
+
+        response = await asyncio.wait_for(
+            llm.ainvoke([SystemMessage(content=prompt)]),
+            timeout=2.0
+        )
+
+        result = response.content.strip().strip('"').strip("'").lower().rstrip(".!,")
+        if result:
+            return result[:100]
+        return f"consultando {agent_name.lower()}"
+
+    except Exception as e:
+        print(f"[StatusMoment] ⚠️ Fallback moment for '{agent_name}': {e}")
+        return f"consultando {agent_name.lower()}"
+
+
 async def process_message_task(
     ctx: dict,
     message: str,
@@ -1756,7 +1820,25 @@ async def process_message_task(
                     is_structured=is_structured
                 )
                 await monitor.start()
-                # Initial state is handled by the loop delay and default moment
+
+                # Generate contextual moment message based on agent identity
+                if agent and agent_config:
+                    try:
+                        _tools_parts = []
+                        if hasattr(agent, 'mcps') and agent.mcps:
+                            _tools_parts.extend([m.name for m in agent.mcps if getattr(m, 'is_active', True)])
+                        if hasattr(agent, 'skills') and agent.skills:
+                            _tools_parts.extend([s.name for s in agent.skills if getattr(s, 'is_active', True)])
+                        _moment = await _generate_moment_message(
+                            agent_name=agent_config.get("name", ""),
+                            agent_description=getattr(agent, "description", "") or "",
+                            user_message=message,
+                            tools_info=", ".join(_tools_parts),
+                        )
+                        monitor.log_progress(_moment)
+                        print(f"[StatusMoment] ✅ Initial moment: '{_moment}'")
+                    except Exception as e:
+                        print(f"[StatusMoment] ⚠️ Error setting initial moment: {e}")
 
             if not agent_config:
                 # No specific agent → fallback to Supervisor router
@@ -2178,6 +2260,9 @@ async def process_message_task(
                 traceback.print_exc()
 
             # ── Execute agent ──
+            if monitor:
+                monitor.log_progress("gerando a resposta para você")
+
             resilience_cfg = agent_config.get("resilience", {}) if agent_config else {}
             max_retries = resilience_cfg.get("max_retries", 2)
             timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
