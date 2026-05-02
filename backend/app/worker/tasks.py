@@ -1706,7 +1706,8 @@ async def _generate_moment_message(
             "- Letras minúsculas\n"
             "- Sem pontuação final, sem emoji\n"
             "- NÃO comece com 'estou'\n"
-            "- Use gerúndio (verificando, consultando, analisando...)\n\n"
+            "- Use gerúndio (verificando, consultando, analisando...)\n"
+            "- NUNCA mencione o nome do agente ou a palavra 'agente' na frase. Foco apenas na AÇÃO.\n\n"
             "Exemplo:\n"
             "verificando os visitantes|consultando a lista de presença|analisando os registros de entrada\n\n"
             f"Agente: {agent_name}\n"
@@ -1727,11 +1728,11 @@ async def _generate_moment_message(
         result = response.content.strip().strip('"').strip("'").lower()
         if result:
             return result
-        return f"consultando {agent_name.lower()}"
+        return "buscando as informações solicitadas|analisando sua requisição|consultando os dados necessários"
 
     except Exception as e:
         print(f"[StatusMoment] ⚠️ Fallback moment for '{agent_name}': {e}")
-        return f"consultando {agent_name.lower()}"
+        return "buscando as informações solicitadas|analisando sua requisição|consultando os dados necessários"
 
 
 async def process_message_task(
