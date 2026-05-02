@@ -2263,9 +2263,6 @@ async def process_message_task(
                 traceback.print_exc()
 
             # ── Execute agent ──
-            if monitor:
-                monitor.log_progress("gerando a resposta para você")
-
             resilience_cfg = agent_config.get("resilience", {}) if agent_config else {}
             max_retries = resilience_cfg.get("max_retries", 2)
             timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
