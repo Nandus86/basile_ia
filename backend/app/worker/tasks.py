@@ -1699,21 +1699,16 @@ async def _generate_moment_message(
         )
 
         prompt = (
-            "Gere UMA frase curta descrevendo o que o assistente está fazendo AGORA, "
-            "com base no agente e na mensagem do usuário.\n\n"
+            "Gere 3 variações curtas (sinônimas) descrevendo o que o assistente está fazendo AGORA, "
+            "com base no agente e na mensagem do usuário. Separe as 3 frases por um pipe (|).\n\n"
             "REGRAS:\n"
-            "- Máximo 80 caracteres\n"
+            "- Máximo 60 caracteres por frase\n"
             "- Letras minúsculas\n"
             "- Sem pontuação final, sem emoji\n"
-            "- NÃO comece com 'estou' (o sistema já adiciona isso)\n"
-            "- Use gerúndio (verificando, consultando, buscando...)\n"
-            "- Seja específico ao contexto do agente e da mensagem\n\n"
-            "Exemplos:\n"
-            "- verificando os visitantes do condomínio\n"
-            "- consultando o histórico de reservas\n"
-            "- buscando informações sobre o pedido\n"
-            "- analisando os dados financeiros\n"
-            "- preparando o relatório solicitado\n\n"
+            "- NÃO comece com 'estou'\n"
+            "- Use gerúndio (verificando, consultando, analisando...)\n\n"
+            "Exemplo:\n"
+            "verificando os visitantes|consultando a lista de presença|analisando os registros de entrada\n\n"
             f"Agente: {agent_name}\n"
             f"Descrição: {(agent_description or 'N/A')[:200]}\n"
         )
@@ -1721,7 +1716,7 @@ async def _generate_moment_message(
             prompt += f"Ferramentas/Capacidades: {tools_info[:200]}\n"
         prompt += (
             f"Mensagem do usuário: {user_message[:150]}\n\n"
-            "Frase (responda APENAS a frase, nada mais):"
+            "Frases (responda APENAS as frases separadas por |, nada mais):"
         )
 
         response = await asyncio.wait_for(
@@ -1729,9 +1724,9 @@ async def _generate_moment_message(
             timeout=2.0
         )
 
-        result = response.content.strip().strip('"').strip("'").lower().rstrip(".!,")
+        result = response.content.strip().strip('"').strip("'").lower()
         if result:
-            return result[:100]
+            return result
         return f"consultando {agent_name.lower()}"
 
     except Exception as e:

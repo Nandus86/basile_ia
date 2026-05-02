@@ -25,7 +25,8 @@ class StatusMonitor:
         self.is_running = False
         self.task = None
         self.progress_log: List[str] = []
-        self.current_moment = "processando sua solicitação"
+        self.current_moments = ["processando sua solicitação"]
+        self.current_moment = self.current_moments[0]
 
         # Extract config
         self.enabled = agent_config.get("status_updates_enabled", False)
@@ -61,8 +62,11 @@ class StatusMonitor:
         timestamp = time.strftime("%H:%M:%S")
         self.progress_log.append(f"[{timestamp}] {message}")
         # Automatically update current_moment with a cleaned version of the progress
-        # Limit to 100 chars as requested
-        self.current_moment = message[:100].lower().strip(".")
+        # Support multiple variations separated by '|'
+        parts = [p.strip()[:100].lower().strip(".") for p in message.split('|') if p.strip()]
+        if parts:
+            self.current_moments = parts
+            self.current_moment = self.current_moments[0]
         logger.info(f"Progress log: {message}")
 
     async def _run_loop(self):
@@ -84,7 +88,15 @@ class StatusMonitor:
                 if elapsed >= target_time:
                     # Build status text
                     status_text = self.follow_up_msg if sent_count > 0 else self.initial_msg
-                    status_text = status_text.replace("{{ $show_moment }}", self.current_moment)
+                    
+                    # Pick variation based on sent_count
+                    if hasattr(self, 'current_moments') and self.current_moments:
+                        idx = sent_count % len(self.current_moments)
+                        moment_to_show = self.current_moments[idx]
+                    else:
+                        moment_to_show = self.current_moment
+                        
+                    status_text = status_text.replace("{{ $show_moment }}", moment_to_show)
 
                     await self._send_status(status_text)
                     sent_count += 1
