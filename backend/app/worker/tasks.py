@@ -1239,9 +1239,10 @@ async def _build_collaborator_tools(
                         response_style=_r_style,
                     )
                     print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
-                    # Sanitize structured JSON responses to prevent raw JSON reaching the user
-                    if response:
-                        response = _sanitize_structured_response(response)
+                    # NOTE: Do NOT sanitize here — the orchestrator LLM needs the full
+                    # structured data (achados/dados/recomendacao) to synthesize the
+                    # final response. Sanitization happens at the final output stage
+                    # in process_message_task, not at the intermediate tool-response stage.
                     return response or f"Agente {name} não retornou resposta."
                 except Exception as e:
                     print(f"[CollabTool] ❌ Error invoking '{_agent.name}': {e}")
