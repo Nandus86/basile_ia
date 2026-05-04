@@ -1755,7 +1755,7 @@ async def _generate_moment_message(
     """
     Generate a contextual, human-friendly status message using a lightweight LLM call.
     The message describes what the agent is doing, based on its identity and the user's request.
-    Returns a short gerund phrase like: "verificando os visitantes do condomínio"
+    Returns a short gerund phrase like: "verificando os visitantes da igreja"
     """
     try:
         from langchain_openai import ChatOpenAI
@@ -1774,14 +1774,15 @@ async def _generate_moment_message(
             "com base no agente e na mensagem do usuário. Separe as 3 frases por um pipe (|).\n\n"
             "REGRAS:\n"
             "- Máximo 70 caracteres por frase\n"
+            "- NUNCA use frases perjorativas ou fora do contesto cristão de igreja evangélica\n"
             "- Letras minúsculas\n"
             "- Sem pontuação final, sem emoji\n"
             "- NÃO comece com 'estou'\n"
             "- Use gerúndio (verificando, consultando, analisando...)\n"
             "- NUNCA mencione o nome do agente ou a palavra 'agente' na frase. Foco apenas na AÇÃO.\n"
-            "- Adicione um tom sutilmente engraçado, neutro, empático e humano (ex: tomando um cafezinho, ajustando os óculos, aquecendo os motores) integrado à ação técnica, mas NUNCA seja agressivo ou irônico.\n\n"
+            "- Adicione um tom neutro, empático e humano (ex: verificando seus dados, ajustando as informações, analisando os registros) integrado à ação técnica, mas NUNCA seja agressivo ou irônico.\n\n"
             "Exemplo:\n"
-            "tomando um cafezinho enquanto verifico os visitantes|ajustando os óculos para analisar os registros|dando uma espiada rápida na lista de presença\n\n"
+            "verificando a fase em que se encontra o processo|analisando os visitantes|ajustando as informações para analisar os registros|organizando a lista de presença\n\n"
             f"Agente: {agent_name}\n"
             f"Descrição: {(agent_description or 'N/A')[:200]}\n"
         )
