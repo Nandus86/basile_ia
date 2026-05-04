@@ -131,6 +131,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const email = ref('')
@@ -159,10 +160,15 @@ const login = async () => {
   }
   
   if (email.value && password.value) {
-    setTimeout(() => {
+    try {
+      const authStore = useAuthStore()
+      await authStore.login(email.value, password.value)
       router.push('/')
+    } catch (err) {
+      error.value = 'Credenciais inválidas. Verifique seu email e senha.'
+    } finally {
       loading.value = false
-    }, 1200)
+    }
   } else {
     error.value = 'Por favor, preencha todos os campos'
     loading.value = false

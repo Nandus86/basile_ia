@@ -17,6 +17,7 @@ from app.models.vfs_knowledge_base import VFSKnowledgeBase, VFSFile
 from app.models.workflow import Workflow
 from app.models.conversation_message import ConversationMessage
 from app.models.dispatcher_config import DispatcherConfig
+from app.models.user import User
 
 __all__ = [
     "APIKey", 
@@ -28,6 +29,6 @@ __all__ = [
     "AIProvider", "WebhookConfig", "JobLog",
     "Skill", "SkillGroup", "InformationBase",
     "VFSKnowledgeBase", "VFSFile", "Workflow", "ConversationMessage",
-    "DispatcherConfig"
+    "DispatcherConfig", "User"
 ]
 
