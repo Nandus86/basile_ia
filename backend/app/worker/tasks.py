@@ -27,6 +27,73 @@ logger = logging.getLogger(__name__)
 # Shared helpers
 # ─────────────────────────────────────────────────────────────
 
+def _sanitize_structured_response(text: str) -> str:
+    """Detect and extract user-facing content from structured JSON responses.
+    
+    When a collaborator uses response_style='structured', it returns JSON like:
+    {"achados": [...], "dados": {...}, "recomendacao": "..."}
+    
+    This should NEVER reach the end user. This function extracts the actual
+    user-facing message from the structured payload.
+    """
+    if not text or not isinstance(text, str):
+        return text or ""
+    
+    stripped = text.strip()
+    # Quick check: must look like JSON
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return text
+    
+    try:
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return text
+    
+    if not isinstance(data, dict):
+        return text
+    
+    # Only intercept the achados/dados/recomendacao structured format
+    has_achados = "achados" in data
+    has_dados = "dados" in data
+    has_recomendacao = "recomendacao" in data
+    
+    if not (has_achados or (has_dados and has_recomendacao)):
+        return text  # Not a structured collaborator response
+    
+    # Priority 1: Extract user-facing message from 'dados'
+    dados = data.get("dados", {})
+    if isinstance(dados, dict):
+        # Look for explicit message fields
+        for key in ["mensagem", "resposta", "response", "output", "message", "texto"]:
+            val = dados.get(key)
+            if val and isinstance(val, str) and val.strip():
+                print(f"[Sanitize] ✅ Extracted user message from dados.{key}")
+                return val.strip()
+    
+    # Priority 2: Use 'recomendacao' as the message
+    recomendacao = data.get("recomendacao", "")
+    if isinstance(recomendacao, str) and recomendacao.strip():
+        print(f"[Sanitize] ✅ Using recomendacao as user message")
+        return recomendacao.strip()
+    
+    # Priority 3: If dados has a single string value, use it
+    if isinstance(dados, str) and dados.strip():
+        print(f"[Sanitize] ✅ Using dados string as user message")
+        return dados.strip()
+    
+    # Priority 4: Concatenate achados if they look user-facing
+    achados = data.get("achados", [])
+    if isinstance(achados, list) and achados:
+        achados_text = "\n".join([str(a) for a in achados if a])
+        if achados_text.strip():
+            print(f"[Sanitize] ✅ Using achados as user message (fallback)")
+            return achados_text.strip()
+    
+    # Last resort: return original (shouldn't normally get here)
+    print(f"[Sanitize] ⚠️ Could not extract user message from structured response")
+    return text
+
+
 def _resolve_template(template: str, context_data: Dict[str, Any]) -> str:
     """Resolve template like {{ $request.ai_params.cell_name }} from context_data."""
     resolved = template
@@ -1172,6 +1239,9 @@ async def _build_collaborator_tools(
                         response_style=_r_style,
                     )
                     print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
+                    # Sanitize structured JSON responses to prevent raw JSON reaching the user
+                    if response:
+                        response = _sanitize_structured_response(response)
                     return response or f"Agente {name} não retornou resposta."
                 except Exception as e:
                     print(f"[CollabTool] ❌ Error invoking '{_agent.name}': {e}")
@@ -2355,6 +2425,12 @@ async def process_message_task(
                 output_text = _ctx_re.sub('', output_text).strip()
                 if isinstance(final_result, str):
                     final_result = _ctx_re.sub('', final_result).strip()
+
+                # Sanitize structured JSON responses (achados/dados/recomendacao)
+                # that may leak through to the final user output
+                if isinstance(final_result, str):
+                    final_result = _sanitize_structured_response(final_result)
+                    output_text = final_result
 
                 # Process response_variables - substituição de palavras na resposta
                 response_vars = agent_config.get("config", {}).get("response_variables", [])

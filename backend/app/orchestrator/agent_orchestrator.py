@@ -42,6 +42,72 @@ class AgentOrchestrator:
             api_key=settings.OPENAI_API_KEY
         )
     
+    @staticmethod
+    def _sanitize_structured_response(text: str) -> str:
+        """Detect and extract user-facing content from structured JSON responses.
+        
+        When a collaborator uses response_style='structured', it returns JSON like:
+        {"achados": [...], "dados": {...}, "recomendacao": "..."}
+        
+        This should NEVER reach the end user. This function extracts the actual
+        user-facing message from the structured payload.
+        """
+        import json as _json
+        
+        if not text or not isinstance(text, str):
+            return text or ""
+        
+        stripped = text.strip()
+        if not (stripped.startswith("{") and stripped.endswith("}")):
+            return text
+        
+        try:
+            data = _json.loads(stripped)
+        except (_json.JSONDecodeError, ValueError):
+            return text
+        
+        if not isinstance(data, dict):
+            return text
+        
+        # Only intercept the achados/dados/recomendacao structured format
+        has_achados = "achados" in data
+        has_dados = "dados" in data
+        has_recomendacao = "recomendacao" in data
+        
+        if not (has_achados or (has_dados and has_recomendacao)):
+            return text
+        
+        # Priority 1: Extract user-facing message from 'dados'
+        dados = data.get("dados", {})
+        if isinstance(dados, dict):
+            for key in ["mensagem", "resposta", "response", "output", "message", "texto"]:
+                val = dados.get(key)
+                if val and isinstance(val, str) and val.strip():
+                    print(f"[Orchestrator Sanitize] ✅ Extracted user message from dados.{key}")
+                    return val.strip()
+        
+        # Priority 2: Use 'recomendacao' as the message
+        recomendacao = data.get("recomendacao", "")
+        if isinstance(recomendacao, str) and recomendacao.strip():
+            print(f"[Orchestrator Sanitize] ✅ Using recomendacao as user message")
+            return recomendacao.strip()
+        
+        # Priority 3: If dados is a string, use it
+        if isinstance(dados, str) and dados.strip():
+            print(f"[Orchestrator Sanitize] ✅ Using dados string as user message")
+            return dados.strip()
+        
+        # Priority 4: Concatenate achados
+        achados = data.get("achados", [])
+        if isinstance(achados, list) and achados:
+            achados_text = "\n".join([str(a) for a in achados if a])
+            if achados_text.strip():
+                print(f"[Orchestrator Sanitize] ✅ Using achados as user message (fallback)")
+                return achados_text.strip()
+        
+        print(f"[Orchestrator Sanitize] ⚠️ Could not extract user message from structured response")
+        return text
+    
     async def get_agent_with_collaborators(self, agent_id: UUID) -> Optional[Agent]:
         """Fetch an agent with all its collaboration settings (including collaborator skills)"""
         from app.models.skill import Skill
@@ -578,6 +644,11 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 )
             
             print(f"[Orchestrator] ✅ Collaborator '{agent.name}' responded")
+
+            # Sanitize structured JSON responses (achados/dados/recomendacao)
+            # to prevent raw internal JSON from reaching the orchestrator or end user
+            if response_text and response_style != "structured":
+                response_text = self._sanitize_structured_response(response_text)
 
             # ── Ephemeral STM lifecycle ──
             if collab_session_id:
