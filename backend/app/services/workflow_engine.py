@@ -122,6 +122,19 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
     # Strip leading $
     path = expr[1:]
 
+    # Handle $fromAI("key", "desc")
+    if path.startswith('fromAI('):
+        import ast
+        args_str = path[7:-1]
+        try:
+            args = ast.literal_eval(f'({args_str},)')
+            if args:
+                name = args[0]
+                trigger_payload = context.get('$trigger', {}).get('payload', {})
+                return trigger_payload.get(name, '')
+        except:
+            return ''
+
     # $env.VAR_NAME → environment variable
     if path.startswith('env.'):
         import os

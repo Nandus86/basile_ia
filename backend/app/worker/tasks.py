@@ -1346,6 +1346,22 @@ async def _build_workflow_tools(
         block_types = [b.get('type', '?') for b in blocks]
         block_summary = ", ".join(block_types) if block_types else "vazio"
 
+        # Extract $fromAI parameters to build dynamic schema
+        from app.services.mcp_tools import _extract_from_ai_params
+        from pydantic import create_model, Field
+        import json as _json
+
+        wf_def_str = _json.dumps(wf.definition or {})
+        ai_params = _extract_from_ai_params(wf_def_str)
+
+        fields = {}
+        for p_name, p_info in ai_params.items():
+            fields[p_name] = (str, Field(default=p_info.get("default", ""), description=p_info.get("description", "")))
+        
+        fields["payload_json"] = (str, Field(default="{}", description="JSON string contendo dados extras não mapeados (opcional)"))
+        
+        DynamicInput = create_model(f"WorkflowInput_{safe_name}", **fields)
+
         tool_desc = (
             f"Executa a automação '{wf.name}'. "
             f"{wf.description or 'Pipeline de automação'}. "
@@ -1357,17 +1373,21 @@ async def _build_workflow_tools(
             tool_desc = tool_desc[:997] + "..."
 
         def _make_workflow_invoker(_wf_id, _wf_name, _database, _ctx):
-            async def _invoke_workflow(payload_json: str) -> str:
-                """Invoke a workflow automation with the given payload."""
+            async def _invoke_workflow(**kwargs) -> str:
+                """Invoke a workflow automation with the given payload and AI parameters."""
                 try:
                     from app.services.workflow_engine import WorkflowEngine
                     import json as _json
 
-                    # Parse LLM-provided payload
+                    # Pop raw payload
+                    payload_json = kwargs.pop("payload_json", "{}")
                     try:
                         trigger_data = _json.loads(payload_json)
                     except _json.JSONDecodeError:
                         trigger_data = {"raw_input": payload_json}
+
+                    # Any remaining kwargs are $fromAI fields provided by the LLM
+                    trigger_data.update(kwargs)
 
                     # Merge with current context_data for convenience
                     if _ctx and isinstance(_ctx, dict):
@@ -1414,7 +1434,7 @@ async def _build_workflow_tools(
             coroutine=invoker,
             name=tool_name,
             description=tool_desc,
-            args_schema=_ExecutarWorkflowInput,
+            args_schema=DynamicInput,
             return_direct=False,
         )
         tools.append(tool)
