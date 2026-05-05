@@ -89,6 +89,19 @@
           @update:model-value="emitUpdate"
         ></v-text-field>
 
+        <!-- Query Params (JSON editor) -->
+        <v-textarea
+          v-model="queryJson"
+          label="Query Params (JSON)"
+          placeholder='{"search": "{{ $trigger.payload.query }}"}'
+          variant="outlined"
+          density="compact"
+          rows="2"
+          class="mb-3 monospace-field"
+          hide-details
+          @update:model-value="onQueryChange"
+        ></v-textarea>
+
         <!-- Auth -->
         <v-select
           v-model="config.auth_type"
@@ -417,17 +430,23 @@ const operators = [
 
 // JSON field helpers
 const headersJson = ref(JSON.stringify(config.value.headers || {}, null, 2))
+const queryJson = ref(JSON.stringify(config.value.query_params || {}, null, 2))
 const bodyJson = ref(typeof config.value.body === 'object' ? JSON.stringify(config.value.body, null, 2) : (config.value.body || ''))
 const contextMappingJson = ref(JSON.stringify(config.value.context_mapping || {}, null, 2))
 
 watch(() => props.block.id, () => {
   headersJson.value = JSON.stringify(config.value.headers || {}, null, 2)
+  queryJson.value = JSON.stringify(config.value.query_params || {}, null, 2)
   bodyJson.value = typeof config.value.body === 'object' ? JSON.stringify(config.value.body, null, 2) : (config.value.body || '')
   contextMappingJson.value = JSON.stringify(config.value.context_mapping || {}, null, 2)
 })
 
 function onHeadersChange(val) {
   try { config.value.headers = JSON.parse(val) } catch {}
+  emitUpdate()
+}
+function onQueryChange(val) {
+  try { config.value.query_params = JSON.parse(val) } catch {}
   emitUpdate()
 }
 function onBodyChange(val) {

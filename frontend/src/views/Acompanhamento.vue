@@ -184,7 +184,7 @@
         <template v-slot:item.actions="{ item }">
           <div class="d-flex ga-1 justify-center">
             <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-eye" @click="openJobDetails(item)">
-              Job
+              Ver
             </v-btn>
             <v-btn
               v-if="getSessionId(item)"

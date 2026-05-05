@@ -69,6 +69,7 @@
           @connect="onConnect"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
+          :delete-key-code="['Backspace', 'Delete']"
           :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#6366F1', strokeWidth: 2 } }"
         >
           <Background pattern-color="#333" :gap="20" />
@@ -108,6 +109,10 @@
             <div class="font-weight-bold mb-1">{{ testResult.status === 'completed' ? '✅ Sucesso' : '❌ Falha' }}</div>
             <div class="text-caption">{{ testResult.blocks_count }} blocos executados em {{ testResult.duration_ms }}ms</div>
             <div v-if="testResult.error" class="text-caption mt-1" style="color: #EF4444">{{ testResult.error }}</div>
+            <div v-if="testResult.result" class="mt-2 pt-2 border-t">
+              <div class="font-weight-bold text-caption mb-1">Resultado Final:</div>
+              <pre class="text-caption" style="white-space: pre-wrap; max-height: 150px; overflow: auto; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">{{ JSON.stringify(testResult.result, null, 2) }}</pre>
+            </div>
           </v-alert>
           <v-expansion-panels v-if="testResult && testResult.blocks" class="mt-3" variant="accordion">
             <v-expansion-panel v-for="(b, i) in testResult.blocks" :key="i">
@@ -282,6 +287,12 @@ function onNodesChange(changes) {
       const node = nodes.value.find(n => n.id === c.id)
       if (node) { node.position = c.position; markUnsaved() }
     }
+    if (c.type === 'remove') {
+      nodes.value = nodes.value.filter(n => n.id !== c.id)
+      edges.value = edges.value.filter(e => e.source !== c.id && e.target !== c.id)
+      if (selectedBlock.value && selectedBlock.value.id === c.id) selectedBlock.value = null
+      markUnsaved()
+    }
   }
 }
 function onEdgesChange(changes) {
@@ -353,6 +364,7 @@ async function runTest() {
       status: exec.status, duration_ms: exec.duration_ms,
       blocks_count: (exec.blocks_executed || []).length,
       blocks: exec.blocks_executed || [], error: exec.error_message,
+      result: exec.result
     }
   } catch (e) {
     testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0 }
