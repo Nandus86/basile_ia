@@ -2,6 +2,10 @@
 Basile_IA_Orch - AI Agent Orchestrator
 Main FastAPI Application
 """
+import os
+from dotenv import load_dotenv
+load_dotenv()  # Load .env into os.environ BEFORE anything else
+
 import logging
 import asyncio
 from fastapi import FastAPI

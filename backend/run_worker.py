@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()  # Load .env into os.environ BEFORE anything else
+
 import asyncio
 import logging
 from arq import run_worker
