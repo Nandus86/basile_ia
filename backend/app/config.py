@@ -56,3 +56,13 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
+
+import os
+if settings.LANGCHAIN_TRACING_V2:
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    if settings.LANGCHAIN_API_KEY:
+        os.environ["LANGCHAIN_API_KEY"] = settings.LANGCHAIN_API_KEY
+    if settings.LANGCHAIN_PROJECT:
+        os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
+    if settings.LANGCHAIN_ENDPOINT:
+        os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT

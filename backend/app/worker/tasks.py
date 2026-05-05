@@ -1410,13 +1410,13 @@ async def _build_workflow_tools(
                         if isinstance(val, dict) and 'response' in val:
                             summary_parts.append(f"[{key}]: {val['response']}")
                         elif isinstance(val, dict) and 'data' in val:
-                            summary_parts.append(f"[{key}]: {_json.dumps(val['data'], ensure_ascii=False)[:500]}")
+                            summary_parts.append(f"[{key}]: {_json.dumps(val['data'], ensure_ascii=False)}")
                         elif isinstance(val, str):
-                            summary_parts.append(f"[{key}]: {val[:500]}")
+                            summary_parts.append(f"[{key}]: {val}")
 
                     if summary_parts:
                         return f"Automação '{_wf_name}' executada com sucesso.\n\n" + "\n".join(summary_parts)
-                    return f"Automação '{_wf_name}' executada com sucesso. Resultado: {_json.dumps(result_ctx, ensure_ascii=False)[:1000]}"
+                    return f"Automação '{_wf_name}' executada com sucesso. Resultado: {_json.dumps(result_ctx, ensure_ascii=False)}"
 
                 except Exception as e:
                     print(f"[WorkflowTool] ❌ Error executing workflow '{_wf_name}': {e}")
