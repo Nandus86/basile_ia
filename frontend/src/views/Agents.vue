@@ -288,6 +288,7 @@
           <v-tab value="planner" :disabled="!editing"><v-icon start>mdi-strategy</v-icon>Planejador</v-tab>
           <v-tab value="thinker" :disabled="!editing"><v-icon start>mdi-head-brain</v-icon>Thinker</v-tab>
           <v-tab value="guardrail" :disabled="!editing"><v-icon start>mdi-shield-alert</v-icon>Guardrail</v-tab>
+          <v-tab value="workflows" :disabled="!editing"><v-icon start>mdi-sitemap</v-icon>Automações</v-tab>
           <v-tab value="prompt_preview" :disabled="!editing"><v-icon start>mdi-eye</v-icon>Prompt Geral</v-tab>
         </v-tabs>
 
@@ -2080,6 +2081,98 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: Workflow Automations -->
+            <v-window-item value="workflows">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para vincular automações.
+              </v-alert>
+
+              <div v-else>
+                <v-card variant="outlined" class="mb-4">
+                  <v-card-title class="d-flex align-center py-3 px-4">
+                    <v-icon class="mr-2" color="deep-orange">mdi-sitemap</v-icon>
+                    <span>Automações Vinculadas</span>
+                    <v-spacer></v-spacer>
+                    <v-chip size="small" variant="tonal" color="info">{{ agentWorkflows.length }} vinculadas</v-chip>
+                  </v-card-title>
+                  <v-divider></v-divider>
+                  <v-card-text>
+                    <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                      <template v-slot:prepend>
+                        <v-icon>mdi-information</v-icon>
+                      </template>
+                      Workflows vinculados se tornam <strong>ferramentas</strong> que o agente pode chamar.
+                      O agente receberá cada workflow como uma tool automacao_NOME que executa o pipeline
+                      completo sem necessidade de IA intermediária.
+                    </v-alert>
+
+                    <!-- Current linked workflows -->
+                    <v-list v-if="agentWorkflows.length > 0" lines="two" class="mb-4">
+                      <v-list-item v-for="wf in agentWorkflows" :key="wf.id" class="px-0">
+                        <template v-slot:prepend>
+                          <v-avatar color="deep-orange" size="40">
+                            <v-icon color="white" size="20">mdi-sitemap</v-icon>
+                          </v-avatar>
+                        </template>
+                        <v-list-item-title class="font-weight-medium">{{ wf.name }}</v-list-item-title>
+                        <v-list-item-subtitle>
+                          <v-chip size="x-small" variant="tonal" color="info" class="mr-1">{{ wf.block_count || 0 }} blocos</v-chip>
+                          <v-chip size="x-small" :color="wf.is_active ? 'success' : 'grey'" variant="tonal">
+                            {{ wf.is_active ? 'Ativo' : 'Inativo' }}
+                          </v-chip>
+                        </v-list-item-subtitle>
+                        <template v-slot:append>
+                          <v-btn icon variant="text" color="error" size="small" @click="unlinkWorkflow(wf.id)" :loading="unlinkingWorkflow === wf.id">
+                            <v-icon size="20">mdi-link-off</v-icon>
+                            <v-tooltip activator="parent" location="top">Desvincular</v-tooltip>
+                          </v-btn>
+                        </template>
+                      </v-list-item>
+                    </v-list>
+
+                    <div v-else class="text-center py-4">
+                      <v-icon size="48" color="grey-lighten-1" class="mb-2">mdi-sitemap</v-icon>
+                      <p class="text-medium-emphasis">Nenhuma automação vinculada</p>
+                    </div>
+
+                    <v-divider class="my-4"></v-divider>
+
+                    <!-- Add workflow -->
+                    <p class="text-subtitle-2 font-weight-bold mb-2">Adicionar Automação</p>
+                    <v-select
+                      v-model="selectedWorkflowToLink"
+                      :items="availableWorkflows"
+                      item-title="name"
+                      item-value="id"
+                      label="Selecione um workflow"
+                      variant="outlined"
+                      density="compact"
+                      clearable
+                      class="mb-2"
+                    >
+                      <template v-slot:item="{ props, item }">
+                        <v-list-item v-bind="props">
+                          <template v-slot:subtitle>
+                            <span class="text-caption">{{ item.raw.description || 'Sem descrição' }}</span>
+                          </template>
+                        </v-list-item>
+                      </template>
+                    </v-select>
+                    <v-btn
+                      color="primary"
+                      @click="linkWorkflow"
+                      :disabled="!selectedWorkflowToLink"
+                      :loading="linkingWorkflow"
+                      prepend-icon="mdi-link-plus"
+                      size="small"
+                    >
+                      Vincular Automação
+                    </v-btn>
+                  </v-card-text>
+                </v-card>
+              </div>
+            </v-window-item>
+
             <!-- Tab: Prompt Preview -->
             <v-window-item value="prompt_preview">
               <div v-if="loadingPrompt" class="d-flex flex-column align-center justify-center py-12">
@@ -2697,6 +2790,18 @@ const headers = [
 // Duplicate agent state
 const duplicatingAgent = ref(null)
 
+// Workflow automations state
+const agentWorkflows = ref([])
+const allWorkflows = ref([])
+const selectedWorkflowToLink = ref(null)
+const linkingWorkflow = ref(false)
+const unlinkingWorkflow = ref(null)
+
+const availableWorkflows = computed(() => {
+  const linkedIds = new Set(agentWorkflows.value.map(w => w.id))
+  return allWorkflows.value.filter(w => !linkedIds.has(w.id))
+})
+
 // Computed
 const filteredAgents = computed(() => {
   if (!search.value) return agents.value
@@ -2841,7 +2946,48 @@ watch(activeTab, (newTab) => {
   if (newTab === 'prompt_preview') {
     fetchPromptPreview()
   }
+  if (newTab === 'workflows' && editing.value) {
+    loadAgentWorkflows()
+    loadAllWorkflows()
+  }
 })
+
+async function loadAllWorkflows() {
+  try {
+    const res = await axios.get('/workflows')
+    allWorkflows.value = res.data.workflows || []
+  } catch (e) { console.error('Failed to load workflows', e) }
+}
+
+async function loadAgentWorkflows() {
+  if (!formData.id) return
+  try {
+    const res = await axios.get(`/agents/${formData.id}/workflows`)
+    agentWorkflows.value = res.data.workflows || []
+  } catch (e) { console.error('Failed to load agent workflows', e) }
+}
+
+async function linkWorkflow() {
+  if (!selectedWorkflowToLink.value || !formData.id) return
+  linkingWorkflow.value = true
+  try {
+    await axios.post(`/agents/${formData.id}/workflows/${selectedWorkflowToLink.value}`)
+    selectedWorkflowToLink.value = null
+    await loadAgentWorkflows()
+  } catch (e) {
+    alert('Erro ao vincular: ' + (e.response?.data?.detail || e.message))
+  } finally { linkingWorkflow.value = false }
+}
+
+async function unlinkWorkflow(workflowId) {
+  unlinkingWorkflow.value = workflowId
+  try {
+    await axios.delete(`/agents/${formData.id}/workflows/${workflowId}`)
+    await loadAgentWorkflows()
+  } catch (e) {
+    alert('Erro ao desvincular: ' + (e.response?.data?.detail || e.message))
+  } finally { unlinkingWorkflow.value = null }
+}
 
 function resetForm() {
    Object.assign(formData, {

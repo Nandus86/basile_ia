@@ -37,6 +37,14 @@ agent_thinker_links = Table(
     Column("is_active", Boolean, default=True, nullable=False)
 )
 
+# Association table for agents <-> workflows (many-to-many)
+agent_workflow_access = Table(
+    "agent_workflow_access",
+    Base.metadata,
+    Column("agent_id", UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column("workflow_id", UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), primary_key=True)
+)
+
 
 class AccessLevel(str, enum.Enum):
     """Vertical access levels for agents - hierarchical permission system"""
@@ -256,6 +264,13 @@ class Agent(Base):
         foreign_keys="AgentCollaborator.agent_id",
         back_populates="agent",
         cascade="all, delete-orphan",
+        lazy="selectin"
+    )
+
+    # Workflow automations the agent can trigger
+    workflows = relationship(
+        "Workflow",
+        secondary=agent_workflow_access,
         lazy="selectin"
     )
 

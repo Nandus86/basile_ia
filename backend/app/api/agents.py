@@ -1600,3 +1600,118 @@ async def get_prompt_preview(
         total_estimated_tokens=total_tokens,
         model=agent.model or "gpt-4o-mini"
     )
+
+
+# ==================== Agent Workflow Automation Endpoints ====================
+
+from app.models.workflow import Workflow
+
+class AgentWorkflowItem(BaseModel):
+    """Workflow summary for agent"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+    block_count: int = 0
+
+class AgentWorkflowList(BaseModel):
+    """List of workflows for an agent"""
+    agent_id: UUID
+    agent_name: str
+    workflows: List[AgentWorkflowItem]
+    total: int
+
+
+@router.get("/{agent_id}/workflows", response_model=AgentWorkflowList)
+async def list_agent_workflows(
+    agent_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """List all Workflow automations associated with an agent"""
+    result = await db.execute(
+        select(Agent)
+        .options(selectinload(Agent.workflows))
+        .where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    items = [
+        AgentWorkflowItem(
+            id=wf.id,
+            name=wf.name,
+            description=wf.description,
+            is_active=wf.is_active,
+            block_count=len((wf.definition or {}).get('blocks', []))
+        )
+        for wf in agent.workflows
+    ]
+
+    return AgentWorkflowList(
+        agent_id=agent.id,
+        agent_name=agent.name,
+        workflows=items,
+        total=len(items)
+    )
+
+
+@router.post("/{agent_id}/workflows/{workflow_id}", response_model=AgentWorkflowItem)
+async def add_workflow_to_agent(
+    agent_id: UUID,
+    workflow_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Link a Workflow automation to an agent (agent gains it as a tool)"""
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.workflows)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    wf_result = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
+    wf = wf_result.scalar_one_or_none()
+    if not wf:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    if wf in agent.workflows:
+        raise HTTPException(status_code=400, detail="Workflow already associated with this agent")
+
+    agent.workflows.append(wf)
+    await db.commit()
+
+    return AgentWorkflowItem(
+        id=wf.id,
+        name=wf.name,
+        description=wf.description,
+        is_active=wf.is_active,
+        block_count=len((wf.definition or {}).get('blocks', []))
+    )
+
+
+@router.delete("/{agent_id}/workflows/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_workflow_from_agent(
+    agent_id: UUID,
+    workflow_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Unlink a Workflow automation from an agent"""
+    result = await db.execute(
+        select(Agent).options(selectinload(Agent.workflows)).where(Agent.id == agent_id)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    wf_to_remove = None
+    for wf in agent.workflows:
+        if wf.id == workflow_id:
+            wf_to_remove = wf
+            break
+
+    if not wf_to_remove:
+        raise HTTPException(status_code=404, detail="Workflow not associated with this agent")
+
+    agent.workflows.remove(wf_to_remove)
+    await db.commit()

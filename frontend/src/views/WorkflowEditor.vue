@@ -2,426 +2,370 @@
   <div class="workflow-editor-page d-flex flex-column" style="height: calc(100vh - 64px)">
     <!-- Header Toolbar -->
     <v-toolbar color="surface" elevation="2" class="px-4" height="60">
-      <v-btn icon @click="goBack" class="mr-2">
-        <v-icon>mdi-arrow-left</v-icon>
-      </v-btn>
+      <v-btn icon @click="goBack" class="mr-2"><v-icon>mdi-arrow-left</v-icon></v-btn>
       <div class="d-flex align-center">
         <v-icon color="primary" class="mr-2">mdi-sitemap</v-icon>
         <h2 class="text-h6 mb-0">{{ workflow.name || 'Carregando...' }}</h2>
       </div>
       <v-spacer></v-spacer>
-      
-      <!-- Save Status -->
-      <v-chip class="mr-4" :color="saveStatus.color" variant="flat" size="small">
-        <v-icon start size="14">{{ saveStatus.icon }}</v-icon>
-        {{ saveStatus.text }}
+      <v-chip class="mr-3" :color="saveStatus.color" variant="flat" size="small">
+        <v-icon start size="14">{{ saveStatus.icon }}</v-icon>{{ saveStatus.text }}
       </v-chip>
-      
-
-
-      <v-btn color="primary" @click="saveDefinition" :loading="saving" prepend-icon="mdi-content-save">
-        Salvar
-      </v-btn>
+      <v-btn variant="tonal" color="info" class="mr-2" @click="showTestDialog = true" prepend-icon="mdi-play-circle">Testar</v-btn>
+      <v-btn color="primary" @click="saveDefinition" :loading="saving" prepend-icon="mdi-content-save">Salvar</v-btn>
     </v-toolbar>
 
     <!-- Main Editor Body -->
     <div class="d-flex flex-grow-1" style="overflow: hidden">
-      
       <!-- Toolbox Sidebar -->
-      <v-navigation-drawer permanent location="left" width="300" color="surface-variant" elevation="4">
+      <v-navigation-drawer permanent location="left" width="260" color="surface-variant" elevation="4">
         <div class="pa-4 text-center border-b">
           <h3 class="text-subtitle-1 font-weight-bold mb-1">
-            <v-icon size="20" class="mr-1">mdi-toolbox-outline</v-icon>
-            Caixa de Ferramentas
+            <v-icon size="20" class="mr-1">mdi-toolbox-outline</v-icon>Blocos
           </h3>
-          <p class="text-caption text-medium-emphasis">Arraste os nós para o canvas</p>
+          <p class="text-caption text-medium-emphasis">Arraste para o canvas</p>
         </div>
-        
-        <v-list class="pt-0">
+        <v-list class="pt-0" density="compact">
           <v-list-subheader class="font-weight-bold mt-2">Gatilhos</v-list-subheader>
-          <div 
-            class="dndnode trigger-node text-center ma-2 pa-3 cursor-grab rounded border"
-            :draggable="true" 
-            @dragstart="onDragStart($event, 'trigger')"
-          >
-            <v-icon color="warning" class="mb-1">mdi-lightning-bolt</v-icon>
-            <div class="text-subtitle-2">Webhook</div>
+          <div v-for="t in toolboxItems.filter(i => i.category === 'trigger')" :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border" :draggable="true"
+            @dragstart="onDragStart($event, t.type)">
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
           </div>
-          
-          <v-list-subheader class="font-weight-bold mt-2">Agentes</v-list-subheader>
-          <div 
-            class="dndnode orchestrator-node text-center ma-2 pa-3 cursor-grab rounded border"
-            :draggable="true" 
-            @dragstart="onDragStart($event, 'orchestrator')"
-            v-tooltip="'Conexão Vertical (Superior/Inferior)'"
-          >
-            <v-icon color="purple" class="mb-1">mdi-account-supervisor</v-icon>
-            <div class="text-subtitle-2">Orquestrador</div>
+          <v-list-subheader class="font-weight-bold mt-2">Ações</v-list-subheader>
+          <div v-for="t in toolboxItems.filter(i => i.category === 'action')" :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border" :draggable="true"
+            @dragstart="onDragStart($event, t.type)">
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
           </div>
-          
-          <div 
-            class="dndnode standard-node text-center ma-2 pa-3 cursor-grab rounded border"
-            :draggable="true" 
-            @dragstart="onDragStart($event, 'standard')"
-            v-tooltip="'Conexão Horizontal (Esquerda/Direita)'"
-          >
-            <v-icon color="info" class="mb-1">mdi-robot</v-icon>
-            <div class="text-subtitle-2">Especialista</div>
+          <v-list-subheader class="font-weight-bold mt-2">Lógica</v-list-subheader>
+          <div v-for="t in toolboxItems.filter(i => i.category === 'logic')" :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border" :draggable="true"
+            @dragstart="onDragStart($event, t.type)">
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
           </div>
-
+          <v-list-subheader class="font-weight-bold mt-2">Utilitários</v-list-subheader>
+          <div v-for="t in toolboxItems.filter(i => i.category === 'utility')" :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border" :draggable="true"
+            @dragstart="onDragStart($event, t.type)">
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
+          </div>
         </v-list>
       </v-navigation-drawer>
 
       <!-- Vue Flow Canvas -->
-      <div 
-        class="vue-flow-container flex-grow-1" 
-        style="position: relative;" 
-        @drop="onDrop" 
-        @dragover="onDragOver"
-      >
+      <div class="vue-flow-container flex-grow-1" style="position: relative;" @drop="onDrop" @dragover.prevent>
         <VueFlow
-          v-model="elements"
+          :nodes="nodes"
+          :edges="edges"
+          :node-types="nodeTypes"
           @pane-ready="onPaneReady"
           @node-click="onNodeClick"
           @pane-click="onPaneClick"
+          @connect="onConnect"
+          @nodes-change="onNodesChange"
+          @edges-change="onEdgesChange"
+          :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#6366F1', strokeWidth: 2 } }"
         >
-          <!-- Controls and Background -->
-          <Background pattern-color="#aaa" />
+          <Background pattern-color="#333" :gap="20" />
           <Controls />
           <MiniMap />
         </VueFlow>
       </div>
 
-      <!-- Properties Sidebar -->
-      <v-navigation-drawer 
-        :model-value="!!selectedNode"
-        location="right" 
-        width="350" 
-        color="surface" 
-        elevation="4"
-        class="properties-drawer"
-      >
-        <div v-if="selectedNode" class="pa-4 h-100 d-flex flex-column">
-          <div class="d-flex justify-space-between align-center mb-4">
-            <h3 class="text-h6 d-flex align-center">
-              <v-icon :color="getNodeColor(selectedNode.type)" class="mr-2">
-                {{ getNodeIcon(selectedNode.type) }}
-              </v-icon>
-              Propriedades
-            </h3>
-            <v-btn icon variant="text" size="small" @click="selectedNode = null">
-              <v-icon>mdi-close</v-icon>
-            </v-btn>
-          </div>
-          <v-divider class="mb-4"></v-divider>
-          
-          <v-form class="flex-grow-1 overflow-y-auto pr-2">
-            <!-- Node Label -->
-            <v-text-field
-              v-model="selectedNode.label"
-              label="Rótulo no Canvas"
-              variant="outlined"
-              density="compact"
-            ></v-text-field>
-            
-            <!-- Agent Selection for standard or orchestrator -->
-            <div v-if="selectedNode.type === 'standard' || selectedNode.type === 'orchestrator'">
-              <v-select
-                v-model="selectedNode.data.agentId"
-                :items="agentsList"
-                item-title="name"
-                item-value="id"
-                label="Vincular Agente"
-                variant="outlined"
-                density="compact"
-                hide-details
-                class="mb-4"
-                clearable
-              ></v-select>
-              
-              <v-alert v-if="!selectedNode.data.agentId" type="warning" variant="tonal" density="compact" class="mb-4 text-caption">
-                Selecione um agente da base de dados.
-              </v-alert>
-              
-              <v-textarea
-                v-model="selectedNode.data.instructionsOverride"
-                label="Instruções Adicionais (Override Local)"
-                placeholder="Instruções ativas apenas neste fluxo..."
-                variant="outlined"
-                rows="3"
-                density="compact"
-                hide-details
-              ></v-textarea>
-            </div>
-            
-            <!-- Trigger Settings -->
-            <div v-if="selectedNode.type === 'trigger'">
-              <v-select
-                v-model="selectedNode.data.webhookConfigId"
-                :items="webhooksList"
-                item-title="name"
-                item-value="id"
-                label="Vincular Webhook Config"
-                variant="outlined"
-                density="compact"
-                hide-details
-                class="mb-4"
-                clearable
-              ></v-select>
-              <v-alert v-if="!selectedNode.data.webhookConfigId" type="info" variant="tonal" density="compact" class="mb-4 text-caption">
-                Opcional: vincule se a entrada deste fluxo vier atráves de um webhook.
-              </v-alert>
-            </div>
-            
-          </v-form>
-          
-          <div class="mt-4 pt-4 border-t d-flex justify-space-between">
-            <v-btn color="error" variant="text" size="small" @click="deleteSelectedNode">
-              <v-icon start>mdi-trash-can</v-icon>
-              Excluir Nó
-            </v-btn>
-          </div>
-        </div>
+      <!-- Properties Panel -->
+      <v-navigation-drawer :model-value="!!selectedBlock" location="right" width="380" color="surface" elevation="4" class="properties-drawer">
+        <BlockPropertiesPanel
+          v-if="selectedBlock"
+          :block="selectedBlock"
+          :agents="agentsList"
+          :webhook-configs="webhooksList"
+          :context-keys="availableContextKeys"
+          @update="onBlockUpdate"
+          @close="selectedBlock = null"
+          @delete="deleteSelectedBlock"
+        />
       </v-navigation-drawer>
     </div>
+
+    <!-- Test Execution Dialog -->
+    <v-dialog v-model="showTestDialog" max-width="650">
+      <v-card>
+        <v-card-title class="bg-primary text-white d-flex align-center">
+          <v-icon class="mr-2">mdi-play-circle</v-icon>Testar Workflow
+          <v-spacer></v-spacer>
+          <v-btn icon variant="text" color="white" @click="showTestDialog = false"><v-icon>mdi-close</v-icon></v-btn>
+        </v-card-title>
+        <v-card-text class="pt-4">
+          <v-textarea v-model="testPayloadJson" label="Payload de Teste (JSON)" variant="outlined" rows="10"
+            placeholder='{"api_base": "https://...", "leader_id": "123", "auth_token": "..."}'
+            class="monospace-field"></v-textarea>
+          <v-alert v-if="testResult" :type="testResult.status === 'completed' ? 'success' : 'error'" variant="tonal" class="mt-3">
+            <div class="font-weight-bold mb-1">{{ testResult.status === 'completed' ? '✅ Sucesso' : '❌ Falha' }}</div>
+            <div class="text-caption">{{ testResult.blocks_count }} blocos executados em {{ testResult.duration_ms }}ms</div>
+            <div v-if="testResult.error" class="text-caption mt-1" style="color: #EF4444">{{ testResult.error }}</div>
+          </v-alert>
+          <v-expansion-panels v-if="testResult && testResult.blocks" class="mt-3" variant="accordion">
+            <v-expansion-panel v-for="(b, i) in testResult.blocks" :key="i">
+              <v-expansion-panel-title>
+                <v-icon :color="b.status === 'success' ? 'green' : 'red'" size="16" class="mr-2">
+                  {{ b.status === 'success' ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                </v-icon>
+                {{ b.label || b.block_id }} ({{ b.block_type }}) — {{ b.duration_ms }}ms
+              </v-expansion-panel-title>
+              <v-expansion-panel-text>
+                <pre class="text-caption" style="white-space: pre-wrap; max-height: 200px; overflow: auto">{{ JSON.stringify(b, null, 2) }}</pre>
+              </v-expansion-panel-text>
+            </v-expansion-panel>
+          </v-expansion-panels>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer></v-spacer>
+          <v-btn variant="text" @click="showTestDialog = false">Fechar</v-btn>
+          <v-btn color="primary" @click="runTest" :loading="testing" prepend-icon="mdi-play">Executar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, onMounted, markRaw } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import axios from '@/plugins/axios'
-
-// Vue Flow Imports
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
-
-// Essential core CSS
 import '@vue-flow/core/dist/style.css'
-// Optional default theme CSS
 import '@vue-flow/core/dist/theme-default.css'
+import WorkflowNode from '@/components/workflow/WorkflowNode.vue'
+import BlockPropertiesPanel from '@/components/workflow/BlockPropertiesPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
 const workflowId = route.params.id
 
-const elements = ref([])
-const { project, viewport } = useVueFlow()
+const { project } = useVueFlow()
 const vueFlowInstance = ref(null)
 
-let idCounter = 1
-
 const workflow = ref({})
+const nodes = ref([])
+const edges = ref([])
 const agentsList = ref([])
 const webhooksList = ref([])
 const saving = ref(false)
-const selectedNode = ref(null)
-
+const selectedBlock = ref(null)
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
+const showTestDialog = ref(false)
+const testPayloadJson = ref('{\n  \n}')
+const testResult = ref(null)
+const testing = ref(false)
 
+let idCounter = 1
 
+const nodeTypes = { workflow: markRaw(WorkflowNode) }
 
+const toolboxItems = [
+  { type: 'trigger', label: 'Webhook', icon: 'mdi-lightning-bolt', color: '#F59E0B', category: 'trigger' },
+  { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
+  { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
+  { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
+  { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },
+  { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },
+  { type: 'transform', label: 'Transform', icon: 'mdi-swap-horizontal', color: '#F97316', category: 'utility' },
+  { type: 'delay', label: 'Delay', icon: 'mdi-timer-sand', color: '#6B7280', category: 'utility' },
+]
 
+const availableContextKeys = computed(() => {
+  const keys = ['trigger']
+  for (const node of nodes.value) {
+    const outputKey = node.data?.config?.output_key || node.id
+    if (outputKey && !keys.includes(outputKey)) keys.push(outputKey)
+  }
+  return keys
+})
 
 onMounted(async () => {
-  await Promise.all([
-    fetchAgents(),
-    fetchWebhooks(),
-    loadWorkflow()
-  ])
+  await Promise.all([fetchAgents(), fetchWebhooks(), loadWorkflow()])
 })
 
 async function fetchAgents() {
-  try {
-    const res = await axios.get('/agents')
-    agentsList.value = res.data.agents || []
-  } catch (e) {
-    console.error(e)
-  }
+  try { agentsList.value = (await axios.get('/agents')).data.agents || [] } catch {}
 }
-
 async function fetchWebhooks() {
-  try {
-    const res = await axios.get('/webhooks-config')
-    webhooksList.value = res.data.webhook_configs || []
-  } catch (e) {
-    console.error(e)
-  }
+  try { webhooksList.value = (await axios.get('/webhooks-config')).data.webhook_configs || [] } catch {}
 }
 
 async function loadWorkflow() {
   try {
     const res = await axios.get(`/workflows/${workflowId}`)
     workflow.value = res.data.workflow || res.data
-
-    // Attempt to load definition
-    if (workflow.value.definition && workflow.value.definition.elements) {
-      elements.value = workflow.value.definition.elements
-
-      // update idCounter to prevent overlaps
-      workflow.value.definition.elements.forEach(el => {
-        if (!el.source && !el.target) {
-          // is node
-          const num = parseInt(el.id.split('-')[1])
-          if (!isNaN(num) && num >= idCounter) {
-            idCounter = num + 1
-          }
-        }
-      })
+    const def = workflow.value.definition || {}
+    if (def.blocks && def.edges) {
+      // v2 format
+      nodes.value = def.blocks.map(b => ({
+        id: b.id,
+        type: 'workflow',
+        position: b.position || { x: 0, y: 0 },
+        label: b.label || b.type,
+        data: { type: b.type, config: b.config || {}, label: b.label },
+      }))
+      edges.value = def.edges.map((e, i) => ({
+        id: e.id || `e-${i}`,
+        source: e.source,
+        target: e.target,
+        sourceHandle: e.sourceHandle || e.label || null,
+        label: e.label || '',
+        type: 'smoothstep',
+        animated: true,
+        style: { stroke: e.label === 'true' ? '#10B981' : e.label === 'false' ? '#EF4444' : '#6366F1', strokeWidth: 2 },
+      }))
+      // Update counter
+      for (const n of nodes.value) {
+        const num = parseInt(n.id.split('_').pop())
+        if (!isNaN(num) && num >= idCounter) idCounter = num + 1
+      }
+    } else if (def.elements) {
+      // Legacy v1 format
+      nodes.value = def.elements.filter(e => !e.source).map(e => ({
+        id: e.id, type: 'workflow', position: e.position || { x: 0, y: 0 },
+        label: e.label || '', data: e.data || {},
+      }))
+      edges.value = def.elements.filter(e => e.source).map(e => ({
+        id: e.id, source: e.source, target: e.target, type: 'smoothstep', animated: true,
+        style: { stroke: '#6366F1', strokeWidth: 2 },
+      }))
     }
-  } catch (e) {
-    console.error("Failed to load workflow", e)
-  }
+  } catch (e) { console.error("Failed to load workflow", e) }
 }
 
-const onPaneReady = (instance) => {
-  vueFlowInstance.value = instance
-  instance.fitView()
+const onPaneReady = (instance) => { vueFlowInstance.value = instance; instance.fitView() }
+const onDragStart = (event, type) => {
+  event.dataTransfer.setData('application/vueflow', type)
+  event.dataTransfer.effectAllowed = 'move'
 }
 
-const onDragStart = (event, nodeType) => {
-  if (event.dataTransfer) {
-    event.dataTransfer.setData('application/vueflow', nodeType)
-    event.dataTransfer.effectAllowed = 'move'
-  }
-}
-
-const onDragOver = (event) => {
-  event.preventDefault()
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = 'move'
-  }
-}
-
-const onDrop = (event) => {
+function onDrop(event) {
   event.preventDefault()
   const type = event.dataTransfer?.getData('application/vueflow')
-  
   if (!type || !vueFlowInstance.value) return
-  
-  // Calculate dropping position mapped to the canvas coordinates
-  const position = project({
-    x: event.clientX - 300, // Account for left drawer width
-    y: event.clientY - 60   // Account for top toolbar height
-  })
-  
-  const newNode = {
-    id: `node-${idCounter++}`,
-    type: 'default', // Use default node with styling
-    label: type === 'trigger' ? 'Novo Webhook' : (type === 'orchestrator' ? 'Orquestrador' : 'Especialista'),
-    position,
-    data: {
-      type: type, // 'trigger', 'orchestrator', 'standard'
-      agentId: null,
-      webhookConfigId: null,
-      instructionsOverride: ''
-    },
-    style: {
-      background: type === 'trigger' ? '#FFCC0020' : (type === 'orchestrator' ? '#9933CC20' : '#3399FF20'),
-      border: `2px solid ${type === 'trigger' ? '#FFCC00' : (type === 'orchestrator' ? '#9933CC' : '#3399FF')}`,
-      borderRadius: '12px',
-      padding: '12px',
-      color: '#ffffff',
-      fontWeight: 'bold',
-      minWidth: '150px',
-      minHeight: '70px'
+  const position = project({ x: event.clientX - 260, y: event.clientY - 60 })
+  const blockId = `block_${idCounter++}`
+  const label = toolboxItems.find(t => t.type === type)?.label || type
+  nodes.value = [...nodes.value, {
+    id: blockId, type: 'workflow', position,
+    label, data: { type, config: { output_key: blockId }, label },
+  }]
+  markUnsaved()
+}
+
+function onConnect(params) {
+  const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'default'}`
+  const label = params.sourceHandle || ''
+  edges.value = [...edges.value, {
+    id: edgeId, source: params.source, target: params.target,
+    sourceHandle: params.sourceHandle, label,
+    type: 'smoothstep', animated: true,
+    style: { stroke: label === 'true' ? '#10B981' : label === 'false' ? '#EF4444' : '#6366F1', strokeWidth: 2 },
+  }]
+  markUnsaved()
+}
+
+function onNodesChange(changes) {
+  for (const c of changes) {
+    if (c.type === 'position' && c.position) {
+      const node = nodes.value.find(n => n.id === c.id)
+      if (node) { node.position = c.position; markUnsaved() }
     }
   }
-  
-  // Custom Handles rules via style (Pseudo-implementation until CustomNodes.vue)
-  if (type === 'orchestrator') {
-    // hierarchical mapping conceptually uses default (Top/Bottom usually)
-  } else if (type === 'standard') {
-    // Standard left/right. Vue Flow defaults to top/bottom unless forced.
+}
+function onEdgesChange(changes) {
+  for (const c of changes) {
+    if (c.type === 'remove') {
+      edges.value = edges.value.filter(e => e.id !== c.id)
+      markUnsaved()
+    }
   }
-  
-  elements.value.push(newNode)
-  
+}
+
+function onNodeClick({ node }) {
+  selectedBlock.value = { id: node.id, ...node.data }
+}
+function onPaneClick() { selectedBlock.value = null }
+
+function onBlockUpdate(block) {
+  const node = nodes.value.find(n => n.id === block.id)
+  if (node) {
+    node.data = { ...block }
+    node.label = block.label || node.label
+  }
   markUnsaved()
 }
 
-function onNodeClick(event) {
-  selectedNode.value = event.node
-}
-
-function onPaneClick() {
-  selectedNode.value = null
-}
-
-function deleteSelectedNode() {
-  if (!selectedNode.value) return
-  
-  // Remove the node
-  elements.value = elements.value.filter(e => e.id !== selectedNode.value.id)
-  // Remove edges connected to it
-  elements.value = elements.value.filter(e => e.source !== selectedNode.value.id && e.target !== selectedNode.value.id)
-  
-  selectedNode.value = null
+function deleteSelectedBlock() {
+  if (!selectedBlock.value) return
+  const id = selectedBlock.value.id
+  nodes.value = nodes.value.filter(n => n.id !== id)
+  edges.value = edges.value.filter(e => e.source !== id && e.target !== id)
+  selectedBlock.value = null
   markUnsaved()
 }
 
-function getNodeIcon(type) {
-  if (type === 'trigger') return 'mdi-lightning-bolt'
-  if (type === 'orchestrator') return 'mdi-account-supervisor'
-  return 'mdi-robot'
-}
-
-function getNodeColor(type) {
-  if (type === 'trigger') return 'warning'
-  if (type === 'orchestrator') return 'purple'
-  return 'info'
-}
-
-function markUnsaved() {
-  saveStatus.value = { text: 'Não Salvo', color: 'warning', icon: 'mdi-alert-circle' }
-}
+function markUnsaved() { saveStatus.value = { text: 'Não Salvo', color: 'warning', icon: 'mdi-alert-circle' } }
 
 async function saveDefinition() {
   try {
     saving.value = true
-    const payload = {
-      name: workflow.value.name,
-      description: workflow.value.description,
+    const blocks = nodes.value.map(n => ({
+      id: n.id, type: n.data.type, label: n.data.label || n.label,
+      position: n.position, config: n.data.config || {},
+    }))
+    const edgesDef = edges.value.map(e => ({
+      id: e.id, source: e.source, target: e.target,
+      sourceHandle: e.sourceHandle || null, label: e.label || '',
+    }))
+    await axios.put(`/workflows/${workflowId}`, {
+      name: workflow.value.name, description: workflow.value.description,
       is_active: workflow.value.is_active,
-      definition: {
-        elements: elements.value
-      }
-    }
-    await axios.put(`/workflows/${workflowId}`, payload)
+      definition: { version: '2.0', blocks, edges: edgesDef, variables: workflow.value.definition?.variables || {} },
+    })
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
-
   } catch (e) {
     console.error(e)
     saveStatus.value = { text: 'Erro ao Salvar', color: 'error', icon: 'mdi-close-circle' }
-  } finally {
-    saving.value = false
-  }
+  } finally { saving.value = false }
 }
 
-function goBack() {
-  router.push('/workflows')
+async function runTest() {
+  testing.value = true; testResult.value = null
+  try {
+    await saveDefinition()
+    let payload = {}
+    try { payload = JSON.parse(testPayloadJson.value) } catch {}
+    const res = await axios.post(`/workflows/${workflowId}/execute`, { trigger_data: payload })
+    const exec = res.data
+    testResult.value = {
+      status: exec.status, duration_ms: exec.duration_ms,
+      blocks_count: (exec.blocks_executed || []).length,
+      blocks: exec.blocks_executed || [], error: exec.error_message,
+    }
+  } catch (e) {
+    testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0 }
+  } finally { testing.value = false }
 }
+
+function goBack() { router.push('/workflows') }
 </script>
 
 <style scoped>
-.workflow-editor-page {
-  background-color: #121212;
-}
-
-.dndnode {
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  transition: all 0.2s ease;
-  user-select: none;
-}
-.dndnode:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.5);
-  transform: translateY(-2px);
-}
-
-.properties-drawer {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-}
+.workflow-editor-page { background-color: #0F0F17; }
+.dndnode { border: 1px solid rgba(255,255,255,0.15); transition: all 0.2s ease; user-select: none; }
+.dndnode:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.4); transform: translateY(-2px); }
+.properties-drawer { border-left: 1px solid rgba(255,255,255,0.1); }
+.monospace-field :deep(textarea) { font-family: 'JetBrains Mono', monospace !important; font-size: 12px !important; }
 </style>

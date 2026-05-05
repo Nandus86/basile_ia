@@ -15,6 +15,7 @@ from app.models.skill_group import SkillGroup
 from app.models.information_base import InformationBase
 from app.models.vfs_knowledge_base import VFSKnowledgeBase, VFSFile
 from app.models.workflow import Workflow
+from app.models.workflow_execution import WorkflowExecution
 from app.models.conversation_message import ConversationMessage
 from app.models.dispatcher_config import DispatcherConfig
 from app.models.user import User
@@ -28,7 +29,7 @@ __all__ = [
     "EmotionalProfile", "DEFAULT_EMOTIONAL_PROFILES",
     "AIProvider", "WebhookConfig", "JobLog",
     "Skill", "SkillGroup", "InformationBase",
-    "VFSKnowledgeBase", "VFSFile", "Workflow", "ConversationMessage",
+    "VFSKnowledgeBase", "VFSFile", "Workflow", "WorkflowExecution", "ConversationMessage",
     "DispatcherConfig", "User"
 ]
 

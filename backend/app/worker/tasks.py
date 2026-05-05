@@ -740,7 +740,30 @@ async def _enrich_agent_prompt(
             import traceback
             print(f"[Task] Error loading collaborator tools: {e}")
             traceback.print_exc()
-    elif agent_model and has_collaboration and not is_orchestrator:
+
+    # ─── Workflow Automation Tools (any agent with linked workflows) ──────────
+    if agent_model:
+        try:
+            wf_tools = await _build_workflow_tools(db, agent_model, context_data)
+            if wf_tools:
+                existing_tools = agent_config.get("tools", []) or []
+                agent_config["tools"] = existing_tools + wf_tools
+                agent_config["has_tools"] = True
+                wf_names = [t.name for t in wf_tools]
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                    f"\n\n## Automações Disponíveis\n\n"
+                    f"Você tem acesso a workflows de automação que executam pipelines de tarefas sem IA.\n"
+                    f"Automações: {', '.join(wf_names)}\n\n"
+                    f"DIRETRIZES DE AUTOMAÇÃO:\n"
+                    f"1. Use automações para tarefas repetitivas que não precisam de análise ou criatividade.\n"
+                    f"2. O payload deve ser um JSON string válido com os dados necessários.\n"
+                    f"3. Os dados do contexto atual são mesclados automaticamente.\n"
+                )
+                print(f"[Task] ⚙️ Added {len(wf_tools)} workflow tools to '{agent_config['name']}'")
+        except Exception as e:
+            print(f"[Task] Error loading workflow tools: {e}")
+
+    if agent_model and has_collaboration and not is_orchestrator:
         # Non-orchestrator agents: keep old pre-consultation
         print(f"[Task] 🔍 Pre-consultation for non-orchestrator agent '{agent_config['name']}'")
         try:
@@ -1271,6 +1294,133 @@ async def _build_collaborator_tools(
 
     deterministic_matches.sort(key=lambda m: (m["priority"], -m["keyword_len"], (m["agent"].name or "").lower()))
     return tools, mandatory_instructions, deterministic_matches, always_start, always_end
+
+
+# ─────────────────────────────────────────────────────────────
+# Workflow Automation Tools — linked workflows become tools
+# ─────────────────────────────────────────────────────────────
+
+class _ExecutarWorkflowInput(BaseModel):
+    """Schema for workflow tool input — the LLM sends the trigger payload as JSON string."""
+    payload_json: str = Field(description="JSON string contendo os dados de entrada (trigger payload) para a automação. Ex: '{\"leader_id\": \"123\", \"cell_id\": \"456\"}'")
+
+
+async def _build_workflow_tools(
+    db,
+    agent_model,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> list:
+    """
+    Build LangChain tools from an agent's linked workflows.
+
+    Each linked workflow becomes a callable tool that the orchestrator
+    can invoke to run a full automation pipeline without IA overhead.
+    """
+    from langchain_core.tools import StructuredTool
+    from app.models.agent import Agent as AgentModel
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    import re
+
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(selectinload(AgentModel.workflows))
+        .where(AgentModel.id == agent_model.id)
+    )
+    agent_obj = result.scalar_one_or_none()
+    if not agent_obj or not agent_obj.workflows:
+        return []
+
+    active_workflows = [w for w in agent_obj.workflows if w.is_active]
+    if not active_workflows:
+        return []
+
+    tools = []
+    for wf in active_workflows:
+        safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', wf.name or "workflow")
+        safe_name = re.sub(r'^[^a-zA-Z_]', '_', safe_name)
+        safe_name = re.sub(r'_+', '_', safe_name).strip('_')[:64]
+        tool_name = f"automacao_{safe_name}"
+
+        blocks = (wf.definition or {}).get('blocks', [])
+        block_types = [b.get('type', '?') for b in blocks]
+        block_summary = ", ".join(block_types) if block_types else "vazio"
+
+        tool_desc = (
+            f"Executa a automação '{wf.name}'. "
+            f"{wf.description or 'Pipeline de automação'}. "
+            f"Blocos: [{block_summary}]. "
+            f"Envie um JSON como payload de entrada. Os dados do contexto atual ($trigger.payload) "
+            f"serão complementados automaticamente."
+        )
+        if len(tool_desc) > 1000:
+            tool_desc = tool_desc[:997] + "..."
+
+        def _make_workflow_invoker(_wf_id, _wf_name, _database, _ctx):
+            async def _invoke_workflow(payload_json: str) -> str:
+                """Invoke a workflow automation with the given payload."""
+                try:
+                    from app.services.workflow_engine import WorkflowEngine
+                    import json as _json
+
+                    # Parse LLM-provided payload
+                    try:
+                        trigger_data = _json.loads(payload_json)
+                    except _json.JSONDecodeError:
+                        trigger_data = {"raw_input": payload_json}
+
+                    # Merge with current context_data for convenience
+                    if _ctx and isinstance(_ctx, dict):
+                        merged = {**_ctx, **trigger_data}
+                    else:
+                        merged = trigger_data
+
+                    engine = WorkflowEngine(_database)
+                    result_ctx = await engine.execute(
+                        workflow_id=_wf_id,
+                        trigger_data=merged,
+                        trigger_type="agent_tool",
+                    )
+
+                    # Return a summary of the execution
+                    summary_parts = []
+                    for key, val in result_ctx.items():
+                        if key in ('workflow', 'trigger'):
+                            continue
+                        if isinstance(val, dict) and 'response' in val:
+                            summary_parts.append(f"[{key}]: {val['response']}")
+                        elif isinstance(val, dict) and 'data' in val:
+                            summary_parts.append(f"[{key}]: {_json.dumps(val['data'], ensure_ascii=False)[:500]}")
+                        elif isinstance(val, str):
+                            summary_parts.append(f"[{key}]: {val[:500]}")
+
+                    if summary_parts:
+                        return f"Automação '{_wf_name}' executada com sucesso.\n\n" + "\n".join(summary_parts)
+                    return f"Automação '{_wf_name}' executada com sucesso. Resultado: {_json.dumps(result_ctx, ensure_ascii=False)[:1000]}"
+
+                except Exception as e:
+                    print(f"[WorkflowTool] ❌ Error executing workflow '{_wf_name}': {e}")
+                    return f"Erro ao executar automação '{_wf_name}': {str(e)}"
+            return _invoke_workflow
+
+        invoker = _make_workflow_invoker(
+            _wf_id=wf.id,
+            _wf_name=wf.name,
+            _database=db,
+            _ctx=context_data,
+        )
+
+        tool = StructuredTool.from_function(
+            coroutine=invoker,
+            name=tool_name,
+            description=tool_desc,
+            args_schema=_ExecutarWorkflowInput,
+            return_direct=False,
+        )
+        tools.append(tool)
+        print(f"[Task] ⚙️ Workflow tool created: {tool_name} → '{wf.name}' ({len(blocks)} blocks)")
+
+    return tools
 
 
 # ─────────────────────────────────────────────────────────────

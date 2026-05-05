@@ -6,8 +6,8 @@
           <v-icon size="32" color="primary">mdi-sitemap</v-icon>
         </div>
         <div class="header-text">
-          <h1>Workflows Visuais</h1>
-          <p>Crie orquestrações complexas de agentes em um formato visual</p>
+          <h1>Workflow Automation</h1>
+          <p>Crie pipelines de automação em blocos — combine HTTP, lógica e agentes IA</p>
         </div>
       </div>
       <v-btn color="primary" size="large" prepend-icon="mdi-plus" @click="createWorkflow" elevation="3">
@@ -51,6 +51,9 @@
               <p class="text-caption text-medium-emphasis mb-0" v-if="item.description">
                 {{ item.description?.substring(0, 50) }}{{ item.description?.length > 50 ? '...' : '' }}
               </p>
+              <div class="d-flex gap-1 mt-1" v-if="getBlockCount(item)">
+                <v-chip size="x-small" variant="tonal" color="info">{{ getBlockCount(item) }} blocos</v-chip>
+              </div>
             </div>
           </div>
         </template>
@@ -67,6 +70,10 @@
             <v-btn icon variant="text" size="small" color="primary" @click="editWorkflow(item)">
               <v-icon size="20">mdi-vector-polyline-edit</v-icon>
               <v-tooltip activator="parent" location="top">Editor Visual</v-tooltip>
+            </v-btn>
+            <v-btn icon variant="text" size="small" color="success" @click="quickRun(item)" :loading="item._running">
+              <v-icon size="20">mdi-play</v-icon>
+              <v-tooltip activator="parent" location="top">Executar</v-tooltip>
             </v-btn>
             <v-btn icon variant="text" size="small" color="error" @click="confirmDelete(item)">
               <v-icon size="20">mdi-delete</v-icon>
@@ -146,8 +153,23 @@ const newWorkflowData = ref({
 const headers = [
   { title: 'Workflow', key: 'name', sortable: true },
   { title: 'Status', key: 'is_active', sortable: true },
-  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '120px' }
+  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '160px' }
 ]
+
+function getBlockCount(wf) {
+  const def = wf.definition || {}
+  return (def.blocks || []).length || (def.elements || []).filter(e => !e.source).length || 0
+}
+
+async function quickRun(wf) {
+  wf._running = true
+  try {
+    await axios.post(`/workflows/${wf.id}/execute`, { trigger_data: {} })
+    alert('Workflow executado com sucesso!')
+  } catch (e) {
+    alert('Erro: ' + (e.response?.data?.detail || e.message))
+  } finally { wf._running = false }
+}
 
 const filteredWorkflows = computed(() => {
   if (!search.value) return workflows.value
