@@ -266,6 +266,17 @@ Responda APENAS em JSON válido com este formato exato:
         factory = AgentFactory(self.db)
         agent_config = await factory.get_agent_config(agent, context_data=context_data)
         
+        # Inject workflow tools for the collaborator
+        try:
+            from app.worker.tasks import _build_workflow_tools
+            wf_tools = await _build_workflow_tools(self.db, agent, context_data)
+            if wf_tools:
+                existing_tools = agent_config.get("tools", []) or []
+                agent_config["tools"] = existing_tools + wf_tools
+                agent_config["has_tools"] = True
+        except Exception as e:
+            print(f"[Collaborator] Error injecting workflow tools: {e}")
+
         history = history or []
         
         # System Message Instruction - Hierarchy reinforcement
