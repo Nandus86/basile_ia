@@ -5,7 +5,22 @@
       <v-btn icon @click="goBack" class="mr-2"><v-icon>mdi-arrow-left</v-icon></v-btn>
       <div class="d-flex align-center">
         <v-icon color="primary" class="mr-2">mdi-sitemap</v-icon>
-        <h2 class="text-h6 mb-0">{{ workflow.name || 'Carregando...' }}</h2>
+        <v-text-field
+          v-if="editingName"
+          v-model="workflow.name"
+          variant="outlined"
+          density="compact"
+          hide-details
+          autofocus
+          class="workflow-name-input mr-2"
+          style="max-width: 320px;"
+          @keydown.enter="finishEditName"
+          @blur="finishEditName"
+        ></v-text-field>
+        <h2 v-else class="text-h6 mb-0 workflow-name-display" @click="editingName = true" title="Clique para editar">
+          {{ workflow.name || 'Carregando...' }}
+          <v-icon size="14" class="ml-1 opacity-50">mdi-pencil</v-icon>
+        </h2>
       </div>
       <v-spacer></v-spacer>
       <v-chip class="mr-3" :color="saveStatus.color" variant="flat" size="small">
@@ -166,6 +181,7 @@ const webhooksList = ref([])
 const saving = ref(false)
 const selectedBlock = ref(null)
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
+const editingName = ref(false)
 const showTestDialog = ref(false)
 const testPayloadJson = ref('{\n  \n}')
 const testResult = ref(null)
@@ -329,6 +345,11 @@ function deleteSelectedBlock() {
 
 function markUnsaved() { saveStatus.value = { text: 'Não Salvo', color: 'warning', icon: 'mdi-alert-circle' } }
 
+function finishEditName() {
+  editingName.value = false
+  markUnsaved()
+}
+
 async function saveDefinition() {
   try {
     saving.value = true
@@ -380,4 +401,7 @@ function goBack() { router.push('/workflows') }
 .dndnode:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.4); transform: translateY(-2px); }
 .properties-drawer { border-left: 1px solid rgba(255,255,255,0.1); }
 .monospace-field :deep(textarea) { font-family: 'JetBrains Mono', monospace !important; font-size: 12px !important; }
+.workflow-name-display { cursor: pointer; transition: opacity 0.2s; }
+.workflow-name-display:hover { opacity: 0.75; }
+.workflow-name-input :deep(.v-field) { font-size: 1.25rem; font-weight: bold; }
 </style>

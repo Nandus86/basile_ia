@@ -485,6 +485,17 @@ class WorkflowEngine:
                             f"[WorkflowEngine] HTTP {method} {url} → {response.status_code}"
                         )
 
+                    # Apply response_mapping if configured
+                    response_mapping = config.get('response_mapping')
+                    if response_mapping and isinstance(response_mapping, dict):
+                        try:
+                            from app.services.mcp_tools import _apply_response_mapping
+                            mapped = _apply_response_mapping(result, response_mapping)
+                            result['data'] = mapped
+                            logger.info(f"[WorkflowEngine] Response mapping applied: {list(mapped.keys())}")
+                        except Exception as e:
+                            logger.warning(f"[WorkflowEngine] Response mapping error: {e}")
+
                     return result
 
             except Exception as e:
