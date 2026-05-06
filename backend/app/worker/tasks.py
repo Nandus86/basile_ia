@@ -744,6 +744,17 @@ async def _enrich_agent_prompt(
     # ─── Workflow Automation Tools (any agent with linked workflows) ──────────
     if agent_model:
         try:
+            # 1. Execute auto-run workflows first (Pre-hooks)
+            startup_results = await _execute_startup_workflows(db, agent_model, context_data)
+            if startup_results:
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                    f"\n\n## 🔄 DADOS PRÉ-CARREGADOS (AUTOMAÇÕES DE INÍCIO)\n"
+                    f"As seguintes automações foram executadas automaticamente antes desta interação:\n"
+                    f"{startup_results}\n"
+                    f"Use esses dados para responder ou resolver a tarefa sem precisar chamar as automações novamente.\n"
+                )
+
+            # 2. Build standard workflow tools
             wf_tools = await _build_workflow_tools(db, agent_model, context_data)
             if wf_tools:
                 existing_tools = agent_config.get("tools", []) or []
@@ -1442,6 +1453,62 @@ async def _build_workflow_tools(
 
     return tools
 
+async def _execute_startup_workflows(
+    db,
+    agent_model,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Executes workflows marked with 'auto_run' = true on agent startup.
+    Returns a formatted string containing all results.
+    """
+    from app.models.agent import Agent as AgentModel
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    import json
+
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(selectinload(AgentModel.workflows))
+        .where(AgentModel.id == agent_model.id)
+    )
+    agent_obj = result.scalar_one_or_none()
+    if not agent_obj or not agent_obj.workflows:
+        return ""
+
+    active_workflows = [w for w in agent_obj.workflows if w.is_active]
+    startup_workflows = []
+    
+    for wf in active_workflows:
+        settings = (wf.definition or {}).get("settings", {})
+        if settings.get("auto_run") is True:
+            startup_workflows.append(wf)
+            
+    if not startup_workflows:
+        return ""
+
+    from app.services.workflow_engine import WorkflowEngine
+    engine = WorkflowEngine(db)
+    
+    results_str = ""
+    for wf in startup_workflows:
+        try:
+            print(f"[Startup Workflow] Executing {wf.name} for agent {agent_model.name}")
+            payload = context_data or {}
+            exec_result = await engine.execute(
+                workflow_id=wf.id,
+                trigger_data=payload,
+                trigger_type="agent_startup"
+            )
+            
+            # Remove system keys
+            clean_result = {k: v for k, v in exec_result.items() if not k.startswith('_')}
+            results_str += f"\n### Resultado da Automação: {wf.name}\n```json\n{json.dumps(clean_result, ensure_ascii=False, indent=2)}\n```\n"
+        except Exception as e:
+            print(f"[Startup Workflow] Failed to execute {wf.name}: {e}")
+            results_str += f"\n### Resultado da Automação: {wf.name}\n[FALHA NA EXECUÇÃO: {str(e)}]\n"
+
+    return results_str
 
 # ─────────────────────────────────────────────────────────────
 # Information Base Tools — one native tool per information base

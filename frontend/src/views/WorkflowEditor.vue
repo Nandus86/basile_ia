@@ -26,6 +26,7 @@
       <v-chip class="mr-3" :color="saveStatus.color" variant="flat" size="small">
         <v-icon start size="14">{{ saveStatus.icon }}</v-icon>{{ saveStatus.text }}
       </v-chip>
+      <v-btn variant="tonal" class="mr-2" @click="openSettings" prepend-icon="mdi-cog">Configurações</v-btn>
       <v-btn variant="tonal" color="info" class="mr-2" @click="showTestDialog = true" prepend-icon="mdi-play-circle">Testar</v-btn>
       <v-btn color="primary" @click="saveDefinition" :loading="saving" prepend-icon="mdi-content-save">Salvar</v-btn>
     </v-toolbar>
@@ -150,6 +151,38 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Workflow Settings Dialog -->
+    <v-dialog v-model="showSettingsDialog" max-width="600px">
+      <v-card>
+        <v-card-title class="bg-surface-variant d-flex align-center">
+          <v-icon class="mr-2">mdi-cog</v-icon>
+          Configurações do Workflow
+        </v-card-title>
+        <v-card-text class="pt-4">
+          <v-alert
+            type="info"
+            variant="tonal"
+            class="mb-4"
+            text="Estas configurações definem como este workflow se comporta quando vinculado a um Agente."
+          ></v-alert>
+
+          <v-switch
+            v-if="workflow.definition && workflow.definition.settings"
+            v-model="workflow.definition.settings.auto_run"
+            color="primary"
+            label="Executar no Início do Agente (Auto-run / Pre-hook)"
+            hint="Se ativado, quando o agente for acionado, este workflow será executado automaticamente ANTES do agente 'pensar', e o resultado será injetado no contexto dele."
+            persistent-hint
+            @change="markUnsaved"
+          ></v-switch>
+        </v-card-text>
+        <v-card-actions class="pa-4 bg-surface-variant">
+          <v-spacer></v-spacer>
+          <v-btn color="primary" @click="showSettingsDialog = false">Fechar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -182,6 +215,7 @@ const saving = ref(false)
 const selectedBlock = ref(null)
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
 const editingName = ref(false)
+const showSettingsDialog = ref(false)
 const showTestDialog = ref(false)
 const testPayloadJson = ref('{\n  \n}')
 const testResult = ref(null)
@@ -350,6 +384,13 @@ function finishEditName() {
   markUnsaved()
 }
 
+function openSettings() {
+  if (!workflow.value.definition.settings) {
+    workflow.value.definition.settings = { auto_run: false }
+  }
+  showSettingsDialog.value = true
+}
+
 async function saveDefinition() {
   try {
     saving.value = true
@@ -361,10 +402,17 @@ async function saveDefinition() {
       id: e.id, source: e.source, target: e.target,
       sourceHandle: e.sourceHandle || null, label: e.label || '',
     }))
+    const definition = { 
+        version: '2.0', 
+        blocks, 
+        edges: edgesDef, 
+        variables: workflow.value.definition?.variables || {},
+        settings: workflow.value.definition?.settings || { auto_run: false }
+    }
     await axios.put(`/workflows/${workflowId}`, {
       name: workflow.value.name, description: workflow.value.description,
       is_active: workflow.value.is_active,
-      definition: { version: '2.0', blocks, edges: edgesDef, variables: workflow.value.definition?.variables || {} },
+      definition
     })
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
   } catch (e) {

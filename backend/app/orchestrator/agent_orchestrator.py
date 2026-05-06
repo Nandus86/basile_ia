@@ -268,7 +268,19 @@ Responda APENAS em JSON válido com este formato exato:
         
         # Inject workflow tools for the collaborator
         try:
-            from app.worker.tasks import _build_workflow_tools
+            from app.worker.tasks import _build_workflow_tools, _execute_startup_workflows
+            
+            # 1. Execute auto-run workflows first (Pre-hooks)
+            startup_results = await _execute_startup_workflows(self.db, agent, context_data)
+            if startup_results:
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                    f"\n\n## 🔄 DADOS PRÉ-CARREGADOS (AUTOMAÇÕES DE INÍCIO)\n"
+                    f"As seguintes automações foram executadas automaticamente antes desta interação:\n"
+                    f"{startup_results}\n"
+                    f"Use esses dados para responder ou resolver a tarefa sem precisar chamar as automações novamente.\n"
+                )
+
+            # 2. Build standard workflow tools
             wf_tools = await _build_workflow_tools(self.db, agent, context_data)
             if wf_tools:
                 existing_tools = agent_config.get("tools", []) or []
