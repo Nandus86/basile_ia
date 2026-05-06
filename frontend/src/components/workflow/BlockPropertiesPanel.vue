@@ -394,6 +394,10 @@
         <v-icon start>mdi-trash-can</v-icon>
         Excluir Bloco
       </v-btn>
+      <v-btn color="info" variant="tonal" size="small" @click="$emit('duplicate')">
+        <v-icon start>mdi-content-duplicate</v-icon>
+        Duplicar Bloco
+      </v-btn>
     </div>
   </div>
 </template>
@@ -407,7 +411,7 @@ const props = defineProps({
   webhookConfigs: { type: Array, default: () => [] },
   contextKeys: { type: Array, default: () => [] },
 })
-const emit = defineEmits(['update', 'close', 'delete'])
+const emit = defineEmits(['update', 'close', 'delete', 'duplicate'])
 
 const BLOCK_META = {
   trigger:      { icon: 'mdi-lightning-bolt',    color: '#F59E0B', label: 'Configurar Gatilho' },

@@ -95,7 +95,7 @@
       </div>
 
       <!-- Properties Panel -->
-      <v-navigation-drawer :model-value="!!selectedBlock" location="right" width="380" color="surface" elevation="4" class="properties-drawer">
+      <v-navigation-drawer :model-value="!!selectedBlock" location="right" width="520" color="surface" elevation="4" class="properties-drawer">
         <BlockPropertiesPanel
           v-if="selectedBlock"
           :block="selectedBlock"
@@ -105,6 +105,7 @@
           @update="onBlockUpdate"
           @close="selectedBlock = null"
           @delete="deleteSelectedBlock"
+          @duplicate="duplicateBlock"
         />
       </v-navigation-drawer>
     </div>
@@ -374,6 +375,27 @@ function deleteSelectedBlock() {
   nodes.value = nodes.value.filter(n => n.id !== id)
   edges.value = edges.value.filter(e => e.source !== id && e.target !== id)
   selectedBlock.value = null
+  markUnsaved()
+}
+
+function duplicateBlock() {
+  if (!selectedBlock.value) return
+  const sourceNode = nodes.value.find(n => n.id === selectedBlock.value.id)
+  if (!sourceNode) return
+  const newId = `block_${idCounter++}`
+  const newNode = {
+    id: newId,
+    type: 'workflow',
+    position: { x: sourceNode.position.x + 60, y: sourceNode.position.y + 80 },
+    label: `${sourceNode.label || sourceNode.data.label || 'Bloco'} (cópia)`,
+    data: {
+      type: sourceNode.data.type,
+      config: JSON.parse(JSON.stringify({ ...sourceNode.data.config, output_key: newId })),
+      label: `${sourceNode.data.label || sourceNode.label || 'Bloco'} (cópia)`,
+    },
+  }
+  nodes.value = [...nodes.value, newNode]
+  selectedBlock.value = { id: newNode.id, ...newNode.data }
   markUnsaved()
 }
 
