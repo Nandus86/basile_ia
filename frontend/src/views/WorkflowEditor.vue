@@ -111,7 +111,7 @@
     </div>
 
     <!-- Test Execution Dialog -->
-    <v-dialog v-model="showTestDialog" max-width="650">
+    <v-dialog v-model="showTestDialog" max-width="750">
       <v-card>
         <v-card-title class="bg-primary text-white d-flex align-center">
           <v-icon class="mr-2">mdi-play-circle</v-icon>Testar Workflow
@@ -119,31 +119,74 @@
           <v-btn icon variant="text" color="white" @click="showTestDialog = false"><v-icon>mdi-close</v-icon></v-btn>
         </v-card-title>
         <v-card-text class="pt-4">
-          <v-textarea v-model="testPayloadJson" label="Payload de Teste (JSON)" variant="outlined" rows="10"
+          <v-textarea v-model="testPayloadJson" label="Payload de Teste (JSON)" variant="outlined" rows="8"
             placeholder='{"api_base": "https://...", "leader_id": "123", "auth_token": "..."}'
             class="monospace-field"></v-textarea>
+
+          <!-- Status Banner -->
           <v-alert v-if="testResult" :type="testResult.status === 'completed' ? 'success' : 'error'" variant="tonal" class="mt-3">
             <div class="font-weight-bold mb-1">{{ testResult.status === 'completed' ? '✅ Sucesso' : '❌ Falha' }}</div>
             <div class="text-caption">{{ testResult.blocks_count }} blocos executados em {{ testResult.duration_ms }}ms</div>
             <div v-if="testResult.error" class="text-caption mt-1" style="color: #EF4444">{{ testResult.error }}</div>
-            <div v-if="testResult.result" class="mt-2 pt-2 border-t">
-              <div class="font-weight-bold text-caption mb-1">Resultado Final:</div>
-              <pre class="text-caption" style="white-space: pre-wrap; max-height: 150px; overflow: auto; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">{{ JSON.stringify(testResult.result, null, 2) }}</pre>
-            </div>
           </v-alert>
-          <v-expansion-panels v-if="testResult && testResult.blocks" class="mt-3" variant="accordion">
-            <v-expansion-panel v-for="(b, i) in testResult.blocks" :key="i">
-              <v-expansion-panel-title>
-                <v-icon :color="b.status === 'success' ? 'green' : 'red'" size="16" class="mr-2">
-                  {{ b.status === 'success' ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                </v-icon>
-                {{ b.label || b.block_id }} ({{ b.block_type }}) — {{ b.duration_ms }}ms
-              </v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <pre class="text-caption" style="white-space: pre-wrap; max-height: 200px; overflow: auto">{{ JSON.stringify(b, null, 2) }}</pre>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
+
+          <!-- Tabs: Resultado Final vs Log Completo -->
+          <v-tabs v-if="testResult && testResult.status === 'completed'" v-model="testResultTab" class="mt-4" color="primary" density="compact">
+            <v-tab value="final">
+              <v-icon start size="16">mdi-target</v-icon>
+              Resultado Final
+            </v-tab>
+            <v-tab value="log">
+              <v-icon start size="16">mdi-format-list-bulleted</v-icon>
+              Log Completo
+            </v-tab>
+          </v-tabs>
+
+          <v-window v-if="testResult && testResult.status === 'completed'" v-model="testResultTab" class="mt-3">
+            <!-- Tab: Resultado Final (last block output only) -->
+            <v-window-item value="final">
+              <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+                <v-icon start size="14">mdi-information</v-icon>
+                Este é o resultado que o agente/produção receberá — apenas a saída do último bloco executado.
+              </v-alert>
+              <div v-if="testResult.result" class="result-box pa-3 rounded">
+                <pre class="text-body-2" style="white-space: pre-wrap; overflow: auto; max-height: 400px; margin: 0;">{{ JSON.stringify(testResult.result, null, 2) }}</pre>
+              </div>
+              <v-alert v-else type="warning" variant="tonal" density="compact">
+                Nenhum resultado de saída gerado.
+              </v-alert>
+            </v-window-item>
+
+            <!-- Tab: Log Completo (all blocks + full context) -->
+            <v-window-item value="log">
+              <v-expansion-panels v-if="testResult.blocks && testResult.blocks.length" variant="accordion">
+                <v-expansion-panel v-for="(b, i) in testResult.blocks" :key="i">
+                  <v-expansion-panel-title>
+                    <v-icon :color="b.status === 'success' ? 'green' : 'red'" size="16" class="mr-2">
+                      {{ b.status === 'success' ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                    </v-icon>
+                    {{ b.label || b.block_id }} ({{ b.block_type }}) — {{ b.duration_ms }}ms
+                  </v-expansion-panel-title>
+                  <v-expansion-panel-text>
+                    <pre class="text-caption" style="white-space: pre-wrap; max-height: 200px; overflow: auto">{{ JSON.stringify(b, null, 2) }}</pre>
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+
+              <!-- Full Context -->
+              <v-expansion-panels class="mt-3">
+                <v-expansion-panel>
+                  <v-expansion-panel-title>
+                    <v-icon size="16" class="mr-2">mdi-database</v-icon>
+                    Contexto Completo (todos os blocos)
+                  </v-expansion-panel-title>
+                  <v-expansion-panel-text>
+                    <pre class="text-caption" style="white-space: pre-wrap; max-height: 400px; overflow: auto">{{ JSON.stringify(testResult.context, null, 2) }}</pre>
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+            </v-window-item>
+          </v-window>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer></v-spacer>
@@ -221,6 +264,7 @@ const showTestDialog = ref(false)
 const testPayloadJson = ref('{\n  \n}')
 const testResult = ref(null)
 const testing = ref(false)
+const testResultTab = ref('final')
 
 let idCounter = 1
 
@@ -444,7 +488,7 @@ async function saveDefinition() {
 }
 
 async function runTest() {
-  testing.value = true; testResult.value = null
+  testing.value = true; testResult.value = null; testResultTab.value = 'final'
   try {
     await saveDefinition()
     let payload = {}
@@ -455,7 +499,8 @@ async function runTest() {
       status: exec.status, duration_ms: exec.duration_ms,
       blocks_count: (exec.blocks_executed || []).length,
       blocks: exec.blocks_executed || [], error: exec.error_message,
-      result: exec.result
+      result: exec.result,
+      context: exec.context || {},
     }
   } catch (e) {
     testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0 }
@@ -474,4 +519,10 @@ function goBack() { router.push('/workflows') }
 .workflow-name-display { cursor: pointer; transition: opacity 0.2s; }
 .workflow-name-display:hover { opacity: 0.75; }
 .workflow-name-input :deep(.v-field) { font-size: 1.25rem; font-weight: bold; }
+.result-box {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.result-box pre { color: #A5F3FC; }
 </style>

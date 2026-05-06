@@ -1413,21 +1413,12 @@ async def _build_workflow_tools(
                         trigger_type="agent_tool",
                     )
 
-                    # Return a summary of the execution
-                    summary_parts = []
-                    for key, val in result_ctx.items():
-                        if key in ('workflow', 'trigger'):
-                            continue
-                        if isinstance(val, dict) and 'response' in val:
-                            summary_parts.append(f"[{key}]: {val['response']}")
-                        elif isinstance(val, dict) and 'data' in val:
-                            summary_parts.append(f"[{key}]: {_json.dumps(val['data'], ensure_ascii=False)}")
-                        elif isinstance(val, str):
-                            summary_parts.append(f"[{key}]: {val}")
+                    # Use the clean final result (last block output only)
+                    final_result = result_ctx.get('result')
+                    if final_result is not None:
+                        return f"Automação '{_wf_name}' executada com sucesso.\n\nResultado:\n{_json.dumps(final_result, ensure_ascii=False, indent=2)}"
 
-                    if summary_parts:
-                        return f"Automação '{_wf_name}' executada com sucesso.\n\n" + "\n".join(summary_parts)
-                    return f"Automação '{_wf_name}' executada com sucesso. Resultado: {_json.dumps(result_ctx, ensure_ascii=False)}"
+                    return f"Automação '{_wf_name}' executada com sucesso (sem resultado de saída)."
 
                 except Exception as e:
                     print(f"[WorkflowTool] ❌ Error executing workflow '{_wf_name}': {e}")
@@ -1501,9 +1492,9 @@ async def _execute_startup_workflows(
                 trigger_type="agent_startup"
             )
             
-            # Remove system keys
-            clean_result = {k: v for k, v in exec_result.items() if not k.startswith('_')}
-            results_str += f"\n### Resultado da Automação: {wf.name}\n```json\n{json.dumps(clean_result, ensure_ascii=False, indent=2)}\n```\n"
+            # Use the clean final result (last block output only)
+            final_result = exec_result.get('result') or exec_result.get('context', {})
+            results_str += f"\n### Resultado da Automação: {wf.name}\n```json\n{json.dumps(final_result, ensure_ascii=False, indent=2)}\n```\n"
         except Exception as e:
             print(f"[Startup Workflow] Failed to execute {wf.name}: {e}")
             results_str += f"\n### Resultado da Automação: {wf.name}\n[FALHA NA EXECUÇÃO: {str(e)}]\n"

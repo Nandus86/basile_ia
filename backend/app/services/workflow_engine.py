@@ -286,6 +286,7 @@ class WorkflowEngine:
             },
         }
         blocks_log: List[Dict[str, Any]] = []
+        last_output_key: Optional[str] = None
 
         try:
             # Find trigger block (entry point)
@@ -329,6 +330,7 @@ class WorkflowEngine:
                 # Store result in context
                 if block_result is not None and block_status == "success":
                     context[f'${output_key}'] = block_result
+                    last_output_key = output_key
 
                 # Log block execution
                 block_log = {
@@ -355,13 +357,21 @@ class WorkflowEngine:
 
             # Success
             total_duration = int((time.time() - t0) * 1000)
-            # Remove internal $ keys for cleaner result
-            clean_result = {k.lstrip('$'): v for k, v in context.items()}
+            # Remove internal $ keys for cleaner context log
+            clean_context = {k.lstrip('$'): v for k, v in context.items()}
+
+            # Final result = only the last block's output (what matters for agents/production)
+            final_result = None
+            if last_output_key:
+                final_result = context.get(f'${last_output_key}') or clean_context.get(last_output_key)
+                # For HTTP blocks, strip headers from the final result for cleaner output
+                if isinstance(final_result, dict) and 'headers' in final_result and 'data' in final_result:
+                    final_result = {k: v for k, v in final_result.items() if k != 'headers'}
 
             execution.status = "completed"
-            execution.context = clean_result
+            execution.context = clean_context
             execution.blocks_executed = blocks_log
-            execution.result = clean_result
+            execution.result = final_result
             execution.current_block_id = None
             execution.completed_at = datetime.now(timezone.utc)
             execution.duration_ms = total_duration
@@ -369,9 +379,14 @@ class WorkflowEngine:
 
             logger.info(
                 f"[WorkflowEngine] 🏁 Workflow '{workflow.name}' completed "
-                f"({len(blocks_log)} blocks, {total_duration}ms)"
+                f"({len(blocks_log)} blocks, {total_duration}ms) "
+                f"[last_block={last_output_key}]"
             )
-            return clean_result
+            return {
+                'result': final_result,
+                'context': clean_context,
+                'last_block': last_output_key,
+            }
 
         except Exception as e:
             total_duration = int((time.time() - t0) * 1000)
