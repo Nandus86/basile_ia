@@ -599,24 +599,8 @@ async def _enrich_agent_prompt(
         except Exception as e:
             print(f"[Task] Failed to retrieve vector memory: {e}")
 
-        # Extract new vector memories in background (only if interaction is substantive)
-        try:
-            from app.services.memory_gate import should_extract_memories
-            if should_extract_memories(message, history=history):
-                from app.services.vector_memory_service import extract_and_save_memories
-                import asyncio
-
-                history_copy = (history or [])[:]
-                asyncio.create_task(
-                    extract_and_save_memories(
-                        agent_id=str(agent_id),
-                        contact_id=str(session_id),
-                        history=history_copy,
-                        current_message=message,
-                    )
-                )
-        except Exception as e:
-            print(f"[Task] Failed to launch extraction task: {e}")
+        # Vector memory extraction was removed from here. 
+        # It now runs only once at the end of the process_message_task.
 
     # 4. Collaboration handling
     agent_model = agent_config.get("agent_model")
@@ -2757,14 +2741,27 @@ async def process_message_task(
             except Exception as e:
                 print(f"[Task] ⚠️ Failed to save session context: {e}")
 
-            # Agent self-correction: detect prompt violations in background (only for substantive responses)
+            # Vector Memory Extraction: Run in background ONLY ONCE per webhook payload
             if vector_memory_enabled and agent_id and final_result:
                 agent_response_str = str(final_result) if not isinstance(final_result, str) else final_result
                 try:
                     from app.services.memory_gate import should_extract_memories
+                    # Pass the agent response so the gate can evaluate if the interaction was substantive
                     if should_extract_memories(message, agent_response_str, history):
-                        from app.services.vector_memory_service import extract_agent_self_corrections
+                        from app.services.vector_memory_service import extract_agent_self_corrections, extract_and_save_memories
                         import asyncio
+                        
+                        # 1. Contact Memory Extraction (Facts, Corrections, Preferences)
+                        asyncio.create_task(
+                            extract_and_save_memories(
+                                agent_id=str(agent_id),
+                                contact_id=str(session_id),
+                                history=(history or [])[:],
+                                current_message=message,
+                            )
+                        )
+                        
+                        # 2. Agent Self-Correction
                         original_system_prompt = agent_config.get("original_system_prompt", agent_config.get("system_prompt", ""))
                         asyncio.create_task(
                             extract_agent_self_corrections(
@@ -2776,7 +2773,7 @@ async def process_message_task(
                             )
                         )
                 except Exception as e:
-                    print(f"[Task] Failed to launch self-correction task: {e}")
+                    print(f"[Task] Failed to launch vector memory tasks: {e}")
 
             return response_data
 
