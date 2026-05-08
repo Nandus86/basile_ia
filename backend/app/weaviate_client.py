@@ -53,7 +53,29 @@ class WeaviateClient:
                         headers=headers,
                         auth_credentials=auth_credentials
                     )
+                    # Apply global schema settings (like indexNullState)
+                    try:
+                        self._ensure_schema_settings(self.client)
+                    except Exception as e:
+                        print(f"Warning: Failed to auto-apply schema settings: {e}")
         return self.client
+    
+    def _ensure_schema_settings(self, client: weaviate.WeaviateClient):
+        """Ensure all standard collections have required inverted index settings"""
+        collections_to_fix = ["ContactMemory", "AgentSelfMemory", "InformationBaseNode"]
+        existing = client.collections.list_all()
+        
+        for name in collections_to_fix:
+            if name in existing:
+                try:
+                    coll = client.collections.get(name)
+                    coll.config.update(
+                        inverted_index_config=weaviate.classes.config.Reconfigure.inverted_index(
+                            index_null_state=True
+                        )
+                    )
+                except Exception:
+                    pass # Schema might be busy or already correct
     
     def disconnect(self):
         """Close Weaviate connection"""
@@ -474,14 +496,9 @@ class WeaviateClient:
                 ]
             )
         else:
-            # Ensure new properties exist on existing collection (schema evolution)
+            # Schema evolution for older collections
             try:
                 collection_obj = client.collections.get(collection_name)
-                # Update inverted index to support Null filtering
-                collection_obj.config.update(
-                    inverted_index_config=weaviate.classes.config.Reconfigure.inverted_index(index_null_state=True)
-                )
-                
                 existing_props = {p.name for p in collection_obj.config.get().properties}
                 new_props = [
                     ("external_id", weaviate.classes.config.DataType.TEXT),
