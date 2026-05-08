@@ -6,7 +6,7 @@
         <v-icon :color="meta.color" class="mr-2" size="22">{{ meta.icon }}</v-icon>
         {{ meta.label }}
       </h3>
-      <v-btn icon variant="text" size="small" @click="$emit('close')">
+      <v-btn v-if="!hideClose" icon variant="text" size="small" @click="$emit('close')">
         <v-icon>mdi-close</v-icon>
       </v-btn>
     </div>
@@ -410,6 +410,7 @@ const props = defineProps({
   agents: { type: Array, default: () => [] },
   webhookConfigs: { type: Array, default: () => [] },
   contextKeys: { type: Array, default: () => [] },
+  hideClose: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update', 'close', 'delete', 'duplicate'])
 

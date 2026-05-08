@@ -95,18 +95,74 @@
       </div>
 
       <!-- Properties Panel -->
-      <v-navigation-drawer :model-value="!!selectedBlock" location="right" width="520" color="surface" elevation="4" class="properties-drawer">
-        <BlockPropertiesPanel
-          v-if="selectedBlock"
-          :block="selectedBlock"
-          :agents="agentsList"
-          :webhook-configs="webhooksList"
-          :context-keys="availableContextKeys"
-          @update="onBlockUpdate"
-          @close="selectedBlock = null"
-          @delete="deleteSelectedBlock"
-          @duplicate="duplicateBlock"
-        />
+      <v-navigation-drawer :model-value="!!selectedBlock" location="right" :width="drawerWidth" color="surface" elevation="4" class="properties-drawer">
+        <div class="d-flex flex-column h-100">
+          <div class="pa-2 border-b d-flex align-center justify-space-between bg-surface-variant">
+            <v-switch
+              v-model="showAdjacentBlocks"
+              label="Modo Visão Expandida (Anterior/Próximo)"
+              color="primary"
+              density="compact"
+              hide-details
+              class="ml-2"
+            ></v-switch>
+            <v-btn icon variant="text" size="small" @click="selectedBlock = null"><v-icon>mdi-close</v-icon></v-btn>
+          </div>
+          
+          <div class="d-flex h-100" style="overflow-x: auto; overflow-y: hidden;">
+            <!-- Prev Block -->
+            <div v-if="showAdjacentBlocks && prevBlock" class="block-column" style="min-width: 450px; flex: 1; border-right: 1px solid rgba(255,255,255,0.1); opacity: 0.9;">
+              <div class="pa-1 bg-surface text-center text-caption text-medium-emphasis">
+                BLOCO ANTERIOR
+                <v-btn size="x-small" variant="text" class="ml-2" @click="selectedBlock = prevBlock">Focar Neste</v-btn>
+              </div>
+              <BlockPropertiesPanel
+                :block="prevBlock"
+                :agents="agentsList"
+                :webhook-configs="webhooksList"
+                :context-keys="availableContextKeys"
+                hide-close
+                @update="onBlockUpdate"
+                @delete="deleteBlock(prevBlock.id)"
+                @duplicate="duplicateBlockId(prevBlock.id)"
+              />
+            </div>
+
+            <!-- Current Block -->
+            <div class="block-column" style="min-width: 520px; flex: 1;">
+              <div v-if="showAdjacentBlocks" class="pa-1 bg-primary text-center text-caption font-weight-bold">BLOCO ATUAL</div>
+              <BlockPropertiesPanel
+                v-if="selectedBlock"
+                :block="selectedBlock"
+                :agents="agentsList"
+                :webhook-configs="webhooksList"
+                :context-keys="availableContextKeys"
+                hide-close
+                @update="onBlockUpdate"
+                @delete="deleteSelectedBlock"
+                @duplicate="duplicateBlock"
+              />
+            </div>
+
+            <!-- Next Block -->
+            <div v-if="showAdjacentBlocks && nextBlock" class="block-column" style="min-width: 450px; flex: 1; border-left: 1px solid rgba(255,255,255,0.1); opacity: 0.9;">
+              <div class="pa-1 bg-surface text-center text-caption text-medium-emphasis">
+                PRÓXIMO BLOCO
+                <v-btn size="x-small" variant="text" class="ml-2" @click="selectedBlock = nextBlock">Focar Neste</v-btn>
+              </div>
+              <BlockPropertiesPanel
+                :block="nextBlock"
+                :agents="agentsList"
+                :webhook-configs="webhooksList"
+                :context-keys="availableContextKeys"
+                hide-close
+                @update="onBlockUpdate"
+                @delete="deleteBlock(nextBlock.id)"
+                @duplicate="duplicateBlockId(nextBlock.id)"
+              />
+            </div>
+          </div>
+        </div>
       </v-navigation-drawer>
     </div>
 
@@ -265,6 +321,7 @@ const testPayloadJson = ref('{\n  \n}')
 const testResult = ref(null)
 const testing = ref(false)
 const testResultTab = ref('final')
+const showAdjacentBlocks = ref(false)
 
 let idCounter = 1
 
@@ -288,6 +345,29 @@ const availableContextKeys = computed(() => {
     if (outputKey && !keys.includes(outputKey)) keys.push(outputKey)
   }
   return keys
+})
+
+const previousBlocks = computed(() => {
+  if (!selectedBlock.value) return []
+  const sources = edges.value.filter(e => e.target === selectedBlock.value.id).map(e => e.source)
+  return nodes.value.filter(n => sources.includes(n.id)).map(n => ({ id: n.id, ...n.data }))
+})
+
+const nextBlocks = computed(() => {
+  if (!selectedBlock.value) return []
+  const targets = edges.value.filter(e => e.source === selectedBlock.value.id).map(e => e.target)
+  return nodes.value.filter(n => targets.includes(n.id)).map(n => ({ id: n.id, ...n.data }))
+})
+
+const prevBlock = computed(() => previousBlocks.value[0] || null)
+const nextBlock = computed(() => nextBlocks.value[0] || null)
+
+const drawerWidth = computed(() => {
+  if (!showAdjacentBlocks.value) return 520
+  let w = 520
+  if (prevBlock.value) w += 450
+  if (nextBlock.value) w += 450
+  return w
 })
 
 onMounted(async () => {
@@ -415,16 +495,23 @@ function onBlockUpdate(block) {
 
 function deleteSelectedBlock() {
   if (!selectedBlock.value) return
-  const id = selectedBlock.value.id
+  deleteBlock(selectedBlock.value.id)
+}
+
+function deleteBlock(id) {
   nodes.value = nodes.value.filter(n => n.id !== id)
   edges.value = edges.value.filter(e => e.source !== id && e.target !== id)
-  selectedBlock.value = null
+  if (selectedBlock.value && selectedBlock.value.id === id) selectedBlock.value = null
   markUnsaved()
 }
 
 function duplicateBlock() {
   if (!selectedBlock.value) return
-  const sourceNode = nodes.value.find(n => n.id === selectedBlock.value.id)
+  duplicateBlockId(selectedBlock.value.id)
+}
+
+function duplicateBlockId(id) {
+  const sourceNode = nodes.value.find(n => n.id === id)
   if (!sourceNode) return
   const newId = `block_${idCounter++}`
   const newNode = {
