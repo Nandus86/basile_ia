@@ -285,6 +285,7 @@ class WeaviateClient:
                 name=collection_name,
                 description="Intelligent Vector Memory for Agent Contacts",
                 vectorizer_config=weaviate.classes.config.Configure.Vectorizer.text2vec_openai(),
+                inverted_index_config=weaviate.classes.config.Configure.inverted_index(index_null_state=True),
                 properties=[
                     weaviate.classes.config.Property(name="agent_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="contact_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
@@ -375,6 +376,7 @@ class WeaviateClient:
                 name=collection_name,
                 description="Agent-level self-correction and learning memory",
                 vectorizer_config=weaviate.classes.config.Configure.Vectorizer.text2vec_openai(),
+                inverted_index_config=weaviate.classes.config.Configure.inverted_index(index_null_state=True),
                 properties=[
                     weaviate.classes.config.Property(name="agent_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="content", data_type=weaviate.classes.config.DataType.TEXT),
@@ -460,6 +462,7 @@ class WeaviateClient:
                 name=collection_name,
                 description="Custom user-defined Information Bases",
                 vectorizer_config=weaviate.classes.config.Configure.Vectorizer.text2vec_openai(),
+                inverted_index_config=weaviate.classes.config.Configure.inverted_index(index_null_state=True),
                 properties=[
                     weaviate.classes.config.Property(name="base_code", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
                     weaviate.classes.config.Property(name="user_id", data_type=weaviate.classes.config.DataType.TEXT, skip_vectorization=True),
@@ -474,6 +477,11 @@ class WeaviateClient:
             # Ensure new properties exist on existing collection (schema evolution)
             try:
                 collection_obj = client.collections.get(collection_name)
+                # Update inverted index to support Null filtering
+                collection_obj.config.update(
+                    inverted_index_config=weaviate.classes.config.Reconfigure.inverted_index(index_null_state=True)
+                )
+                
                 existing_props = {p.name for p in collection_obj.config.get().properties}
                 new_props = [
                     ("external_id", weaviate.classes.config.DataType.TEXT),
