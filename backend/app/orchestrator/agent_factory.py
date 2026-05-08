@@ -556,7 +556,10 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         if resolved_execution_mode not in {"balanced", "tools_first", "orchestrator_first"}:
             resolved_execution_mode = "balanced"
 
-        budget_cfg = (agent_config.get("config") or {}).get("execution_budget") or {}
+        agent_extra_config = agent_config.get("config") or {}
+        budget_cfg = agent_extra_config.get("execution_budget") or {}
+        allow_specialist_switching = agent_extra_config.get("allow_specialist_switching", False)
+
         budget = ExecutionBudget(
             max_total_actions=int(budget_cfg.get("max_total_actions_per_turn", 7)),
             max_tool_calls=int(budget_cfg.get("max_tool_calls_per_turn", 5)),
@@ -771,7 +774,7 @@ Cite a fonte quando usar informações do contexto acima.
                 async def _guarded_ainvoke(**kwargs):
                     if is_collab:
                         detected_agent = tool.name
-                        if not is_mandatory_tool(detected_agent):
+                        if not is_mandatory_tool(detected_agent) and not allow_specialist_switching:
                             if locks["selected_agent"] is None:
                                 locks["selected_agent"] = detected_agent
                             elif locks["selected_agent"] != detected_agent:
@@ -802,7 +805,7 @@ Cite a fonte quando usar informações do contexto acima.
                 def _guarded_invoke(**kwargs):
                     if is_collab:
                         detected_agent = tool.name
-                        if not is_mandatory_tool(detected_agent):
+                        if not is_mandatory_tool(detected_agent) and not allow_specialist_switching:
                             if locks["selected_agent"] is None:
                                 locks["selected_agent"] = detected_agent
                             elif locks["selected_agent"] != detected_agent:
