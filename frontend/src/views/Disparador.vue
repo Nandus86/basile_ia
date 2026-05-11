@@ -214,9 +214,7 @@ const generatedPayload = computed(() => {
       "variavel_extra": "qualquer outra variavel pro prompt"
     },
     transition_data: {},
-    system: {
-      apikey: cfg.api_key || "sua-api-key-se-configurada"
-    }
+    system: {}
   }
   
   return JSON.stringify(payload, null, 2)
@@ -385,12 +383,12 @@ onMounted(() => {
               <v-col cols="12">
                 <v-text-field
                   v-model="editedItem.api_key"
-                  label="API Key (Opcional - system.apikey)"
+                  label="API Key (Opcional - X-API-Key Header)"
                   variant="outlined"
                   :type="showPass ? 'text' : 'password'"
                   :append-inner-icon="showPass ? 'mdi-eye-off' : 'mdi-eye'"
                   @click:append-inner="showPass = !showPass"
-                  hint="Se preenchido, os requests devem conter esta chave no payload.system.apikey"
+                  hint="Se preenchido, os requests devem conter esta chave no header 'X-API-Key'"
                 >
                   <template v-slot:append>
                     <v-btn color="secondary" variant="tonal" @click="generateApiKey">
@@ -648,6 +646,7 @@ onMounted(() => {
             style="font-family: monospace; overflow-x: auto;"
           >
             POST {{ webhookUrlStr }}
+            X-API-Key: {{ webhookConfig?.api_key || 'SUA_CHAVE_AQUI' }}
           </v-sheet>
 
           <div class="d-flex align-center justify-space-between mb-2">

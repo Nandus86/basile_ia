@@ -36,9 +36,14 @@ async def proxy_disparador_trigger(path: str, request: Request):
         
     disparador_url = f"{settings.DISPARADOR_SERVICE_URL}/webhook/trigger/personalizado/{path}"
     
+    x_api_key = request.headers.get("X-API-Key")
+    forward_headers = {}
+    if x_api_key:
+        forward_headers["X-API-Key"] = x_api_key
+        
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(disparador_url, json=body)
+            resp = await client.post(disparador_url, json=body, headers=forward_headers)
             try:
                 content = resp.json()
             except ValueError:

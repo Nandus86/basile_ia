@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
@@ -15,7 +15,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.post("/trigger/personalizado/{path:path}", response_model=DispatchAcceptedResponse)
-async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession = Depends(get_db)):
+async def receive_dispatch(
+    path: str, 
+    payload: DispatchPayload, 
+    x_api_key: str = Header(None, alias="X-API-Key"),
+    db: AsyncSession = Depends(get_db)
+):
     query = select(DispatcherConfig).where(DispatcherConfig.path == path)
     result = await db.execute(query)
     config = result.scalar_one_or_none()
@@ -26,8 +31,7 @@ async def receive_dispatch(path: str, payload: DispatchPayload, db: AsyncSession
     if not config.is_active:
         raise HTTPException(status_code=400, detail="Config is inactive")
         
-    incoming_key = payload.system.apikey if payload.system else None
-    if config.api_key and incoming_key != config.api_key:
+    if config.api_key and x_api_key != config.api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key")
         
     campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
