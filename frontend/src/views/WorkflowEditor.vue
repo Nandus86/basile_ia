@@ -274,8 +274,47 @@
             label="Executar no Início do Agente (Auto-run / Pre-hook)"
             hint="Se ativado, quando o agente for acionado, este workflow será executado automaticamente ANTES do agente 'pensar', e o resultado será injetado no contexto dele."
             persistent-hint
+            class="mb-4"
             @change="markUnsaved"
           ></v-switch>
+
+          <v-divider class="mb-4"></v-divider>
+
+          <div class="text-subtitle-2 font-weight-bold mb-2">
+            <v-icon size="18" class="mr-1">mdi-key-variant</v-icon>
+            Gatilho por Palavras-Chave (Bypass Agente)
+          </div>
+          <p class="text-caption text-medium-emphasis mb-3">
+            Se alguma destas palavras for detectada na mensagem do usuário, o Agente será ignorado e este Workflow executado diretamente.
+          </p>
+
+          <v-combobox
+            v-model="workflow.trigger_keywords"
+            label="Palavras-Chave"
+            multiple
+            chips
+            closable-chips
+            variant="outlined"
+            density="compact"
+            placeholder="Digite e pressione Enter"
+            hint="Ex: faturas, boleto, suporte"
+            persistent-hint
+            class="mb-4"
+            @update:model-value="markUnsaved"
+          ></v-combobox>
+
+          <v-select
+            v-model="workflow.trigger_match_mode"
+            label="Modo de Comparação"
+            :items="[
+              { title: 'Palavra Exata', value: 'word' },
+              { title: 'Contém', value: 'contains' },
+              { title: 'Frase Exata', value: 'phrase' }
+            ]"
+            variant="outlined"
+            density="compact"
+            @update:model-value="markUnsaved"
+          ></v-select>
         </v-card-text>
         <v-card-actions class="pa-4 bg-surface-variant">
           <v-spacer></v-spacer>
@@ -565,6 +604,8 @@ async function saveDefinition() {
     await axios.put(`/workflows/${workflowId}`, {
       name: workflow.value.name, description: workflow.value.description,
       is_active: workflow.value.is_active,
+      trigger_keywords: workflow.value.trigger_keywords || [],
+      trigger_match_mode: workflow.value.trigger_match_mode || 'word',
       definition
     })
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }

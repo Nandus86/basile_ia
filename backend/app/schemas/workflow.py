@@ -11,6 +11,8 @@ class WorkflowBase(BaseModel):
     description: Optional[str] = Field(None, description="Detailed description")
     is_active: bool = True
     definition: Dict[str, Any] = Field(default_factory=dict, description="Vue Flow JSON representing nodes and edges")
+    trigger_keywords: Optional[List[str]] = Field(default_factory=list, description="Keywords that trigger this workflow")
+    trigger_match_mode: str = Field(default="word", description="Matching mode: word, contains, phrase")
 
 class WorkflowCreate(WorkflowBase):
     pass
@@ -20,6 +22,8 @@ class WorkflowUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     definition: Optional[Dict[str, Any]] = None
+    trigger_keywords: Optional[List[str]] = None
+    trigger_match_mode: Optional[str] = None
 
 class WorkflowResponse(WorkflowBase):
     id: UUID

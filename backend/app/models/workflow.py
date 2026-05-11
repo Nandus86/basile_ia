@@ -21,6 +21,10 @@ class Workflow(Base):
     # Stores the Vue Flow JSON structure (nodes, edges, positions, configurations)
     definition = Column(JSON, default=dict, nullable=False)
     
+    # Keyword trigger settings
+    trigger_keywords = Column(JSON, default=list)
+    trigger_match_mode = Column(String(20), default="word", nullable=False)
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

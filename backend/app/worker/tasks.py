@@ -1757,6 +1757,89 @@ async def _check_global_trigger_keywords(
     return None
 
 
+async def _check_workflow_direct_triggers(
+    db,
+    agent_id: str,
+    message: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """
+    Check if any active workflows associated with the agent have trigger_keywords matching the message.
+    If a match is found, execute the workflow DIRECTLY and return its final result.
+    This bypasses the AI agent entirely.
+    """
+    from app.models.agent import Agent as AgentModel
+    from app.services.workflow_engine import WorkflowEngine
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    import json
+
+    if not agent_id:
+        return None
+
+    # Load agent with workflows
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(selectinload(AgentModel.workflows))
+        .where(AgentModel.id == agent_id)
+    )
+    agent_obj = result.scalar_one_or_none()
+    if not agent_obj or not agent_obj.workflows:
+        return None
+
+    active_workflows = [w for w in agent_obj.workflows if w.is_active]
+    if not active_workflows:
+        return None
+
+    best_match = None
+    for wf in active_workflows:
+        wf_kws = getattr(wf, "trigger_keywords", []) or []
+        wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
+        
+        for kw in wf_kws:
+            if _match_true_trigger_keyword(message, kw, wf_mode):
+                candidate = {
+                    "workflow": wf,
+                    "keyword": kw,
+                    "mode": wf_mode,
+                    "keyword_len": len((kw or "").strip()),
+                }
+                # Priority to longest keyword match
+                if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
+                    best_match = candidate
+
+    if not best_match:
+        return None
+
+    wf = best_match["workflow"]
+    print(f"[WorkflowTrigger] 🎯 Workflow '{wf.name}' triggered by keyword '{best_match['keyword']}'")
+    
+    try:
+        engine = WorkflowEngine(db)
+        # Merge context_data with message
+        trigger_data = (context_data or {}).copy()
+        trigger_data["message"] = message
+        trigger_data["matched_keyword"] = best_match["keyword"]
+
+        result_ctx = await engine.execute(
+            workflow_id=wf.id,
+            trigger_data=trigger_data,
+            trigger_type="keyword_trigger",
+        )
+
+        final_result = result_ctx.get('result')
+        if final_result is not None:
+            if isinstance(final_result, (dict, list)):
+                return json.dumps(final_result, ensure_ascii=False, indent=2)
+            return str(final_result)
+
+        return f"Automação '{wf.name}' executada com sucesso."
+
+    except Exception as e:
+        print(f"[WorkflowTrigger] ❌ Error executing workflow '{wf.name}': {e}")
+        return None
+
+
 # ─────────────────────────────────────────────────────────────
 # Trigger MCP Pre-execution — force MCP execution when keyword matches
 # ─────────────────────────────────────────────────────────────
@@ -2073,6 +2156,40 @@ async def process_message_task(
             # ── Resolve agent ──
             if agent_id:
                 agent = await factory.get_agent_by_id(agent_id)
+                
+                # ═══════════════════════════════════════════════════════
+                # Workflow Keyword Trigger (Bypasses Agent)
+                # ═══════════════════════════════════════════════════════
+                if agent:
+                    wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
+                    if wf_direct_response:
+                        print(f"[Task] ⚡ Workflow direct trigger executed. Bypassing agent.")
+                        
+                        # Save to history
+                        await redis_client.add_message(
+                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant", content=wf_direct_response, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        # Save to MTM
+                        await _save_mtm_message(db, str(agent.id), session_id, "user", message)
+                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_direct_response)
+
+                        processing_time = (time.time() - start_time) * 1000
+                        response_data = {
+                            "status": "completed",
+                            "response": wf_direct_response,
+                            "agent_used": "Workflow Automation",
+                            "processing_time_ms": processing_time,
+                        }
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
+
                 if agent:
                     agent_config = await factory.get_agent_config(agent, context_data=context_data)
                     
