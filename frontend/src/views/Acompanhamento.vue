@@ -279,6 +279,34 @@
               <pre class="text-caption" style="color: #00D1FF;">{{ formatJSON(testResult) }}</pre>
             </v-sheet>
           </div>
+
+          <!-- Redo Result -->
+          <div v-if="redoResult" class="mt-6">
+            <v-divider class="mb-4"></v-divider>
+            <div class="d-flex align-center justify-space-between mb-2">
+              <h3 class="text-subtitle-2 font-weight-bold" style="color: #FF9800;">
+                <v-icon size="small" class="mr-1" color="orange">mdi-refresh-circle</v-icon>
+                Resultado do Refazer (Novo Job: {{ redoNewJobId }})
+              </h3>
+              <div class="d-flex ga-1">
+                <v-btn size="x-small" variant="text" icon="mdi-content-copy" @click="copyToClipboard(redoResult)"></v-btn>
+                <v-btn
+                  v-if="redoCallbackUrl"
+                  size="small"
+                  color="success"
+                  variant="tonal"
+                  prepend-icon="mdi-send-variant"
+                  :loading="resendingRedo"
+                  @click="resendRedoResult"
+                >
+                  Enviar Resultado
+                </v-btn>
+              </div>
+            </div>
+            <v-sheet class="pa-4 rounded-lg overflow-auto code-sheet" max-height="300" style="border: 1px solid rgba(255, 152, 0, 0.3);">
+              <pre class="text-caption" style="color: #FF9800;">{{ formatJSON(redoResult) }}</pre>
+            </v-sheet>
+          </div>
           <!-- Human Response Input -->
           <div v-if="showHumanInput" class="mt-4">
             <v-divider class="mb-4"></v-divider>
@@ -312,6 +340,15 @@
         </v-card-text>
         
         <v-card-actions class="pa-4 border-t d-flex flex-wrap gap-2">
+          <v-btn
+            color="orange"
+            variant="tonal"
+            prepend-icon="mdi-refresh-circle"
+            :loading="redoingJob"
+            @click="redoCurrentJob"
+          >
+            Refazer
+          </v-btn>
           <v-btn
             color="info"
             variant="tonal"
@@ -722,6 +759,13 @@ const snackbar = ref({ show: false, text: '', color: 'success' })
 const testingJob = ref(false)
 const testResult = ref(null)
 
+// Redo state
+const redoingJob = ref(false)
+const redoResult = ref(null)
+const redoNewJobId = ref(null)
+const redoCallbackUrl = ref(null)
+const resendingRedo = ref(false)
+
 // Abort state
 const abortingJob = ref(false)
 
@@ -903,6 +947,9 @@ const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => {
 }
 const openJobDetails = async (job) => {
   testResult.value = null;
+  redoResult.value = null;
+  redoNewJobId.value = null;
+  redoCallbackUrl.value = null;
   showHumanInput.value = false;
   humanText.value = '';
 
@@ -978,6 +1025,43 @@ const testCurrentJob = async () => {
     }
   } finally {
     testingJob.value = false;
+  }
+}
+
+const redoCurrentJob = async () => {
+  if (!selectedJob.value) return;
+  redoingJob.value = true;
+  redoResult.value = null;
+  redoNewJobId.value = null;
+  redoCallbackUrl.value = null;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/redo`);
+    showSnackbar(`Job refeito em ${data.processing_time_ms}ms — Novo Job: ${data.new_job_id}`, 'success');
+    redoResult.value = data.response_data;
+    redoNewJobId.value = data.new_job_id;
+    redoCallbackUrl.value = data.callback_url;
+  } catch (error) {
+    console.error("Erro ao refazer:", error);
+    showSnackbar('Falha ao refazer job', 'error');
+    if (error.response?.data?.detail) {
+      redoResult.value = { error: error.response.data.detail };
+    }
+  } finally {
+    redoingJob.value = false;
+  }
+}
+
+const resendRedoResult = async () => {
+  if (!redoNewJobId.value) return;
+  resendingRedo.value = true;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${redoNewJobId.value}/resend`);
+    showSnackbar(data.message || 'Novo resultado enviado com sucesso!', 'success');
+  } catch (error) {
+    console.error("Erro ao enviar resultado do redo:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao enviar resultado', 'error');
+  } finally {
+    resendingRedo.value = false;
   }
 }
 
