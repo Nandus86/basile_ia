@@ -1,9 +1,22 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any
 
 class ContactItem(BaseModel):
-    number: str
+    number: Optional[str] = None
+    phone: Optional[str] = None
     name: str
+
+    @model_validator(mode='before')
+    @classmethod
+    def check_number_or_phone(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            num = data.get('number')
+            ph = data.get('phone')
+            if not num and not ph:
+                raise ValueError("Either 'number' or 'phone' must be provided")
+            if not num and ph:
+                data['number'] = ph
+        return data
 
 class SystemInfo(BaseModel):
     apikey: Optional[str] = None
