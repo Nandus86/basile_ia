@@ -2666,6 +2666,17 @@ async def process_message_task(
             timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
             retry_count = 0
 
+            # ── Bypass LLM (Passthrough) ──
+            if agent_config and agent_config.get("bypass_llm", False):
+                print(f"[Task] ⚡ Agent '{agent_config.get('name', 'Unknown')}' is in bypass_llm mode. Skipping AI execution.")
+                if agent_config.get("output_schema"):
+                    final_result = {"output": message}
+                else:
+                    final_result = message
+                agent_used = f"{agent_config.get('name', 'Unknown')} (Passthrough)"
+                output_text = message
+                retry_count = max_retries + 1  # Skip the while loop below
+
             while retry_count <= max_retries:
                 try:
                     import asyncio

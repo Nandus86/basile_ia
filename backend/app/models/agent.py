@@ -135,6 +135,9 @@ class Agent(Base):
     # Response style for collaborator output ("structured" or "natural")
     response_style = Column(String(20), default="structured", nullable=False)
 
+    # Bypass LLM / Passthrough mode
+    bypass_llm = Column(Boolean, default=False, nullable=False)
+
     # Planner mode
     is_planner = Column(Boolean, default=False, nullable=False)
     planner_prompt = Column(Text, nullable=True)

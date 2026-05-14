@@ -85,6 +85,7 @@ class AgentBase(BaseModel):
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = Field(default=None)
     response_style: str = "structured"
+    bypass_llm: bool = False
     planner_prompt: Optional[str] = None
     planner_model: Optional[str] = None
     is_guardrail_active: bool = False
@@ -150,6 +151,7 @@ class AgentUpdate(BaseModel):
     thinker_keywords: Optional[List[str]] = None  # NEW
     thinker_memory_enabled: Optional[bool] = None  # NEW
     response_style: Optional[str] = None
+    bypass_llm: Optional[bool] = None
     emotional_profile_id: Optional[UUID] = None
     emotional_intensity: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
@@ -191,6 +193,7 @@ class AgentResponse(BaseModel):
     is_orchestrator: bool = False
     is_planner: bool = False
     response_style: str = "structured"
+    bypass_llm: bool = False
     emotional_profile: Optional[EmotionalProfileSummary] = None
     emotional_intensity: str = "medium"
     output_schema: Optional[Dict[str, Any]] = None
@@ -243,6 +246,7 @@ class AgentListItem(BaseModel):
     is_orchestrator: bool = False
     is_planner: bool = False
     response_style: str = "structured"
+    bypass_llm: bool = False
     emotional_profile_id: Optional[UUID] = None
     vector_memory_enabled: bool = False
     information_bases_global_search_enabled: bool = False
