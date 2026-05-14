@@ -53,7 +53,7 @@ async def receive_dispatch(
             # Check daily limit before staging
             daily_limit = config.daily_message_limit or 0
             if daily_limit > 0:
-                remaining = await check_daily_limit(path, payload.queue_id, daily_limit)
+                remaining = await check_daily_limit(payload.queue_id, daily_limit)
                 if remaining == 0:
                     raise HTTPException(
                         status_code=429,

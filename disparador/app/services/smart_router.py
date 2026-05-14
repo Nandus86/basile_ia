@@ -29,52 +29,52 @@ async def stage_contacts(
     accumulation_seconds: int = 60,
 ):
     """
-    Stage contacts in Redis for smart routing.
-    Starts or resets the accumulation timer for this queue_id.
+    Stage contacts in Redis for smart routing globally by queue_id.
+    Starts or resets the global accumulation timer for this queue_id.
     """
     await disparador_redis.ensure_connected()
 
     # Store contacts
-    contacts_key = f"disp:staged:{config_path}:{queue_id}:{type_id}:{service_id}"
+    contacts_key = f"disp:staged:global:{queue_id}:{config_path}:{type_id}:{service_id}"
     for contact in contacts:
         await disparador_redis.client.rpush(contacts_key, json.dumps(contact))
     await disparador_redis.client.expire(contacts_key, 86400)  # 24h TTL
 
-    # Store payload metadata (everything except contacts)
-    meta_key = f"disp:staged:meta:{config_path}:{queue_id}:{type_id}:{service_id}"
+    # Store payload metadata
+    meta_key = f"disp:staged:meta:global:{queue_id}:{config_path}:{type_id}:{service_id}"
     await disparador_redis.client.set(meta_key, json.dumps(payload_meta), ex=86400)
 
-    # Track this type_id+service_id combination for this queue_id
-    index_key = f"disp:staged:index:{config_path}:{queue_id}"
-    entry = f"{type_id}:{service_id}"
+    # Track this combination for this global queue_id
+    index_key = f"disp:staged:index:global:{queue_id}"
+    entry = f"{config_path}:{type_id}:{service_id}"
     await disparador_redis.client.sadd(index_key, entry)
     await disparador_redis.client.expire(index_key, 86400)
 
     logger.info(
-        "Staged %d contacts for routing: path=%s queue=%s type=%s service=%s (timer=%ds)",
+        "Staged %d contacts for global routing: path=%s queue=%s type=%s service=%s (timer=%ds)",
         len(contacts), config_path, queue_id, type_id, service_id, accumulation_seconds,
     )
 
     # Start/reset accumulation timer
-    await _schedule_routing_timer(config_path, queue_id, accumulation_seconds)
+    await _schedule_routing_timer(queue_id, accumulation_seconds)
 
 
-async def _schedule_routing_timer(config_path: str, queue_id: str, seconds: int):
-    """Start or reset the accumulation timer for a queue_id."""
-    timer_key = f"{config_path}:{queue_id}"
+async def _schedule_routing_timer(queue_id: str, seconds: int):
+    """Start or reset the global accumulation timer for a queue_id."""
+    timer_key = f"global:{queue_id}"
 
     # Cancel existing timer if any
     existing = _active_timers.get(timer_key)
     if existing and not existing.done():
         existing.cancel()
-        logger.debug("Reset accumulation timer for %s", timer_key)
+        logger.debug("Reset global accumulation timer for %s", timer_key)
 
     # Create new timer
     async def _timer():
         try:
             await asyncio.sleep(seconds)
-            logger.info("Accumulation timer expired for %s — starting routing", timer_key)
-            await execute_routing(config_path, queue_id)
+            logger.info("Global accumulation timer expired for %s — starting routing", timer_key)
+            await execute_routing(queue_id)
         except asyncio.CancelledError:
             pass
         finally:
@@ -83,81 +83,89 @@ async def _schedule_routing_timer(config_path: str, queue_id: str, seconds: int)
     _active_timers[timer_key] = asyncio.create_task(_timer())
 
 
-async def check_daily_limit(config_path: str, queue_id: str, limit: int) -> int:
+async def check_daily_limit(queue_id: str, limit: int) -> int:
     """
-    Check how many messages can still be sent today.
-    Returns remaining quota (or -1 if unlimited).
+    Check how many messages can still be sent today globally for this queue_id.
     """
     if limit <= 0:
         return -1  # unlimited
 
     await disparador_redis.ensure_connected()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key = f"disp:daily:{config_path}:{queue_id}:{today}"
+    key = f"disp:daily:global:{queue_id}:{today}"
     current = int(await disparador_redis.client.get(key) or 0)
     return max(0, limit - current)
 
 
-async def increment_daily_count(config_path: str, queue_id: str, count: int = 1):
-    """Increment the daily message counter."""
+async def increment_daily_count(queue_id: str, count: int = 1):
+    """Increment the global daily message counter."""
     await disparador_redis.ensure_connected()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key = f"disp:daily:{config_path}:{queue_id}:{today}"
+    key = f"disp:daily:global:{queue_id}:{today}"
     await disparador_redis.client.incrby(key, count)
     await disparador_redis.client.expire(key, 172800)  # 48h
 
 
-async def execute_routing(config_path: str, queue_id: str):
+async def execute_routing(queue_id: str):
     """
-    Main routing logic. Called when the accumulation timer expires.
+    Main global routing logic. Called when the global accumulation timer expires.
     
-    1. Collects all staged type_ids for this queue_id
-    2. Loads the config routing rules
-    3. Builds weighted round-robin dispatch plan
-    4. Publishes batches to RabbitMQ in interleaved order
+    1. Collects all staged type_ids for this queue_id across all config_paths.
+    2. Loads the configs and determines the max daily limit.
+    3. Normalizes percentages if sum > 100%.
+    4. Builds weighted round-robin dispatch plan.
+    5. Publishes batches to RabbitMQ in interleaved order.
     """
-    lock_key = f"disp:routing:active:{config_path}:{queue_id}"
+    lock_key = f"disp:routing:active:global:{queue_id}"
     await disparador_redis.ensure_connected()
 
     # Acquire routing lock
     acquired = await disparador_redis.client.set(lock_key, "1", nx=True, ex=600)
     if not acquired:
-        logger.warning("Routing already active for %s:%s — skipping", config_path, queue_id)
+        logger.warning("Routing already active for global queue_id %s — skipping", queue_id)
         return
 
     try:
-        # 1. Load config from DB
+        # 1. Collect all staged entries
+        index_key = f"disp:staged:index:global:{queue_id}"
+        entries = await disparador_redis.client.smembers(index_key)
+
+        if not entries:
+            logger.info("No staged entries for global queue_id %s", queue_id)
+            return
+
+        # Extract unique config_paths
+        config_paths = list(set(entry.split(":")[0] for entry in entries))
+
+        # 2. Load configs from DB
         from app.database import async_session_maker
         from sqlalchemy.future import select
         from app.models.dispatcher_config import DispatcherConfig
 
+        configs = {}
         async with async_session_maker() as db:
-            query = select(DispatcherConfig).where(DispatcherConfig.path == config_path)
+            query = select(DispatcherConfig).where(DispatcherConfig.path.in_(config_paths))
             result = await db.execute(query)
-            config = result.scalar_one_or_none()
+            for cfg in result.scalars():
+                configs[cfg.path] = cfg
 
-        if not config:
-            logger.error("Config not found for path %s during routing", config_path)
+        if not configs:
+            logger.error("No configs found for staged paths during routing of %s", queue_id)
             return
 
-        routing_rules = config.queue_routing_rules or []
-        daily_limit = config.daily_message_limit or 0
-        rules_map = {r["type_id"]: r for r in routing_rules}
-
-        # 2. Collect all staged entries
-        index_key = f"disp:staged:index:{config_path}:{queue_id}"
-        entries = await disparador_redis.client.smembers(index_key)
-
-        if not entries:
-            logger.info("No staged entries for %s:%s", config_path, queue_id)
-            return
+        # Determine global max daily limit
+        max_daily_limit = 0
+        for cfg in configs.values():
+            limit = cfg.daily_message_limit or 0
+            if limit > max_daily_limit:
+                max_daily_limit = limit
 
         # 3. Build staged lists
         staged_lists = {}
         for entry in entries:
-            type_id, service_id = entry.split(":", 1)
-            contacts_key = f"disp:staged:{config_path}:{queue_id}:{type_id}:{service_id}"
-            meta_key = f"disp:staged:meta:{config_path}:{queue_id}:{type_id}:{service_id}"
+            config_path, type_id, service_id = entry.split(":", 2)
+            contacts_key = f"disp:staged:global:{queue_id}:{config_path}:{type_id}:{service_id}"
+            meta_key = f"disp:staged:meta:global:{queue_id}:{config_path}:{type_id}:{service_id}"
 
             raw_contacts = await disparador_redis.client.lrange(contacts_key, 0, -1)
             contacts = [json.loads(c) for c in raw_contacts]
@@ -168,10 +176,14 @@ async def execute_routing(config_path: str, queue_id: str):
             if not contacts:
                 continue
 
-            rule = rules_map.get(type_id)
-            percentage = rule["percentage"] if rule else 100  # no rule = send all
+            cfg = configs.get(config_path)
+            routing_rules = cfg.queue_routing_rules or [] if cfg else []
+            rule = next((r for r in routing_rules if r["type_id"] == type_id), None)
+            
+            percentage = rule["percentage"] if rule else 100
 
             staged_lists[entry] = {
+                "config_path": config_path,
                 "type_id": type_id,
                 "service_id": service_id,
                 "contacts": contacts,
@@ -181,32 +193,36 @@ async def execute_routing(config_path: str, queue_id: str):
             }
 
         if not staged_lists:
-            logger.info("All staged lists empty for %s:%s", config_path, queue_id)
+            logger.info("All staged lists empty for global queue_id %s", queue_id)
             return
 
-        # 4. Check daily limit
-        remaining_quota = await check_daily_limit(config_path, queue_id, daily_limit)
+        # 4. Normalize percentages if total > 100%
+        total_pct = sum(info["percentage"] for info in staged_lists.values())
+        if total_pct > 100:
+            for info in staged_lists.values():
+                info["percentage"] = (info["percentage"] / total_pct) * 100
 
-        # 5. Build dispatch plan (round-robin cycles)
+        # 5. Check daily limit
+        remaining_quota = await check_daily_limit(queue_id, max_daily_limit)
+
+        # 6. Build dispatch plan (round-robin cycles)
         cycles = _build_dispatch_plan(staged_lists, remaining_quota)
 
         total_messages = sum(
             len(contact_batch) for cycle in cycles for _, contact_batch, _ in cycle
         )
         logger.info(
-            "Smart Routing plan for %s:%s — %d cycles, %d total messages, %d staged lists",
-            config_path, queue_id, len(cycles), total_messages, len(staged_lists),
+            "Global Smart Routing plan for queue_id %s — %d cycles, %d total messages, %d staged lists",
+            queue_id, len(cycles), total_messages, len(staged_lists),
         )
 
-        # 6. Publish each cycle as batches to RabbitMQ
+        # 7. Publish each cycle as batches to RabbitMQ
         run_id = uuid.uuid4().hex
         await disparador_rmq.connect()
 
         for cycle_idx, cycle in enumerate(cycles):
             for entry_key, contact_batch, meta in cycle:
-                parts = entry_key.split(":", 1)
-                type_id = parts[0]
-                service_id = parts[1]
+                config_path, type_id, service_id = entry_key.split(":", 2)
 
                 batch_payload = {
                     **meta,
@@ -238,25 +254,25 @@ async def execute_routing(config_path: str, queue_id: str):
                 except Exception as e:
                     logger.error("Failed to publish smart routing batch: %s", e)
 
-        # 7. Increment daily counter
+        # 8. Increment global daily counter
         if total_messages > 0:
-            await increment_daily_count(config_path, queue_id, total_messages)
+            await increment_daily_count(queue_id, total_messages)
 
-        # 8. Cleanup staged data
+        # 9. Cleanup staged data
         for entry in entries:
-            type_id, service_id = entry.split(":", 1)
+            config_path, type_id, service_id = entry.split(":", 2)
             await disparador_redis.client.delete(
-                f"disp:staged:{config_path}:{queue_id}:{type_id}:{service_id}"
+                f"disp:staged:global:{queue_id}:{config_path}:{type_id}:{service_id}"
             )
             await disparador_redis.client.delete(
-                f"disp:staged:meta:{config_path}:{queue_id}:{type_id}:{service_id}"
+                f"disp:staged:meta:global:{queue_id}:{config_path}:{type_id}:{service_id}"
             )
         await disparador_redis.client.delete(index_key)
 
-        logger.info("Smart Routing completed for %s:%s — %d messages queued", config_path, queue_id, total_messages)
+        logger.info("Global Smart Routing completed for %s — %d messages queued", queue_id, total_messages)
 
     except Exception as e:
-        logger.error("Smart Routing error for %s:%s: %s", config_path, queue_id, e, exc_info=True)
+        logger.error("Smart Routing error for global queue_id %s: %s", queue_id, e, exc_info=True)
     finally:
         await disparador_redis.client.delete(lock_key)
 
