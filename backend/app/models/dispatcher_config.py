@@ -44,6 +44,10 @@ class DispatcherConfig(Base):
     # Index (0 a index_max, sem repetição por ciclo)
     index_max = Column(Integer, default=5)
     
+    # Filtro de Queue ID
+    queue_id_blocklist = Column(JSON, default=[])  # queue_ids que NÃO podem passar
+    queue_id_allowlist = Column(JSON, default=[])  # se preenchido, SOMENTE estes passam
+    
     # Progress callback (opcional)
     progress_callback_url = Column(String(500), nullable=True)
     target_endpoint = Column(String(500), nullable=True)

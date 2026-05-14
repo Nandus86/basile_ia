@@ -33,6 +33,16 @@ async def receive_dispatch(
         
     if config.api_key and x_api_key != config.api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key")
+    
+    # Queue ID filter
+    allowlist = config.queue_id_allowlist or []
+    blocklist = config.queue_id_blocklist or []
+    if allowlist:
+        if payload.queue_id not in allowlist:
+            raise HTTPException(status_code=403, detail=f"Queue ID '{payload.queue_id}' não está na lista de permitidos")
+    elif blocklist:
+        if payload.queue_id in blocklist:
+            raise HTTPException(status_code=403, detail=f"Queue ID '{payload.queue_id}' está bloqueado")
         
     campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
     dispatch_flags = payload.model_dump().get("dispatch_flags") or {}

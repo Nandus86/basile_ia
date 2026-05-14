@@ -33,6 +33,8 @@ const defaultItem = {
   max_variation_seconds: 15,
   triggers: [],
   index_max: 5,
+  queue_id_blocklist: [],
+  queue_id_allowlist: [],
   progress_callback_url: '',
   target_endpoint: '',
   is_active: true
@@ -564,6 +566,57 @@ onMounted(() => {
                   variant="outlined"
                   hint="URL completa ou path relativo (ex: /webhook/meu-custom)"
                 ></v-text-field>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Queue ID Filter -->
+            <div class="text-subtitle-1 font-weight-bold mb-3">
+              <v-icon icon="mdi-filter-outline" size="20" class="mr-1"></v-icon>
+              Filtro de Queue ID
+            </div>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+              <strong>Blocklist:</strong> IDs que serão rejeitados. <strong>Allowlist:</strong> Se preenchida, apenas estes IDs passam (tem prioridade).
+            </v-alert>
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-combobox
+                  v-model="editedItem.queue_id_blocklist"
+                  label="Queue IDs Bloqueados (Blocklist)"
+                  multiple
+                  chips
+                  closable-chips
+                  variant="outlined"
+                  hint="IDs que NÃO podem passar para a fila. Use Enter para adicionar."
+                  persistent-hint
+                >
+                  <template v-slot:chip="{ item, props: chipProps }">
+                    <v-chip v-bind="chipProps" color="error" variant="flat" size="small">
+                      <v-icon start size="14">mdi-block-helper</v-icon>
+                      {{ item.title }}
+                    </v-chip>
+                  </template>
+                </v-combobox>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-combobox
+                  v-model="editedItem.queue_id_allowlist"
+                  label="Queue IDs Exclusivos (Allowlist)"
+                  multiple
+                  chips
+                  closable-chips
+                  variant="outlined"
+                  hint="Se preenchido, SOMENTE estes IDs passam. Tem prioridade sobre a blocklist."
+                  persistent-hint
+                >
+                  <template v-slot:chip="{ item, props: chipProps }">
+                    <v-chip v-bind="chipProps" color="success" variant="flat" size="small">
+                      <v-icon start size="14">mdi-check-circle</v-icon>
+                      {{ item.title }}
+                    </v-chip>
+                  </template>
+                </v-combobox>
               </v-col>
             </v-row>
 

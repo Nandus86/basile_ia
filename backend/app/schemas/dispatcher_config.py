@@ -33,6 +33,9 @@ class DispatcherConfigBase(BaseModel):
     triggers: List[str] = Field(default_factory=list)
     index_max: int = Field(default=5)
     
+    queue_id_blocklist: List[str] = Field(default_factory=list, description="Queue IDs que serão bloqueados (não passam para a fila)")
+    queue_id_allowlist: List[str] = Field(default_factory=list, description="Se preenchido, SOMENTE estes queue IDs passam")
+    
     progress_callback_url: Optional[str] = Field(None)
     target_endpoint: Optional[str] = Field(None, description="Dynamic endpoint to post the dispatch request")
     is_active: bool = True
@@ -57,6 +60,8 @@ class DispatcherConfigUpdate(BaseModel):
     max_variation_seconds: Optional[int] = None
     triggers: Optional[List[str]] = None
     index_max: Optional[int] = None
+    queue_id_blocklist: Optional[List[str]] = None
+    queue_id_allowlist: Optional[List[str]] = None
     progress_callback_url: Optional[str] = None
     target_endpoint: Optional[str] = None
     is_active: Optional[bool] = None
