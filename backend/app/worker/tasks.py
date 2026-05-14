@@ -2669,12 +2669,59 @@ async def process_message_task(
             # ── Bypass LLM (Passthrough) ──
             if agent_config and agent_config.get("bypass_llm", False):
                 print(f"[Task] ⚡ Agent '{agent_config.get('name', 'Unknown')}' is in bypass_llm mode. Skipping AI execution.")
+                
+                # Check for active workflows to run instead of raw passthrough
+                wf_result = None
+                try:
+                    from app.models.agent import Agent as AgentModel
+                    from app.services.workflow_engine import WorkflowEngine
+                    from sqlalchemy import select as sa_select
+                    from sqlalchemy.orm import selectinload
+                    import json
+                    
+                    if agent_id:
+                        agent_obj_result = await db.execute(
+                            sa_select(AgentModel)
+                            .options(selectinload(AgentModel.workflows))
+                            .where(AgentModel.id == agent_id)
+                        )
+                        agent_obj = agent_obj_result.scalar_one_or_none()
+                        
+                        if agent_obj and agent_obj.workflows:
+                            active_workflows = [w for w in agent_obj.workflows if w.is_active]
+                            if active_workflows:
+                                wf = active_workflows[0]  # Take the first one
+                                print(f"[Task] ⚡ Bypass Mode: Executing workflow '{wf.name}' automatically.")
+                                
+                                engine = WorkflowEngine(db)
+                                trigger_data = (context_data or {}).copy()
+                                trigger_data["message"] = message
+                                
+                                result_ctx = await engine.execute(
+                                    workflow_id=wf.id,
+                                    trigger_data=trigger_data,
+                                    trigger_type="bypass_auto_trigger",
+                                )
+                                
+                                wf_result = result_ctx.get('result')
+                                if wf_result is not None:
+                                    if isinstance(wf_result, (dict, list)):
+                                        wf_result = json.dumps(wf_result, ensure_ascii=False, indent=2)
+                                    else:
+                                        wf_result = str(wf_result)
+                                else:
+                                    wf_result = f"Automação '{wf.name}' executada com sucesso."
+                except Exception as e:
+                    print(f"[Task] ❌ Error executing workflow during bypass: {e}")
+                
+                output_text = wf_result if wf_result is not None else message
+                
                 if agent_config.get("output_schema"):
-                    final_result = {"output": message}
+                    final_result = {"output": output_text}
                 else:
-                    final_result = message
-                agent_used = f"{agent_config.get('name', 'Unknown')} (Passthrough)"
-                output_text = message
+                    final_result = output_text
+                
+                agent_used = f"{agent_config.get('name', 'Unknown')} (Bypass Automation)" if wf_result is not None else f"{agent_config.get('name', 'Unknown')} (Passthrough)"
                 
                 if output_text.strip():
                     if stm_enabled:
