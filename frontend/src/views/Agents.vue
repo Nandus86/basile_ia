@@ -528,6 +528,24 @@
                         ></v-select>
                       </v-col>
                     </v-row>
+                    <v-row class="mt-2">
+                      <v-col cols="12">
+                        <v-switch
+                          v-model="formData.bypass_llm"
+                          label="Modo Repasse Direto (Bypass LLM)"
+                          color="orange-darken-2"
+                          hide-details
+                          density="comfortable"
+                        >
+                          <template v-slot:prepend>
+                            <v-icon :color="formData.bypass_llm ? 'orange-darken-2' : 'grey'">mdi-fast-forward</v-icon>
+                          </template>
+                        </v-switch>
+                        <p class="text-caption text-medium-emphasis mt-1 ml-10">
+                          Se ativo, a IA não processará a mensagem. O texto recebido será salvo na memória e repassado integralmente como resposta final. Útil para disparar automações atreladas ao agente sem gerar respostas textuais por IA.
+                        </p>
+                      </v-col>
+                    </v-row>
                       <v-expand-transition>
                         <v-alert v-if="formData.is_orchestrator" type="info" variant="tonal" density="compact" class="mt-3 mb-0">
                           <template v-slot:prepend>
