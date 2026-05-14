@@ -47,6 +47,11 @@ class DispatcherConfig(Base):
     queue_id_blocklist = Column(JSON, default=[])  # queue_ids que NÃO podem passar
     queue_id_allowlist = Column(JSON, default=[])  # se preenchido, SOMENTE estes passam
     
+    # Smart Queue Routing
+    queue_routing_rules = Column(JSON, default=[])  # [{"type_id": "x", "percentage": 20, "label": "X"}, ...]
+    daily_message_limit = Column(Integer, default=0)  # 0 = sem limite
+    routing_accumulation_seconds = Column(Integer, default=60)  # tempo de espera para acumular listas
+    
     # Progress callback (opcional)
     progress_callback_url = Column(String(500), nullable=True)
     target_endpoint = Column(String(500), nullable=True)

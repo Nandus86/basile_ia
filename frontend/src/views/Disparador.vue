@@ -35,6 +35,9 @@ const defaultItem = {
   index_max: 5,
   queue_id_blocklist: [],
   queue_id_allowlist: [],
+  queue_routing_rules: [],
+  daily_message_limit: 0,
+  routing_accumulation_seconds: 60,
   progress_callback_url: '',
   target_endpoint: '',
   is_active: true
@@ -159,6 +162,22 @@ const generateApiKey = () => {
   }
   editedItem.value.api_key = result
 }
+
+const addRoutingRule = () => {
+  if (!editedItem.value.queue_routing_rules) {
+    editedItem.value.queue_routing_rules = []
+  }
+  editedItem.value.queue_routing_rules.push({ type_id: '', label: '', percentage: 50 })
+}
+
+const removeRoutingRule = (index) => {
+  editedItem.value.queue_routing_rules.splice(index, 1)
+}
+
+const totalRoutingPercentage = computed(() => {
+  const rules = editedItem.value.queue_routing_rules || []
+  return rules.reduce((sum, r) => sum + (r.percentage || 0), 0)
+})
 
 const toggleActive = async (item) => {
   try {
@@ -619,6 +638,103 @@ onMounted(() => {
                 </v-combobox>
               </v-col>
             </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Smart Queue Routing -->
+            <div class="text-subtitle-1 font-weight-bold mb-3">
+              <v-icon icon="mdi-swap-horizontal" size="20" class="mr-1"></v-icon>
+              Smart Queue Routing
+            </div>
+            <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+              Configure regras de roteamento por <code>type_id</code> para disparar múltiplas listas do mesmo queue_id em <strong>round-robin ponderado</strong>.
+              Type IDs sem regra seguem o fluxo normal.
+            </v-alert>
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model.number="editedItem.daily_message_limit"
+                  type="number"
+                  label="Limite Diário de Mensagens"
+                  variant="outlined"
+                  min="0"
+                  hint="0 = sem limite. Limite por queue_id por dia."
+                  persistent-hint
+                  prepend-inner-icon="mdi-counter"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model.number="editedItem.routing_accumulation_seconds"
+                  type="number"
+                  label="Tempo de Acumulação (segundos)"
+                  variant="outlined"
+                  min="5"
+                  hint="Tempo para esperar mais listas do mesmo queue_id antes de disparar."
+                  persistent-hint
+                  prepend-inner-icon="mdi-timer-sand"
+                ></v-text-field>
+              </v-col>
+            </v-row>
+
+            <!-- Routing Rules Table -->
+            <div v-if="editedItem.queue_routing_rules && editedItem.queue_routing_rules.length > 0" class="mt-4 bg-surface-variant pa-4 rounded-lg">
+              <div class="d-flex align-center mb-3">
+                <span class="font-weight-medium">Regras de Roteamento</span>
+                <v-spacer></v-spacer>
+                <v-chip
+                  :color="totalRoutingPercentage > 100 ? 'error' : 'primary'"
+                  variant="tonal"
+                  size="small"
+                >
+                  Total: {{ totalRoutingPercentage }}%
+                </v-chip>
+              </div>
+              <div v-for="(rule, index) in editedItem.queue_routing_rules" :key="index" class="d-flex align-center gap-2 mb-3">
+                <v-text-field
+                  v-model="rule.type_id"
+                  label="Type ID"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  style="max-width: 200px;"
+                  placeholder="ex: aniversarios"
+                ></v-text-field>
+                <v-text-field
+                  v-model="rule.label"
+                  label="Label"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  style="max-width: 180px;"
+                  placeholder="ex: Aniversários"
+                ></v-text-field>
+                <div style="min-width: 200px; flex: 1;">
+                  <v-slider
+                    v-model="rule.percentage"
+                    :min="1"
+                    :max="100"
+                    :step="1"
+                    color="primary"
+                    thumb-label="always"
+                    hide-details
+                  >
+                    <template v-slot:append>
+                      <span class="text-body-2 font-weight-bold" style="min-width: 40px;">{{ rule.percentage }}%</span>
+                    </template>
+                  </v-slider>
+                </div>
+                <v-btn icon color="error" variant="text" size="small" @click="removeRoutingRule(index)">
+                  <v-icon :icon="mdiTrashCanOutline"></v-icon>
+                </v-btn>
+              </div>
+            </div>
+            <div v-else class="mt-2 mb-2">
+              <span class="text-caption text-medium-emphasis">Nenhuma regra de roteamento configurada. Todas as listas seguem o fluxo normal.</span>
+            </div>
+            <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" class="mt-2 mb-4" @click="addRoutingRule">
+              Adicionar Regra
+            </v-btn>
 
             <v-row>
               <v-col cols="12">

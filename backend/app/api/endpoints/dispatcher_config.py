@@ -43,6 +43,9 @@ async def list_dispatcher_configs(skip: int = 0, limit: int = 20, db: Session = 
             index_max=c.index_max,
             queue_id_blocklist=c.queue_id_blocklist or [],
             queue_id_allowlist=c.queue_id_allowlist or [],
+            queue_routing_rules=c.queue_routing_rules or [],
+            daily_message_limit=c.daily_message_limit or 0,
+            routing_accumulation_seconds=c.routing_accumulation_seconds or 60,
             progress_callback_url=c.progress_callback_url,
             target_endpoint=c.target_endpoint,
             is_active=c.is_active,
@@ -81,6 +84,9 @@ async def create_dispatcher_config(config: DispatcherConfigCreate, db: Session =
         index_max=config.index_max,
         queue_id_blocklist=config.queue_id_blocklist,
         queue_id_allowlist=config.queue_id_allowlist,
+        queue_routing_rules=[r.dict() for r in config.queue_routing_rules] if config.queue_routing_rules else [],
+        daily_message_limit=config.daily_message_limit,
+        routing_accumulation_seconds=config.routing_accumulation_seconds,
         progress_callback_url=config.progress_callback_url,
         target_endpoint=config.target_endpoint,
         is_active=config.is_active
@@ -109,6 +115,9 @@ async def create_dispatcher_config(config: DispatcherConfigCreate, db: Session =
         index_max=db_config.index_max,
         queue_id_blocklist=db_config.queue_id_blocklist or [],
         queue_id_allowlist=db_config.queue_id_allowlist or [],
+        queue_routing_rules=db_config.queue_routing_rules or [],
+        daily_message_limit=db_config.daily_message_limit or 0,
+        routing_accumulation_seconds=db_config.routing_accumulation_seconds or 60,
         progress_callback_url=db_config.progress_callback_url,
         target_endpoint=db_config.target_endpoint,
         is_active=db_config.is_active,
@@ -148,6 +157,9 @@ async def get_dispatcher_config_by_path(path: str, db: Session = Depends(get_db)
         index_max=c.index_max,
         queue_id_blocklist=c.queue_id_blocklist or [],
         queue_id_allowlist=c.queue_id_allowlist or [],
+        queue_routing_rules=c.queue_routing_rules or [],
+        daily_message_limit=c.daily_message_limit or 0,
+        routing_accumulation_seconds=c.routing_accumulation_seconds or 60,
         progress_callback_url=c.progress_callback_url,
         target_endpoint=c.target_endpoint,
         is_active=c.is_active,
@@ -187,6 +199,9 @@ async def get_dispatcher_config(config_id: UUID, db: Session = Depends(get_db)):
         index_max=c.index_max,
         queue_id_blocklist=c.queue_id_blocklist or [],
         queue_id_allowlist=c.queue_id_allowlist or [],
+        queue_routing_rules=c.queue_routing_rules or [],
+        daily_message_limit=c.daily_message_limit or 0,
+        routing_accumulation_seconds=c.routing_accumulation_seconds or 60,
         progress_callback_url=c.progress_callback_url,
         target_endpoint=c.target_endpoint,
         is_active=c.is_active,
@@ -214,6 +229,8 @@ async def update_dispatcher_config(config_id: UUID, config_update: DispatcherCon
     update_data = config_update.dict(exclude_unset=True)
     if "buttons" in update_data and update_data["buttons"] is not None:
         update_data["buttons"] = [b.dict() if hasattr(b, 'dict') else b for b in update_data["buttons"]]
+    if "queue_routing_rules" in update_data and update_data["queue_routing_rules"] is not None:
+        update_data["queue_routing_rules"] = [r.dict() if hasattr(r, 'dict') else r for r in update_data["queue_routing_rules"]]
         
     for key, value in update_data.items():
         setattr(db_config, key, value)
@@ -241,6 +258,9 @@ async def update_dispatcher_config(config_id: UUID, config_update: DispatcherCon
         index_max=db_config.index_max,
         queue_id_blocklist=db_config.queue_id_blocklist or [],
         queue_id_allowlist=db_config.queue_id_allowlist or [],
+        queue_routing_rules=db_config.queue_routing_rules or [],
+        daily_message_limit=db_config.daily_message_limit or 0,
+        routing_accumulation_seconds=db_config.routing_accumulation_seconds or 60,
         progress_callback_url=db_config.progress_callback_url,
         target_endpoint=db_config.target_endpoint,
         is_active=db_config.is_active,

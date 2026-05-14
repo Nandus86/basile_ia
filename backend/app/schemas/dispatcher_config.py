@@ -12,6 +12,11 @@ class ButtonItem(BaseModel):
     value: str
     action: str = ""
 
+class QueueRoutingRule(BaseModel):
+    type_id: str = Field(..., description="O type_id que esta regra controla")
+    percentage: int = Field(..., ge=1, le=100, description="Percentual da lista a enviar por ciclo")
+    label: str = Field("", description="Nome amigável para o front")
+
 class DispatcherConfigBase(BaseModel):
     name: str = Field(..., description="Friendly name for the config")
     path: str = Field(..., description="Unique path identifier (e.g., 'campanha-abril')")
@@ -35,6 +40,10 @@ class DispatcherConfigBase(BaseModel):
     
     queue_id_blocklist: List[str] = Field(default_factory=list, description="Queue IDs que serão bloqueados (não passam para a fila)")
     queue_id_allowlist: List[str] = Field(default_factory=list, description="Se preenchido, SOMENTE estes queue IDs passam")
+    
+    queue_routing_rules: List[QueueRoutingRule] = Field(default_factory=list, description="Regras de roteamento por type_id com porcentagem")
+    daily_message_limit: int = Field(default=0, description="Limite diário de mensagens por queue_id (0 = sem limite)")
+    routing_accumulation_seconds: int = Field(default=60, description="Tempo de espera para acumular listas do mesmo queue_id")
     
     progress_callback_url: Optional[str] = Field(None)
     target_endpoint: Optional[str] = Field(None, description="Dynamic endpoint to post the dispatch request")
@@ -62,6 +71,9 @@ class DispatcherConfigUpdate(BaseModel):
     index_max: Optional[int] = None
     queue_id_blocklist: Optional[List[str]] = None
     queue_id_allowlist: Optional[List[str]] = None
+    queue_routing_rules: Optional[List[QueueRoutingRule]] = None
+    daily_message_limit: Optional[int] = None
+    routing_accumulation_seconds: Optional[int] = None
     progress_callback_url: Optional[str] = None
     target_endpoint: Optional[str] = None
     is_active: Optional[bool] = None

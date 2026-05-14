@@ -10,6 +10,7 @@ from app.models.dispatcher_config import DispatcherConfig
 from app.schemas import DispatchPayload, DispatchAcceptedResponse
 from app.services.rabbitmq_service import disparador_rmq
 from app.services.redis_service import disparador_redis
+from app.services.smart_router import stage_contacts, check_daily_limit
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -43,7 +44,48 @@ async def receive_dispatch(
     elif blocklist:
         if payload.queue_id in blocklist:
             raise HTTPException(status_code=403, detail=f"Queue ID '{payload.queue_id}' está bloqueado")
-        
+
+    # Smart Queue Routing — check if this type_id has a routing rule
+    routing_rules = config.queue_routing_rules or []
+    if routing_rules:
+        rule = next((r for r in routing_rules if r.get("type_id") == payload.type_id), None)
+        if rule:
+            # Check daily limit before staging
+            daily_limit = config.daily_message_limit or 0
+            if daily_limit > 0:
+                remaining = await check_daily_limit(path, payload.queue_id, daily_limit)
+                if remaining == 0:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"Limite diário de {daily_limit} mensagens atingido para queue_id '{payload.queue_id}'"
+                    )
+
+            total_contacts = len(payload.contacts)
+            payload_dict = payload.model_dump()
+            contacts = payload_dict.pop("contacts")
+            payload_dict.pop("system", None)  # remove system from meta
+            
+            campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
+
+            await stage_contacts(
+                config_path=path,
+                queue_id=payload.queue_id,
+                type_id=payload.type_id,
+                service_id=payload.service_id,
+                contacts=contacts,
+                payload_meta=payload_dict,
+                accumulation_seconds=config.routing_accumulation_seconds or 60,
+            )
+
+            return DispatchAcceptedResponse(
+                service_id=payload.service_id,
+                campaign_key=campaign_key,
+                run_id=f"staged_{uuid.uuid4().hex[:8]}",
+                queued_count=total_contacts,
+                status="staged"
+            )
+
+    # Normal flow (no routing rules or type_id not in rules)
     campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
     dispatch_flags = payload.model_dump().get("dispatch_flags") or {}
     lock_bypass = bool(dispatch_flags.get("lock_bypass", False))
@@ -106,3 +148,4 @@ async def receive_dispatch(
         run_id=run_id,
         queued_count=total_contacts
     )
+
