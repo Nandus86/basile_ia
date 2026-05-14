@@ -284,6 +284,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             "greeting_config": greeting_config,
             "provider": agent.provider if hasattr(agent, "provider") else None,
             "execution_mode": getattr(getattr(agent, "execution_mode", None), "value", "balanced"),
+            "bypass_llm": getattr(agent, "bypass_llm", False),
         }
         
         self._agent_cache[agent_id] = config

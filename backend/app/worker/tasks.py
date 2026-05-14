@@ -2675,6 +2675,29 @@ async def process_message_task(
                     final_result = message
                 agent_used = f"{agent_config.get('name', 'Unknown')} (Passthrough)"
                 output_text = message
+                
+                if output_text.strip():
+                    if stm_enabled:
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant",
+                            content=output_text, ttl_seconds=stm_ttl_seconds,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                    if agent_id and session_id:
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
+
+                processing_time = (time.time() - start_time) * 1000
+                response_data = {
+                    "status": "completed",
+                    "agent_used": agent_used,
+                    "processing_time_ms": processing_time,
+                    "is_hitl_pause": False,
+                }
+                if isinstance(final_result, dict):
+                    response_data.update(final_result)
+                else:
+                    response_data["response"] = final_result
+                    
                 retry_count = max_retries + 1  # Skip the while loop below
 
             while retry_count <= max_retries:
