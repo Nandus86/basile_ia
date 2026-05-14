@@ -203,8 +203,11 @@ class DisparadorRedis:
         await self.client.delete(f"disp:dlq:{service_id}")
 
     # -- Rate Limiting --
-    async def check_rate_limit(self, number: str, cooldown_seconds: int = 300) -> bool:
+    async def check_rate_limit(self, number: str, cooldown_seconds: int = 0) -> bool:
         """Returns True if allowed, False if blocked"""
+        if cooldown_seconds <= 0:
+            return True
+            
         await self.ensure_connected()
         key = f"disp:rate:{number}"
         # set nx (only if not exists), ex (expire)
