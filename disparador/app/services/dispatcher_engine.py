@@ -106,6 +106,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     message_value = message_text or source_payload.get("message") or "DISPARADOR_START"
     enriched_context = {
         **(context_data or {}),
+        **contact, # Injeta todos os campos extras do contato (email, cargo, etc)
         "contact_name": contact["name"],
         "contact_phone": contact["number"],
         "dispatcher_index": index,
