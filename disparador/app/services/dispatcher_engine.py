@@ -52,17 +52,37 @@ def _build_transition_data(base_transition: dict = None, source_payload: dict = 
     return built or None
 
 
-def is_within_time_window(config, transition_data: dict) -> bool:
-    tz_name = (transition_data or {}).get("timezone", "UTC")
-    try:
-        now = datetime.now(ZoneInfo(tz_name))
-    except Exception:
-        now = datetime.now(ZoneInfo("UTC"))
+def is_within_time_window(config, payload: dict) -> bool:
+    """Check if current time is within config's window using dynamic timezone."""
+    tz_name = "America/Sao_Paulo" # Default Brasil
+    
+    if config.timezone_path and payload:
+        # Resolve dot path (suporta {{ $timestamp.path.to.tz }})
+        path = config.timezone_path.replace("{{", "").replace("}}", "").replace("$timestamp.", "").strip()
+        parts = path.split(".")
+        curr = payload
+        for p in parts:
+            if isinstance(curr, dict) and p in curr:
+                curr = curr[p]
+            else:
+                curr = None
+                break
         
+        if isinstance(curr, str) and curr:
+            try:
+                ZoneInfo(curr)
+                tz_name = curr
+            except Exception:
+                logger.warning(f"Invalid timezone extracted from path {config.timezone_path}: {curr}")
+
+    try:
+        now_tz = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now_tz = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
     start = parse_time(config.start_time)
     end = parse_time(config.end_time)
-    
-    current_time = now.time()
+    current_time = now_tz.time()
     
     if start <= end:
         return start <= current_time <= end
@@ -222,7 +242,7 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                 await asyncio.sleep(5.0)
 
             # Window Check
-            if not is_within_time_window(config, transition_data):
+            if not is_within_time_window(config, source_payload):
                 logger.info(f"Campaign {service_id} out of time window. Requeuing remaining {len(contacts)-i} contacts.")
                 # Re-queue others
                 for c in contacts[i:]:

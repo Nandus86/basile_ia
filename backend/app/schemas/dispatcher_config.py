@@ -47,6 +47,7 @@ class DispatcherConfigBase(BaseModel):
     
     progress_callback_url: Optional[str] = Field(None)
     target_endpoint: Optional[str] = Field(None, description="Dynamic endpoint to post the dispatch request")
+    timezone_path: Optional[str] = Field(None, description="Dot-notation path for dynamic timezone")
     is_active: bool = True
 
 class DispatcherConfigCreate(DispatcherConfigBase):
@@ -76,6 +77,7 @@ class DispatcherConfigUpdate(BaseModel):
     routing_accumulation_seconds: Optional[int] = None
     progress_callback_url: Optional[str] = None
     target_endpoint: Optional[str] = None
+    timezone_path: Optional[str] = None
     is_active: Optional[bool] = None
 
 

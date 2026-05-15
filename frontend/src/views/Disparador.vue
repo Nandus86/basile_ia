@@ -40,6 +40,7 @@ const defaultItem = {
   routing_accumulation_seconds: 60,
   progress_callback_url: '',
   target_endpoint: '',
+  timezone_path: '',
   is_active: true
 }
 
@@ -584,6 +585,16 @@ onMounted(() => {
                   label="Endpoint de Destino (Opcional)"
                   variant="outlined"
                   hint="URL completa ou path relativo (ex: /webhook/meu-custom)"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="editedItem.timezone_path"
+                  label="Caminho do Timezone (Payload Path)"
+                  variant="outlined"
+                  hint="Ex: church.address.timezone ou {{ $timestamp.path.to.tz }}"
+                  persistent-hint
+                  prepend-inner-icon="mdi-map-marker-radius-outline"
                 ></v-text-field>
               </v-col>
             </v-row>
