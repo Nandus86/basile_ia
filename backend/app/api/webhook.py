@@ -573,7 +573,12 @@ async def process_message_stream(
             if agent_id:
                 from app.orchestrator.agent_factory import AgentFactory
                 factory = AgentFactory(db)
-                agent_config = await factory.get_agent_config(agent_id)
+                agent_obj = await factory.get_agent_by_id(agent_id)
+                if not agent_obj:
+                    yield f"data: {json.dumps({'type': 'error', 'data': f'Agente {agent_id} não encontrado.'}, ensure_ascii=False)}\n\n"
+                    return
+                    
+                agent_config = await factory.get_agent_config(agent_obj)
                 
                 # Check for bypass mode (similar to production)
                 if agent_config.get("bypass_llm", False):
