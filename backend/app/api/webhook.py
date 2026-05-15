@@ -576,7 +576,11 @@ async def process_message_stream(
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(), 
+        media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no"}
+    )
 
 
 from typing import Union

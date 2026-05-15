@@ -793,8 +793,8 @@ async function sendMessage() {
     messages.value.push(assistantMsg)
     streamingMessage.value = assistantMsg
 
-    // Fetch API endpoint for streaming
-    const response = await fetch(`${import.meta.env.VITE_API_URL}/webhook/process/stream`, {
+    // Fetch API endpoint for streaming (using same relative path as axios)
+    const response = await fetch(`/api/webhook/process/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
