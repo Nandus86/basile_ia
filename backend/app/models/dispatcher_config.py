@@ -57,6 +57,9 @@ class DispatcherConfig(Base):
     progress_callback_url = Column(String(500), nullable=True)
     target_endpoint = Column(String(500), nullable=True)
     
+    # Timezone Dinâmico
+    timezone_path = Column(String(500), nullable=True) # Ex: church.address.timezone
+    
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
