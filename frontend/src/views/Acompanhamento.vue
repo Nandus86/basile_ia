@@ -591,6 +591,9 @@
                 {{ item.status.toUpperCase() }}
               </v-chip>
             </template>
+            <template #item.started_at="{ item }">
+               <span class="text-caption text-medium-emphasis">{{ formatDate(item.started_at) }}</span>
+            </template>
             <template #item.percent="{ item }">
               <div class="d-flex align-center w-100">
                 <v-progress-linear :model-value="item.percent" color="primary" height="8" rounded></v-progress-linear>
@@ -738,6 +741,7 @@ const dispHeaders = [
   { title: 'TIPO', key: 'type_id' },
   { title: 'SERVICE ID', key: 'service_id' },
   { title: 'STATUS', key: 'status' },
+  { title: 'INÍCIO', key: 'started_at' },
   { title: 'TOTAL', key: 'total' },
   { title: 'ENVIADAS', key: 'sent' },
   { title: 'FALHAS', key: 'failed' },
