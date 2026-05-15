@@ -18,6 +18,8 @@ class ContactItem(BaseModel):
                 data['number'] = ph
         return data
 
+    model_config = {"extra": "allow"}
+
 class SystemInfo(BaseModel):
     apikey: Optional[str] = None
     model_config = {"extra": "allow"}
