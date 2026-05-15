@@ -165,11 +165,11 @@ async def get_staged_queues():
     
     # Use scan to get all deadline keys
     keys = []
-    cursor = b'0'
+    cursor = '0'
     while cursor:
         cursor, partial_keys = await disparador_redis.client.scan(cursor, match="disp:staged:deadline:global:*", count=100)
         keys.extend(partial_keys)
-        if not cursor or cursor == b'0' or cursor == 0 or cursor == '0':
+        if not cursor or cursor == '0' or cursor == 0 or cursor == b'0':
             break
             
     result = []

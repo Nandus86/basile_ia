@@ -507,12 +507,12 @@
           </v-col>
         </v-row>
         
-        <div v-if="dispStaged && dispStaged.length > 0" class="mb-6">
+        <div class="mb-6">
             <h3 class="text-subtitle-1 font-weight-bold mb-4 d-flex align-center">
                <v-icon color="warning" class="mr-2">mdi-clock-fast</v-icon>
                Fila de Espera (Smart Routing)
             </h3>
-            <v-row>
+            <v-row v-if="dispStaged && dispStaged.length > 0">
               <v-col v-for="staged in dispStaged" :key="staged.queue_id" cols="12" md="4">
                 <v-card class="glass-card" style="border: 1px solid rgba(255, 152, 0, 0.3);">
                   <v-card-text class="pa-4">
@@ -528,6 +528,9 @@
                 </v-card>
               </v-col>
             </v-row>
+            <div v-else class="text-medium-emphasis text-body-2 px-2">
+               Nenhuma fila aguardando no momento.
+            </div>
         </div>
 
         <div class="d-flex align-center mb-4">
@@ -631,16 +634,21 @@ const dispHeaders = [
 const fetchDisparadorData = async () => {
     dispLoading.value = true
     try {
-       const [resStats, resCamp, resStaged] = await Promise.all([
+       const [resStats, resCamp] = await Promise.all([
            axiosInstance.get('/disparador/dashboard/stats'),
-           axiosInstance.get('/disparador/dashboard/campaigns'),
-           axiosInstance.get('/disparador/dashboard/staged')
+           axiosInstance.get('/disparador/dashboard/campaigns')
        ])
        dispStats.value = resStats.data
        dispCampaigns.value = resCamp.data
+    } catch (e) {
+       console.error('Failed to fetch disparador core data:', e)
+    } 
+    
+    try {
+       const resStaged = await axiosInstance.get('/disparador/dashboard/staged')
        dispStaged.value = resStaged.data
     } catch (e) {
-       console.error(e)
+       console.error('Failed to fetch staged queue:', e)
     } finally {
        dispLoading.value = false
     }
