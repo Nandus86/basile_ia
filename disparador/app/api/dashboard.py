@@ -211,10 +211,7 @@ async def get_staged_queues():
             for rc in raw_contacts:
                 try:
                     c = json.loads(rc)
-                    contacts.append({
-                        "name": c.get("name") or c.get("contact_name", ""),
-                        "number": c.get("number") or c.get("phone", ""),
-                    })
+                    contacts.append(c)
                 except Exception:
                     pass
 

@@ -101,12 +101,14 @@ class DisparadorRedis:
         for c in contacts:
             number = c.get("number") or c.get("phone")
             if not number: continue
-            mapping[number] = json.dumps({
-                "name": c.get("name") or c.get("contact_name", "Unknown"),
-                "number": number,
-                "status": "pending",
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            })
+            
+            # Store everything that comes in the contact object
+            contact_data = dict(c)
+            contact_data["status"] = "pending"
+            contact_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            
+            mapping[number] = json.dumps(contact_data)
+            
         if mapping:
             await self.client.hset(key, mapping=mapping)
             await self.client.expire(key, 604800)

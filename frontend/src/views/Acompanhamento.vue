@@ -552,6 +552,14 @@
                               <div class="text-truncate">
                                 <div class="text-caption font-weight-bold text-truncate">{{ contact.name }}</div>
                                 <div class="text-tiny text-medium-emphasis">{{ contact.number }}</div>
+                                <!-- Extra Fields -->
+                                <div class="d-flex flex-wrap ga-1 mt-1">
+                                   <template v-for="(val, key) in contact" :key="key">
+                                      <v-chip v-if="!['name','number','phone'].includes(key)" size="x-small" variant="tonal" density="compact" style="font-size: 8px; height: 14px;">
+                                         {{ key }}: {{ val }}
+                                      </v-chip>
+                                   </template>
+                                </div>
                               </div>
                            </v-sheet>
                          </v-col>
@@ -625,22 +633,32 @@
                     <v-table density="compact" class="glass-card border rounded mb-4" style="max-height: 400px; overflow-y: auto;">
                        <thead>
                           <tr>
-                             <th class="text-left py-2">Nome</th>
+                             <th class="text-left py-2">Nome / Info</th>
                              <th class="text-left py-2">Status</th>
+                             <th class="text-left py-2">Horário</th>
                              <th class="text-left py-2">Erro</th>
                           </tr>
                        </thead>
                        <tbody>
                           <tr v-for="c in dispReport.contacts" :key="c.number" class="hover:bg-white/5">
-                             <td class="text-caption">
+                             <td class="text-caption py-2">
                                 <div class="font-weight-bold">{{ c.name }}</div>
                                 <div class="text-tiny text-medium-emphasis">{{ c.number }}</div>
+                                <!-- Extra Data -->
+                                <div class="d-flex flex-wrap ga-1 mt-1">
+                                   <template v-for="(val, key) in c" :key="key">
+                                      <v-chip v-if="!['name','number','status','updated_at','error','phone'].includes(key)" size="x-small" variant="tonal" density="compact" style="font-size: 8px; height: 14px;">
+                                         {{ key }}: {{ val }}
+                                      </v-chip>
+                                   </template>
+                                </div>
                              </td>
                              <td>
                                 <v-chip size="x-small" :color="c.status === 'sent' ? 'success' : c.status === 'failed' ? 'error' : 'warning'" variant="flat">
                                    {{ c.status.toUpperCase() }}
                                 </v-chip>
                              </td>
+                             <td class="text-tiny text-medium-emphasis">{{ formatDate(c.updated_at) }}</td>
                              <td class="text-tiny text-error text-truncate" style="max-width: 120px;">{{ c.error || '—' }}</td>
                           </tr>
                        </tbody>
