@@ -575,7 +575,9 @@
 
         <v-card class="glass-card">
           <v-data-table :headers="dispHeaders" :items="dispCampaigns" :loading="dispLoading" hover>
-            <template #item.service_id="{ item }"><v-chip size="small" variant="outlined">{{ item.service_id }}</v-chip></template>
+            <template #item.queue_id="{ item }"><v-chip size="x-small" color="info" variant="tonal" class="font-weight-bold">{{ item.queue_id || '—' }}</v-chip></template>
+            <template #item.type_id="{ item }"><v-chip size="x-small" color="primary" variant="outlined">{{ item.type_id || '—' }}</v-chip></template>
+            <template #item.service_id="{ item }"><v-chip size="small" variant="flat" color="rgba(255,255,255,0.05)">{{ item.service_id }}</v-chip></template>
             <template #item.status="{ item }">
               <v-chip :color="item.status === 'running' ? 'success' : item.status === 'paused' ? 'warning' : 'info'" size="small">
                 {{ item.status.toUpperCase() }}
@@ -656,6 +658,8 @@ const dispReport = ref(null)
 const dispActionLoading = ref(false)
 
 const dispHeaders = [
+  { title: 'QUEUE ID', key: 'queue_id' },
+  { title: 'TIPO', key: 'type_id' },
   { title: 'SERVICE ID', key: 'service_id' },
   { title: 'STATUS', key: 'status' },
   { title: 'TOTAL', key: 'total' },

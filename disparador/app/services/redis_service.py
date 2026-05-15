@@ -152,6 +152,14 @@ class DisparadorRedis:
                 continue
 
             c["service_id"] = key_parts[-1]
+            
+            # Extract type_id and queue_id from campaign_key if available
+            if c.get("campaign_key"):
+                parts = c["campaign_key"].split(":")
+                if len(parts) >= 2:
+                    c["type_id"] = parts[0]
+                    c["queue_id"] = parts[1]
+
             if not status or c.get("status") == status:
                 campaigns.append(c)
 
