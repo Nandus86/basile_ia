@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy.future import select
 from typing import List
@@ -12,7 +13,7 @@ router = APIRouter()
 
 @router.get("", response_model=DispatcherConfigList)
 @router.get("/", response_model=DispatcherConfigList, include_in_schema=False)
-async def list_dispatcher_configs(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
+async def list_dispatcher_configs(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
     """List all Dispatcher Configs."""
     query = select(DispatcherConfig).offset(skip).limit(limit)
     result = await db.execute(query)
@@ -60,7 +61,7 @@ async def list_dispatcher_configs(skip: int = 0, limit: int = 20, db: Session = 
 
 @router.post("", response_model=DispatcherConfigResponse)
 @router.post("/", response_model=DispatcherConfigResponse, include_in_schema=False)
-async def create_dispatcher_config(config: DispatcherConfigCreate, db: Session = Depends(get_db)):
+async def create_dispatcher_config(config: DispatcherConfigCreate, db: AsyncSession = Depends(get_db)):
     """Create a new Dispatcher Config."""
     query = select(DispatcherConfig).where(DispatcherConfig.path == config.path)
     result = await db.execute(query)
@@ -131,7 +132,7 @@ async def create_dispatcher_config(config: DispatcherConfigCreate, db: Session =
     )
 
 @router.get("/by-path/{path}", response_model=DispatcherConfigResponse)
-async def get_dispatcher_config_by_path(path: str, db: Session = Depends(get_db)):
+async def get_dispatcher_config_by_path(path: str, db: AsyncSession = Depends(get_db)):
     """Get a specific Dispatcher Config by path."""
     query = select(DispatcherConfig).where(DispatcherConfig.path == path)
     result = await db.execute(query)
@@ -174,7 +175,7 @@ async def get_dispatcher_config_by_path(path: str, db: Session = Depends(get_db)
     )
 
 @router.get("/{config_id}", response_model=DispatcherConfigResponse)
-async def get_dispatcher_config(config_id: UUID, db: Session = Depends(get_db)):
+async def get_dispatcher_config(config_id: UUID, db: AsyncSession = Depends(get_db)):
     """Get a specific Dispatcher Config by ID."""
     query = select(DispatcherConfig).where(DispatcherConfig.id == config_id)
     result = await db.execute(query)
@@ -217,7 +218,7 @@ async def get_dispatcher_config(config_id: UUID, db: Session = Depends(get_db)):
     )
 
 @router.put("/{config_id}", response_model=DispatcherConfigResponse)
-async def update_dispatcher_config(config_id: UUID, config_update: DispatcherConfigUpdate, db: Session = Depends(get_db)):
+async def update_dispatcher_config(config_id: UUID, config_update: DispatcherConfigUpdate, db: AsyncSession = Depends(get_db)):
     """Update a Dispatcher Config."""
     query = select(DispatcherConfig).where(DispatcherConfig.id == config_id)
     result = await db.execute(query)
@@ -277,7 +278,7 @@ async def update_dispatcher_config(config_id: UUID, config_update: DispatcherCon
     )
 
 @router.delete("/{config_id}")
-async def delete_dispatcher_config(config_id: UUID, db: Session = Depends(get_db)):
+async def delete_dispatcher_config(config_id: UUID, db: AsyncSession = Depends(get_db)):
     """Delete a Dispatcher Config."""
     query = select(DispatcherConfig).where(DispatcherConfig.id == config_id)
     result = await db.execute(query)
