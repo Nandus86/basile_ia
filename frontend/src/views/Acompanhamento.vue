@@ -512,24 +512,58 @@
                <v-icon color="warning" class="mr-2">mdi-clock-fast</v-icon>
                Fila de Espera (Smart Routing)
             </h3>
-            <v-row v-if="dispStaged && dispStaged.length > 0">
-              <v-col v-for="staged in dispStaged" :key="staged.queue_id" cols="12" md="4">
-                <v-card class="glass-card" style="border: 1px solid rgba(255, 152, 0, 0.3);">
-                  <v-card-text class="pa-4">
-                    <div class="d-flex justify-space-between align-center mb-2">
-                       <span class="text-subtitle-2 font-weight-bold">Queue: {{ staged.queue_id }}</span>
-                       <v-chip size="small" color="warning" variant="tonal">{{ staged.time_remaining }}s</v-chip>
+            <v-expansion-panels v-if="dispStaged && dispStaged.length > 0" variant="accordion" class="glass-panels">
+              <v-expansion-panel
+                v-for="staged in dispStaged"
+                :key="staged.queue_id"
+                class="glass-card mb-2"
+                style="border: 1px solid rgba(255, 152, 0, 0.2);"
+              >
+                <v-expansion-panel-title>
+                  <div class="d-flex align-center w-100 pr-4">
+                    <v-icon class="mr-2" color="warning">mdi-church</v-icon>
+                    <span class="font-weight-bold mr-4">Queue: {{ staged.queue_id }}</span>
+                    <v-chip size="small" color="info" variant="flat" class="mr-4">{{ staged.total_contacts }} contatos</v-chip>
+                    <v-spacer></v-spacer>
+                    <div class="text-caption d-flex align-center">
+                       <v-icon size="14" class="mr-1">mdi-timer-outline</v-icon>
+                       Próximo disparo em: 
+                       <span class="font-weight-bold ml-1 text-warning">
+                          {{ staged.time_remaining_minutes }}m {{ staged.time_remaining_seconds }}s
+                       </span>
                     </div>
-                    <div class="d-flex align-center">
-                       <v-icon size="20" class="mr-2 text-medium-emphasis">mdi-account-group</v-icon>
-                       <span>{{ staged.total_contacts }} contatos aguardando</span>
+                  </div>
+                </v-expansion-panel-title>
+                <v-expansion-panel-text class="pa-0">
+                  <v-list bg-color="transparent" density="compact" class="pa-0">
+                    <div v-for="typeInfo in staged.type_ids" :key="typeInfo.type_id" class="border-b border-opacity-10 last:border-0 pa-2">
+                       <div class="d-flex align-center mb-2 px-2">
+                          <v-icon size="18" color="primary" class="mr-2">mdi-tag-outline</v-icon>
+                          <span class="text-subtitle-2 font-weight-medium">Tipo: {{ typeInfo.type_id }}</span>
+                          <v-chip size="x-small" variant="outlined" class="ml-2">{{ typeInfo.contact_count }} contatos</v-chip>
+                       </div>
+                       
+                       <v-row dense class="px-2">
+                         <v-col v-for="(contact, cIdx) in typeInfo.contacts" :key="cIdx" cols="12" sm="6" md="4" lg="3">
+                           <v-sheet class="pa-2 rounded border border-opacity-10 d-flex align-center ga-2" color="rgba(255,255,255,0.03)">
+                              <v-avatar size="24" color="primary" variant="tonal">
+                                <span class="text-caption">{{ contact.name?.charAt(0) || '?' }}</span>
+                              </v-avatar>
+                              <div class="text-truncate">
+                                <div class="text-caption font-weight-bold text-truncate">{{ contact.name }}</div>
+                                <div class="text-tiny text-medium-emphasis">{{ contact.number }}</div>
+                              </div>
+                           </v-sheet>
+                         </v-col>
+                       </v-row>
                     </div>
-                  </v-card-text>
-                </v-card>
-              </v-col>
-            </v-row>
-            <div v-else class="text-medium-emphasis text-body-2 px-2">
-               Nenhuma fila aguardando no momento.
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+            <div v-else class="text-medium-emphasis text-body-2 px-2 d-flex align-center ga-2 py-4 border rounded border-dashed border-opacity-20">
+               <v-icon size="18">mdi-information-outline</v-icon>
+               Nenhuma fila de contato aguardando no momento.
             </div>
         </div>
 

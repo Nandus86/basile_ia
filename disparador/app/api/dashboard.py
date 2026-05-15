@@ -161,52 +161,83 @@ async def get_campaign_report(service_id: str):
 @router.get("/staged")
 async def get_staged_queues():
     import time
+    import json
     await disparador_redis.ensure_connected()
     
-    # Use scan to get all deadline keys
+    # Scan all deadline keys
     keys = []
     cursor = '0'
-    while cursor:
+    while True:
         cursor, partial_keys = await disparador_redis.client.scan(cursor, match="disp:staged:deadline:global:*", count=100)
         keys.extend(partial_keys)
-        if not cursor or cursor == '0' or cursor == 0 or cursor == b'0':
+        if not cursor or cursor == '0' or cursor == 0:
             break
             
     result = []
     now = int(time.time())
+
     for key in keys:
-        if isinstance(key, bytes):
-            key_str = key.decode("utf-8")
-        else:
-            key_str = str(key)
-            
+        key_str = key.decode("utf-8") if isinstance(key, bytes) else str(key)
         queue_id = key_str.split("global:")[-1]
+
         deadline_raw = await disparador_redis.client.get(key)
         if not deadline_raw:
             continue
             
         deadline = int(deadline_raw)
+        time_remaining = max(0, deadline - now)
         
-        # Get count of contacts
+        # Get all staged entries for this queue_id
         index_key = f"disp:staged:index:global:{queue_id}"
         entries = await disparador_redis.client.smembers(index_key)
         
+        # Group contacts by type_id
+        type_id_map = {}
         total_contacts = 0
+
         for entry in entries:
             entry_str = entry.decode("utf-8") if isinstance(entry, bytes) else str(entry)
             try:
                 config_path, type_id, service_id = entry_str.split(":", 2)
             except ValueError:
                 continue
+
             contacts_key = f"disp:staged:global:{queue_id}:{config_path}:{type_id}:{service_id}"
-            length = await disparador_redis.client.llen(contacts_key)
-            total_contacts += length
+            raw_contacts = await disparador_redis.client.lrange(contacts_key, 0, -1)
+
+            contacts = []
+            for rc in raw_contacts:
+                try:
+                    c = json.loads(rc)
+                    contacts.append({
+                        "name": c.get("name") or c.get("contact_name", ""),
+                        "number": c.get("number") or c.get("phone", ""),
+                    })
+                except Exception:
+                    pass
+
+            total_contacts += len(contacts)
+
+            if type_id not in type_id_map:
+                type_id_map[type_id] = {
+                    "type_id": type_id,
+                    "service_id": service_id,
+                    "config_path": config_path,
+                    "contacts": [],
+                    "contact_count": 0,
+                }
+
+            type_id_map[type_id]["contacts"].extend(contacts)
+            type_id_map[type_id]["contact_count"] += len(contacts)
             
         result.append({
             "queue_id": queue_id,
             "deadline": deadline,
-            "time_remaining": max(0, deadline - now),
-            "total_contacts": total_contacts
+            "time_remaining": time_remaining,
+            "time_remaining_minutes": time_remaining // 60,
+            "time_remaining_seconds": time_remaining % 60,
+            "total_contacts": total_contacts,
+            "type_ids": list(type_id_map.values()),
         })
         
     return result
