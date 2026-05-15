@@ -149,6 +149,10 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     
     try:
         agent_response = await basile_client.post_to_agent(config.path, agent_payload, custom_url=target_url)
+        
+        # Save output sample for debugging (first contact or occasional)
+        if batch_position == 0:
+            await disparador_redis.set_campaign_payloads(service_id, None, output_payload=agent_payload)
     except Exception as e:
         await disparador_redis.add_to_dlq(service_id, contact, str(e))
         await disparador_redis.increment_failed(service_id)
@@ -178,6 +182,10 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
         
     await disparador_redis.init_campaign(service_id, total, str(config.id), config.path, campaign_key=campaign_key)
     await disparador_redis.set_campaign_contacts(service_id, contacts)
+    
+    # Save input payload sample
+    if source_payload:
+        await disparador_redis.set_campaign_payloads(service_id, input_payload=source_payload)
     
     # 1. Dynamic Start Delay
     wait_time = config.start_delay_seconds

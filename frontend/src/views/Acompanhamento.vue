@@ -630,7 +630,7 @@
                        <v-icon size="18" class="mr-2">mdi-account-details</v-icon>
                        Status por Contato
                     </h4>
-                    <v-table density="compact" class="glass-card border rounded mb-4" style="max-height: 400px; overflow-y: auto;">
+                    <v-table density="compact" class="glass-card border rounded mb-6" style="max-height: 350px; overflow-y: auto;">
                        <thead>
                           <tr>
                              <th class="text-left py-2">Nome / Info</th>
@@ -663,6 +663,37 @@
                           </tr>
                        </tbody>
                     </v-table>
+
+                    <!-- Seção de Debug de Payloads -->
+                    <div v-if="dispReport.debug" class="mt-6">
+                       <h4 class="text-subtitle-2 mb-3 d-flex align-center">
+                          <v-icon size="18" class="mr-2" color="primary">mdi-code-json</v-icon>
+                          Dados Técnicos (Payload Debugger)
+                       </h4>
+                       <v-expansion-panels variant="accordion" class="glass-card border rounded">
+                          <v-expansion-panel v-if="dispReport.debug.input" bg-color="transparent">
+                             <v-expansion-panel-title class="text-caption font-weight-bold">
+                                Payload de Entrada (Input Sample)
+                             </v-expansion-panel-title>
+                             <v-expansion-panel-text>
+                                <v-sheet class="pa-2 rounded code-sheet" style="font-size: 10px;">
+                                   <pre>{{ formatJSON(dispReport.debug.input) }}</pre>
+                                </v-sheet>
+                             </v-expansion-panel-text>
+                          </v-expansion-panel>
+
+                          <v-expansion-panel v-if="dispReport.debug.output" bg-color="transparent">
+                             <v-expansion-panel-title class="text-caption font-weight-bold">
+                                Payload de Saída (Output Sample - Agente)
+                             </v-expansion-panel-title>
+                             <v-expansion-panel-text>
+                                <v-sheet class="pa-2 rounded code-sheet" style="font-size: 10px;">
+                                   <pre>{{ formatJSON(dispReport.debug.output) }}</pre>
+                                </v-sheet>
+                             </v-expansion-panel-text>
+                          </v-expansion-panel>
+                       </v-expansion-panels>
+                    </div>
                 </div>
              </v-card-text>
              <v-card-actions class="pa-4 border-t">

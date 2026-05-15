@@ -132,6 +132,28 @@ class DisparadorRedis:
         contacts_list = [json.loads(v) for v in all_contacts.values()]
         return sorted(contacts_list, key=lambda x: x.get("name", ""))
 
+    async def set_campaign_payloads(self, service_id: str, input_payload: dict, output_payload: dict = None):
+        await self.ensure_connected()
+        key = f"disp:campaign:payloads:{service_id}"
+        data = await self.client.get(key)
+        payloads = json.loads(data) if data else {}
+        
+        if input_payload:
+            # Strip contacts to avoid massive storage
+            p_in = dict(input_payload)
+            if "contacts" in p_in: p_in["contacts"] = f"[{len(p_in['contacts'])} contacts stripped]"
+            payloads["input"] = p_in
+            
+        if output_payload:
+            payloads["output"] = output_payload
+            
+        await self.client.set(key, json.dumps(payloads), ex=604800) # 7 days
+
+    async def get_campaign_payloads(self, service_id: str) -> dict:
+        await self.ensure_connected()
+        data = await self.client.get(f"disp:campaign:payloads:{service_id}")
+        return json.loads(data) if data else {}
+
     async def get_campaign(self, service_id: str) -> Optional[dict]:
         await self.ensure_connected()
         key = f"disp:campaign:{service_id}"

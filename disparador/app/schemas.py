@@ -60,4 +60,5 @@ class CampaignReport(CampaignStatus):
     config_id: Optional[str] = None
     config_path: Optional[str] = None
     contacts: Optional[List[Dict[str, Any]]] = None
+    debug: Optional[Dict[str, Any]] = None
     avg_delay_seconds: Optional[float] = None
