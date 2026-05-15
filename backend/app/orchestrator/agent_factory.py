@@ -1451,25 +1451,6 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         except Exception as e:
             logger.error(f"[AgentFactory] Stream error: {e}")
             yield {"type": "error", "data": str(e)}
-        
-        else:
-            # Simple LLM call — add skills reminder at end of prompt
-            if agent_config.get("skills_summary"):
-                skill_names = [s["name"] for s in agent_config["skills_summary"]]
-                system_prompt += (
-                    f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\n"
-                    f"Você TEM skills ativas: {', '.join(skill_names)}.\n"
-                    f"Consulte e aplique RIGOROSAMENTE as instruções das skills ANTES de responder.\n"
-                    f"Se uma skill define um passo-a-passo, siga-o na ORDEM EXATA.\n"
-                )
-                
-            if dynamic_skills_prompt:
-                system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
-
-            all_messages = [SystemMessage(content=system_prompt)] + messages
-            
-            response = await llm.ainvoke(all_messages, config=run_config)
-            return response.content
     
     def clear_cache(self):
         """Clear the agent configuration cache"""
