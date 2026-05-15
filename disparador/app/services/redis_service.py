@@ -94,6 +94,42 @@ class DisparadorRedis:
             }
             await self.client.set(key, json.dumps(data))
 
+    async def set_campaign_contacts(self, service_id: str, contacts: List[dict]):
+        await self.ensure_connected()
+        key = f"disp:campaign:contacts:{service_id}"
+        mapping = {}
+        for c in contacts:
+            number = c.get("number") or c.get("phone")
+            if not number: continue
+            mapping[number] = json.dumps({
+                "name": c.get("name") or c.get("contact_name", "Unknown"),
+                "number": number,
+                "status": "pending",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            })
+        if mapping:
+            await self.client.hset(key, mapping=mapping)
+            await self.client.expire(key, 604800)
+
+    async def update_contact_status(self, service_id: str, number: str, status: str, error: str = None):
+        await self.ensure_connected()
+        key = f"disp:campaign:contacts:{service_id}"
+        raw = await self.client.hget(key, number)
+        if raw:
+            data = json.loads(raw)
+            data["status"] = status
+            if error: data["error"] = error
+            data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            await self.client.hset(key, number, json.dumps(data))
+
+    async def get_campaign_contacts(self, service_id: str) -> List[dict]:
+        await self.ensure_connected()
+        key = f"disp:campaign:contacts:{service_id}"
+        all_contacts = await self.client.hgetall(key)
+        # Sort by updated_at or name
+        contacts_list = [json.loads(v) for v in all_contacts.values()]
+        return sorted(contacts_list, key=lambda x: x.get("name", ""))
+
     async def get_campaign(self, service_id: str) -> Optional[dict]:
         await self.ensure_connected()
         key = f"disp:campaign:{service_id}"

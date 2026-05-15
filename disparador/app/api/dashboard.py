@@ -142,6 +142,7 @@ async def get_campaign_report(service_id: str):
     
     success_rate = round((sent / max(total, 1)) * 100, 2)
     dlq_items = await disparador_redis.get_dlq(service_id)
+    contacts = await disparador_redis.get_campaign_contacts(service_id)
     
     return CampaignReport(
         service_id=service_id,
@@ -155,7 +156,8 @@ async def get_campaign_report(service_id: str):
         success_rate=success_rate,
         dlq_count=len(dlq_items),
         config_id=campaign.get("config_id"),
-        config_path=campaign.get("config_path")
+        config_path=campaign.get("config_path"),
+        contacts=contacts
     )
 
 @router.get("/staged")

@@ -612,12 +612,39 @@
                     <v-progress-linear :model-value="dispSelected.percent" color="primary" height="12" rounded></v-progress-linear>
                 </div>
                 <div v-if="dispReport">
-                   <v-divider class="mb-4"></v-divider>
-                   <div class="text-subtitle-2 mb-2 text-info">Relatório Final Disponível</div>
-                   <div class="d-flex flex-wrap gap-4 mb-4">
-                     <v-chip variant="outlined" color="success">Taxa Sucesso: {{ dispReport.success_rate }}%</v-chip>
-                     <v-chip variant="outlined" color="error">DLQ: {{ dispReport.dlq_count }} contatos</v-chip>
-                   </div>
+                    <v-divider class="mb-4"></v-divider>
+                    <div class="d-flex flex-wrap ga-2 mb-4">
+                      <v-chip variant="outlined" color="success" size="small">Taxa Sucesso: {{ dispReport.success_rate }}%</v-chip>
+                      <v-chip variant="outlined" color="error" size="small">DLQ: {{ dispReport.dlq_count }} contatos</v-chip>
+                    </div>
+
+                    <h4 class="text-subtitle-2 mb-2 d-flex align-center">
+                       <v-icon size="18" class="mr-2">mdi-account-details</v-icon>
+                       Status por Contato
+                    </h4>
+                    <v-table density="compact" class="glass-card border rounded mb-4" style="max-height: 400px; overflow-y: auto;">
+                       <thead>
+                          <tr>
+                             <th class="text-left py-2">Nome</th>
+                             <th class="text-left py-2">Status</th>
+                             <th class="text-left py-2">Erro</th>
+                          </tr>
+                       </thead>
+                       <tbody>
+                          <tr v-for="c in dispReport.contacts" :key="c.number" class="hover:bg-white/5">
+                             <td class="text-caption">
+                                <div class="font-weight-bold">{{ c.name }}</div>
+                                <div class="text-tiny text-medium-emphasis">{{ c.number }}</div>
+                             </td>
+                             <td>
+                                <v-chip size="x-small" :color="c.status === 'sent' ? 'success' : c.status === 'failed' ? 'error' : 'warning'" variant="flat">
+                                   {{ c.status.toUpperCase() }}
+                                </v-chip>
+                             </td>
+                             <td class="text-tiny text-error text-truncate" style="max-width: 120px;">{{ c.error || '—' }}</td>
+                          </tr>
+                       </tbody>
+                    </v-table>
                 </div>
              </v-card-text>
              <v-card-actions class="pa-4 border-t">
@@ -696,11 +723,11 @@ const openDispDetails = async (item) => {
     dispSelected.value = item
     dispReport.value = null
     dispDialog.value = true
-    if (item.status === 'completed') {
-        try {
-            const res = await axiosInstance.get(`/disparador/dashboard/campaigns/${item.service_id}/report`)
-            dispReport.value = res.data
-        } catch (e) {}
+    try {
+        const res = await axiosInstance.get(`/disparador/dashboard/campaigns/${item.service_id}/report`)
+        dispReport.value = res.data
+    } catch (e) {
+        console.error('Failed to fetch campaign report:', e)
     }
 }
 

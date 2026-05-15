@@ -95,6 +95,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         logger.info(f"Rate limit skipped dispatch for {contact['number']} in {service_id}")
         await disparador_redis.increment_failed(service_id)
         await disparador_redis.add_to_dlq(service_id, contact, "Rate limit: Disparo muito recente para este número")
+        await disparador_redis.update_contact_status(service_id, contact["number"], "failed", error="Rate limit")
         return
 
     # Gera Index
@@ -150,9 +151,11 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     except Exception as e:
         await disparador_redis.add_to_dlq(service_id, contact, str(e))
         await disparador_redis.increment_failed(service_id)
+        await disparador_redis.update_contact_status(service_id, contact["number"], "failed", error=str(e))
         return
     
     await disparador_redis.increment_sent(service_id)
+    await disparador_redis.update_contact_status(service_id, contact["number"], "sent")
     
     # Delay
     delay = random.randint(config.min_variation_seconds, config.max_variation_seconds)
@@ -173,6 +176,7 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
         return
         
     await disparador_redis.init_campaign(service_id, total, str(config.id), config.path, campaign_key=campaign_key)
+    await disparador_redis.set_campaign_contacts(service_id, contacts)
     
     # 1. Dynamic Start Delay
     wait_time = config.start_delay_seconds
