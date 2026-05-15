@@ -933,3 +933,103 @@ async def run_supervisor(
         "agents_used": result.get("agents_used", []),
         "last_agent": agents_used[-1] if agents_used else None,
     }
+
+async def run_supervisor_stream(
+    message: str,
+    session_id: str,
+    history: List[Dict[str, str]],
+    agent_id: Optional[str],
+    db: AsyncSession,
+    user_access_level: str = "normal",
+    context_data: Optional[Dict[str, Any]] = None,
+):
+    """
+    Run the supervisor-based orchestrator and yield stream events.
+    """
+    supervisor = Supervisor(db)
+    graph = supervisor.build_graph()
+    
+    initial_state: SupervisorState = {
+        "messages": [],
+        "original_message": message,
+        "session_id": session_id,
+        "history": history,
+        "requested_agent_id": agent_id,
+        "user_access_level": user_access_level,
+        "context_data": context_data,
+        "current_agent_id": None,
+        "current_agent_name": None,
+        "current_agent_config": None,
+        "agents_used": [],
+        "iteration": 0,
+        "max_iterations": 5,
+        "next_action": "route",
+        "needs_collaboration": False,
+        "collaboration_agents": [],
+        "context": [],
+        "rag_context": None,
+        "mcp_tools": [],
+        "agent_responses": {},
+        "final_response": None,
+        "error": None,
+        "pending_agents": [],
+        "evaluation_reasoning": "",
+        "loop_history": [],
+        "orchestrator_loop_config": {},
+        "session_context": None,
+    }
+    
+    config = RunnableConfig(
+        run_name="Supervisor Streaming",
+        metadata={"session_id": session_id},
+        tags=["supervisor", "stream"]
+    )
+    
+    try:
+        async for event in graph.astream_events(initial_state, config=config, version="v2"):
+            kind = event["event"]
+            name = event["name"]
+            
+            # Node changes
+            if kind == "on_chain_start" and name in ["route", "execute", "evaluate", "synthesize"]:
+                yield {"type": "node", "data": name}
+            
+            # Agent selection (from state updates or metadata)
+            if kind == "on_chain_end" and name == "route":
+                # Check output for next agent
+                output = event["data"].get("output")
+                if isinstance(output, dict) and output.get("current_agent_name"):
+                    yield {"type": "agent_selected", "data": output["current_agent_name"]}
+
+            # LLM chunks (from any agent)
+            if kind == "on_chat_model_stream":
+                content = event["data"]["chunk"].content
+                if content:
+                    yield {"type": "chunk", "data": content}
+
+            # Tool calls (from any agent)
+            if kind == "on_tool_start":
+                yield {
+                    "type": "tool_call",
+                    "data": {
+                        "name": name,
+                        "args": event["data"].get("input")
+                    }
+                }
+            
+            # Tool results
+            if kind == "on_tool_end":
+                yield {
+                    "type": "tool_result",
+                    "data": {
+                        "name": name,
+                        "output": str(event["data"].get("output"))
+                    }
+                }
+
+        yield {"type": "final", "data": "completed"}
+    except Exception as e:
+        import traceback
+        print(f"[SupervisorStream] Error: {e}")
+        traceback.print_exc()
+        yield {"type": "error", "data": str(e)}

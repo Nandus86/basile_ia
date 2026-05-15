@@ -21,8 +21,10 @@ from app.orchestrator import run_orchestrator_v2
 from app.models.job_log import JobLog
 
 import httpx
+import json
+import asyncio
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from app.config import settings
 
 router = APIRouter()
@@ -510,7 +512,71 @@ async def submit_chat_feedback(
             )
             
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao processar feedback: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/process/stream")
+async def process_message_stream(
+    request: ProcessRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: RedisClient = Depends(get_redis)
+):
+    """
+    Process a message with SSE streaming for real-time feedback.
+    """
+    from app.orchestrator.supervisor import run_supervisor_stream
+    from app.utils.timezone import resolve_timezone_name
+    from starlette.responses import StreamingResponse
+    import json
+    import asyncio
+    
+    async def event_generator():
+        try:
+            # Prepare data (similar to process_message)
+            message = request.message
+            session_id = request.session_id
+            agent_id = request.agent_id
+            user_access_level = request.user_access_level
+            context_data = request.context_data or {}
+            transition_data = request.transition_data or {}
+            
+            # Load history
+            history = await redis.get_conversation(session_id)
+            
+            # Resolve Timezone
+            tz_name = "America/Sao_Paulo"
+            if transition_data:
+                 tz_name = resolve_timezone_name(transition_data)
+
+            # Record user message in STM
+            await redis.add_message(
+                session_id=session_id,
+                role="user",
+                content=message,
+                tz_name=tz_name
+            )
+
+            # Start streaming
+            async for event in run_supervisor_stream(
+                message=message,
+                session_id=session_id,
+                history=history,
+                agent_id=agent_id,
+                db=db,
+                user_access_level=user_access_level,
+                context_data=context_data
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                # Small sleep to prevent buffer congestion in some environments
+                await asyncio.sleep(0.01)
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 from typing import Union

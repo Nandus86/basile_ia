@@ -253,8 +253,59 @@
                 </v-avatar>
               </div>
 
+              <!-- Reasoning Trace (SSE events) -->
+              <div v-if="reasoningEvents.length > 0" class="reasoning-trace-container mb-4">
+                <v-expansion-panels flat variant="accordion">
+                  <v-expansion-panel class="reasoning-panel rounded-lg">
+                    <v-expansion-panel-title class="py-2 px-4">
+                      <div class="d-flex align-center">
+                        <v-icon color="warning" size="18" class="mr-2">mdi-brain</v-icon>
+                        <span class="text-caption font-weight-bold text-uppercase">Raciocínio do Agente</span>
+                        <v-chip v-if="currentNode" size="x-small" color="primary" class="ml-3 px-2">{{ currentNode }}</v-chip>
+                      </div>
+                    </v-expansion-panel-title>
+                    <v-expansion-panel-text class="pa-0">
+                      <div class="trace-list pa-2 bg-surface-light rounded-b-lg">
+                        <div v-for="(event, idx) in reasoningEvents" :key="idx" class="trace-item mb-1">
+                          <template v-if="event.type === 'node'">
+                            <div class="trace-node d-flex align-center text-xs">
+                              <v-icon size="12" class="mr-1">mdi-ray-start-arrow</v-icon>
+                              Entrando no nó: <span class="font-weight-bold ml-1">{{ event.data }}</span>
+                            </div>
+                          </template>
+                          <template v-else-if="event.type === 'agent_selected'">
+                            <div class="trace-agent d-flex align-center text-xs text-primary">
+                              <v-icon size="12" class="mr-1">mdi-account-switch</v-icon>
+                              Agente Selecionado: <span class="font-weight-bold ml-1">{{ event.data }}</span>
+                            </div>
+                          </template>
+                          <template v-else-if="event.type === 'tool_call'">
+                            <div class="trace-tool-call text-xs py-1 px-2 rounded bg-surface border-s-4 border-primary">
+                              <div class="d-flex align-center mb-1">
+                                <v-icon size="12" color="primary" class="mr-1">mdi-tools</v-icon>
+                                <span class="font-weight-bold">Chamando: {{ event.data.name }}</span>
+                              </div>
+                              <pre class="text-xs opacity-70 overflow-x-auto">{{ formatJson(event.data.args) }}</pre>
+                            </div>
+                          </template>
+                          <template v-else-if="event.type === 'tool_result'">
+                            <div class="trace-tool-result text-xs py-1 px-2 rounded bg-surface border-s-4 border-success mt-1">
+                              <div class="d-flex align-center mb-1">
+                                <v-icon size="12" color="success" class="mr-1">mdi-check-circle</v-icon>
+                                <span class="font-weight-bold">Resultado: {{ event.data.name }}</span>
+                              </div>
+                              <div class="text-truncate opacity-70">{{ event.data.output }}</div>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
+              </div>
+
               <!-- Loading Indicator -->
-              <div v-if="loading" class="d-flex gap-4">
+              <div v-if="loading && !isStreaming" class="d-flex gap-4">
                  <v-avatar color="surface" size="36" class="elevation-1">
                    <v-progress-circular indeterminate color="primary" size="20" width="2"></v-progress-circular>
                  </v-avatar>
@@ -499,6 +550,12 @@ const agents = ref([])
 const lastProcessingTime = ref(0)
 const lastAgentUsed = ref(null)
 
+// Streaming State
+const isStreaming = ref(false)
+const reasoningEvents = ref([])
+const currentNode = ref(null)
+const streamingMessage = ref(null)
+
 // Context Data
 const contextDataJson = ref('')
 const contextDataError = ref('')
@@ -566,6 +623,15 @@ function formatMessage(text) {
     .replace(/`([^`]+)`/g, '<code>$1</code>')
     
   return html
+}
+
+function formatJson(data) {
+  if (typeof data !== 'object') return data
+  try {
+    return JSON.stringify(data, null, 2)
+  } catch (e) {
+    return String(data)
+  }
 }
 
 function showNotification(msg, color = 'success') {
@@ -685,7 +751,12 @@ async function sendMessage() {
   messages.value.push(userMsg)
   inputMessage.value = ''
   loading.value = true
+  isStreaming.value = true
+  reasoningEvents.value = []
+  currentNode.value = null
   scrollToBottom()
+  
+  const startTime = Date.now()
   
   try {
     // Base payload
@@ -706,41 +777,107 @@ async function sendMessage() {
       }
     }
 
-    const res = await axios.post('/webhook/process', payload)
-    
-    // Get the payload that was sent (for entity path resolution later)
-    const sentPayload = { ...payload }
-    
-    messages.value.push({
+    // Initialize assistant message
+    const assistantMsg = reactive({
       role: 'assistant',
-      content: res.data.response,
-      agent: res.data.agent_used,
+      content: '',
+      agent: 'Calculando...',
       agent_id: payload.agent_id,
-      processingTime: res.data.processing_time_ms,
+      processingTime: 0,
       time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      jobPayload: sentPayload,
-      // Feedback UI internal states
+      jobPayload: { ...payload },
       feedback: null,
       feedbackLoading: null
     })
     
-    lastProcessingTime.value = res.data.processing_time_ms
-    lastAgentUsed.value = res.data.agent_used
-  } catch (e) {
-    let errorContent
-    if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
-      errorContent = 'Desculpe, a resposta está demorando mais do que o esperado. Por favor, tente novamente ou reformule sua pergunta.'
-    } else {
-      errorContent = `Erro: ${e.message}`
-    }
-    messages.value.push({
-      role: 'assistant',
-      content: errorContent,
-      time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    messages.value.push(assistantMsg)
+    streamingMessage.value = assistantMsg
+
+    // Fetch API endpoint for streaming
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/webhook/process/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload)
     })
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      
+      buffer += decoder.decode(value, { stream: true })
+      
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const event = JSON.parse(line.substring(6))
+            handleStreamEvent(event, assistantMsg)
+          } catch (e) {
+            console.error('Error parsing SSE event:', e)
+          }
+        }
+      }
+    }
+    
+    assistantMsg.processingTime = Date.now() - startTime
+    lastProcessingTime.value = assistantMsg.processingTime
+    
+  } catch (e) {
+    console.error('Streaming error:', e)
+    const errorContent = `Erro: ${e.message}`
+    if (streamingMessage.value) {
+      streamingMessage.value.content = errorContent
+    } else {
+      messages.value.push({
+        role: 'assistant',
+        content: errorContent,
+        time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      })
+    }
   } finally {
     loading.value = false
+    isStreaming.value = false
+    streamingMessage.value = null
     scrollToBottom()
+  }
+}
+
+function handleStreamEvent(event, msg) {
+  switch (event.type) {
+    case 'node':
+      currentNode.value = event.data
+      reasoningEvents.value.push(event)
+      scrollToBottom()
+      break
+    case 'agent_selected':
+      msg.agent = event.data
+      reasoningEvents.value.push(event)
+      break
+    case 'chunk':
+      msg.content += event.data
+      scrollToBottom()
+      break
+    case 'tool_call':
+    case 'tool_result':
+      reasoningEvents.value.push(event)
+      scrollToBottom()
+      break
+    case 'error':
+      msg.content += `\n\n[ERRO]: ${event.data}`
+      break
+    case 'final':
+      lastAgentUsed.value = msg.agent
+      break
   }
 }
 

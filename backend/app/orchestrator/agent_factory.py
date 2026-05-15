@@ -1021,17 +1021,436 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 budget.stop_reason(),
             )
 
-            for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
-                    if not (hasattr(msg, "tool_calls") and msg.tool_calls):
-                        return msg.content
+    async def _prepare_agent_run(
+        self,
+        agent_config: Dict[str, Any],
+        messages: List[Any],
+        rag_context: Optional[str] = None,
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
+    ):
+        """Prepare LLM, tools, prompt and graph for agent execution."""
+        from app.schemas.structured_output import format_context_data_for_prompt
+        from app.utils.macros import resolve_global_macros
+        from langgraph.graph import StateGraph, START, END
+        from langgraph.graph.message import add_messages
+        from langgraph.prebuilt import ToolNode
+        from langchain_core.tools import StructuredTool
+        from typing import Annotated, Sequence
 
-            for msg in reversed(final_messages):
-                if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+        llm = self.create_llm(agent_config)
+        run_config = self.get_run_config(agent_config)
+
+        resolved_execution_mode = (
+            (execution_mode_override or "").strip().lower()
+            or str(agent_config.get("execution_mode") or "balanced").strip().lower()
+        )
+        if resolved_execution_mode not in {"balanced", "tools_first", "orchestrator_first"}:
+            resolved_execution_mode = "balanced"
+
+        agent_extra_config = agent_config.get("config") or {}
+        budget_cfg = agent_extra_config.get("execution_budget") or {}
+        allow_specialist_switching = agent_extra_config.get("allow_specialist_switching", False)
+
+        budget = ExecutionBudget(
+            max_total_actions=int(budget_cfg.get("max_total_actions_per_turn", 7)),
+            max_tool_calls=int(budget_cfg.get("max_tool_calls_per_turn", 5)),
+            max_collab_calls=int(budget_cfg.get("max_collab_calls_per_turn", 2)),
+            max_wall_time_seconds=int(budget_cfg.get("max_wall_time_per_turn_seconds", 35)),
+        )
+        seen_fingerprints = set()
+
+        # Build system prompt
+        system_prompt = agent_config["system_prompt"]
+        
+        # Inject context data if provided
+        if context_data:
+            input_schema = agent_config.get("input_schema")
+            context_section = None
+            
+            try:
+                from app.services.mcp_tools import get_agent_mcp_metadata
+                mcp_meta = await get_agent_mcp_metadata(self.db, str(agent_config["id"]))
+                
+                from_ai_names = mcp_meta["from_ai_names"]
+                request_only_paths = mcp_meta["request_paths"] - from_ai_names
+                global_safe_prune = {"system.apikey", "system.baseUrlBasileia", "church._id", "member.phone"}
+                request_only_paths.update(global_safe_prune - from_ai_names)
+                
+                effective_input_schema = input_schema.copy() if isinstance(input_schema, dict) else {}
+                if not input_schema:
+                    for name in from_ai_names:
+                        if name not in effective_input_schema:
+                            effective_input_schema[name] = {"type": "string", "description": "Campo dinâmico para ferramenta"}
+                
+                input_schema = effective_input_schema
+
+                if request_only_paths:
+                    context_data_for_prompt = copy.deepcopy(context_data)
+                    
+                    def prune_path(data, parts):
+                        if not parts or not isinstance(data, dict): return
+                        key = parts[0]
+                        if len(parts) == 1:
+                            if key in data: del data[key]
+                        else:
+                            if key in data and isinstance(data[key], dict): prune_path(data[key], parts[1:])
+
+                    def is_path_in_schema(schema, path_str):
+                        if not schema or not isinstance(schema, dict): return False
+                        current = schema
+                        if current.get("type") == "object" and "properties" in current:
+                            current = current.get("properties", {})
+                        parts = path_str.split('.')
+                        for part in parts:
+                            if not isinstance(current, dict): return False
+                            if part not in current: return False
+                            current = current[part]
+                            if isinstance(current, dict) and current.get("type") == "object" and "properties" in current:
+                                current = current.get("properties", {})
+                        return True
+                    
+                    for path in request_only_paths:
+                        if not is_path_in_schema(input_schema, path):
+                            prune_path(context_data_for_prompt, path.split('.'))
+                    
+                    context_section = format_context_data_for_prompt(context_data_for_prompt, input_schema)
+                else:
+                    context_section = format_context_data_for_prompt(context_data, input_schema)
+            except Exception as e:
+                logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering: {e}")
+                context_section = format_context_data_for_prompt(context_data, input_schema)
+            
+            if context_section:
+                system_prompt += context_section
+        
+        # Inject HITL Sentinel Rules
+        if agent_config.get("resilience"):
+            res_cfg = agent_config["resilience"]
+            hitl_user = res_cfg.get("hitl_user_approval_enabled", False)
+            hitl_admin = res_cfg.get("hitl_admin_approval_enabled", False)
+            
+            if hitl_user or hitl_admin:
+                hitl_msg = res_cfg.get("hitl_message_template") or ""
+                system_prompt += "\n\n## 🛑 INTERVENÇÃO HUMANA OBRIGATÓRIA (HITL ATIVO)\n"
+                system_prompt += "Você **DEVE** interromper sua execução e aguardar a aprovação ou resposta de um humano antes de tomar a ação final desta tarefa.\n"
+                system_prompt += "Para solicitar esta aprovação, você deve formular sua pergunta para o humano e OBRIGATORIAMENTE incluir a tag `{{ $HITL }}` ao final de sua fala.\n"
+                if hitl_msg:
+                    system_prompt += f"Template sugerido para sua pergunta: \"{hitl_msg}\"\n"
+                system_prompt += "REGRA CRÍTICA: Se a resposta do humano já foi fornecida acima no histórico, NÃO PARE. Vá em frente.\n"
+
+        system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
+        dynamic_skills_prompt = await self._get_dynamic_skills_prompt(agent_config, messages)
+        
+        if rag_context:
+            system_prompt += f"\n\n## Contexto da Base de Conhecimento\n\nUse as seguintes informações para responder:\n\n{rag_context}\n\n---\n\nCite a fonte quando usar informações do contexto acima.\n"
+
+        system_prompt = resolve_global_macros(system_prompt, context_data)
+        system_prompt += f"\n\n## Modo de Execução (Determinístico)\n- Modo resolvido deste turno: {resolved_execution_mode}\n- Você deve obedecer os limites de execução.\n"
+
+        if not agent_config["has_tools"]:
+            if agent_config.get("skills_summary"):
+                skill_names = [s["name"] for s in agent_config["skills_summary"]]
+                system_prompt += f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: {', '.join(skill_names)}.\n"
+            if dynamic_skills_prompt:
+                system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
+            
+            return {
+                "is_react": False,
+                "llm": llm,
+                "run_config": run_config,
+                "full_prompt": system_prompt,
+                "messages": messages,
+                "agent_messages": [SystemMessage(content=system_prompt)] + messages
+            }
+
+        tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
+        skills_reminder = ""
+        if agent_config.get("skills_summary"):
+            skill_names = [s["name"] for s in agent_config["skills_summary"]]
+            skills_reminder = f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: {', '.join(skill_names)}.\n"
+
+        resilience_cfg = agent_config.get("resilience", {})
+        max_retries = resilience_cfg.get("max_retries", 3)
+        timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
+
+        if resolved_execution_mode == "tools_first":
+            planner_llm = llm.with_structured_output(ToolFirstPlan)
+            planner_messages = [
+                SystemMessage(content="Gere um plano curto para usar ferramentas com prioridade. Responda apenas no schema fornecido."),
+                HumanMessage(content=f"Solicitação atual: {messages[-1].content if messages else ''}"),
+            ]
+            try:
+                plan = await planner_llm.ainvoke(planner_messages, config=run_config)
+                if isinstance(plan, ToolFirstPlan):
+                    budget.max_tool_calls = min(budget.max_tool_calls, int(plan.max_tool_calls))
+                    budget.max_collab_calls = min(budget.max_collab_calls, int(plan.max_collab_calls))
+            except Exception as planner_err:
+                logger.warning(f"[AgentFactory] planner tools_first fallback: {planner_err}")
+
+        def _select_tools_for_mode(mode: str):
+            tools = agent_config["tools"]
+            if mode == "orchestrator_first":
+                return [t for t in tools if str(getattr(t, "name", "")).startswith("consultar_")] or tools
+            if mode == "tools_first":
+                return [t for t in tools if not str(getattr(t, "name", "")).startswith("consultar_")] or tools
+            return tools
+
+        selected_tools = _select_tools_for_mode(resolved_execution_mode)
+        locks = {"selected_agent": None, "tool_called": False, "collab_called": False}
+        always_start_queue = agent_config.get("always_start_tools", [])
+        always_end_queue = agent_config.get("always_end_tools", [])
+
+        def is_mandatory_tool(name: str) -> bool:
+            return name in always_start_queue or name in always_end_queue
+
+        def _make_guarded_tool(tool, budget, seen_fps, is_collab):
+            async def _guarded_ainvoke(**kwargs):
+                if is_collab:
+                    detected_agent = tool.name
+                    if not is_mandatory_tool(detected_agent) and not allow_specialist_switching:
+                        if locks["selected_agent"] is None: locks["selected_agent"] = detected_agent
+                        elif locks["selected_agent"] != detected_agent: return f"Erro: Troca de especialista não permitida."
+                    locks["collab_called"] = True
+                if not is_mandatory_tool(tool.name): locks["tool_called"] = True
+                fp = _fingerprint_tool_call(tool.name, kwargs)
+                if fp in seen_fps: return "Tool call blocked: repeated same arguments."
+                if not budget.consume("collab" if is_collab else "tool"): return f"Tool call blocked: {budget.stop_reason()}."
+                seen_fps.add(fp)
+                if hasattr(tool, "ainvoke"): return await tool.ainvoke(kwargs)
+                elif hasattr(tool, "_arun"): return await tool._arun(**kwargs)
+                elif hasattr(tool, "invoke"): return tool.invoke(kwargs)
+                elif hasattr(tool, "_run"): return tool._run(**kwargs)
+                else: raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
+
+            def _guarded_invoke(**kwargs):
+                if is_collab:
+                    detected_agent = tool.name
+                    if not is_mandatory_tool(detected_agent) and not allow_specialist_switching:
+                        if locks["selected_agent"] is None: locks["selected_agent"] = detected_agent
+                        elif locks["selected_agent"] != detected_agent: return f"Erro: Troca de especialista não permitida."
+                    locks["collab_called"] = True
+                if not is_mandatory_tool(tool.name): locks["tool_called"] = True
+                fp = _fingerprint_tool_call(tool.name, kwargs)
+                if fp in seen_fps: return "Tool call blocked: repeated same arguments."
+                if not budget.consume("collab" if is_collab else "tool"): return f"Tool call blocked: {budget.stop_reason()}."
+                seen_fps.add(fp)
+                if hasattr(tool, "invoke"): return tool.invoke(kwargs)
+                elif hasattr(tool, "_run"): return tool._run(**kwargs)
+                else: raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
+
+            return StructuredTool(
+                name=tool.name,
+                description=getattr(tool, "description", "") or tool.name,
+                func=_guarded_invoke,
+                coroutine=_guarded_ainvoke,
+                args_schema=getattr(tool, "args_schema", None),
+            )
+
+        selected_tools = [_make_guarded_tool(t, budget, seen_fingerprints, t.name.startswith("consultar_")) for t in selected_tools]
+        tool_instructions = f"\n{skills_reminder}\n## Árvore de Ferramentas / MCPs Disponíveis\n{tool_list}\n\n## Instruções de Ferramentas\nUSE-AS SEMPRE que necessário. Max {max_retries} retries por ferramenta.\n"
+        full_prompt = system_prompt + tool_instructions
+        if dynamic_skills_prompt:
+            full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
+            
+        agent_messages = [SystemMessage(content=full_prompt)] + messages
+        llm_with_tools = llm.bind_tools(selected_tools)
+        tool_node = ToolNode(selected_tools)
+
+        class AgentExecState(TypedDict, total=False):
+            messages: Annotated[Sequence[Any], add_messages]
+
+        def _get_called_tool_names(state: AgentExecState) -> set:
+            called = set()
+            for msg in state["messages"]:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        called.add(tc["name"])
+            return called
+
+        async def call_model_node(state: AgentExecState):
+            if not budget.can_continue():
+                return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
+            called_tools = _get_called_tool_names(state)
+            for t_name in always_start_queue:
+                if t_name not in called_tools:
+                    forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
+                    if forced_tool_obj:
+                        llm_forced = llm.bind_tools([forced_tool_obj])
+                        force_msg = SystemMessage(content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA MESMO.")
+                        response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
+                        return {"messages": [response]}
+            response = await llm_with_tools.ainvoke(state["messages"], config=run_config)
+            return {"messages": [response]}
+
+        def should_continue_edge(state: AgentExecState) -> str:
+            last_msg = state["messages"][-1]
+            if not getattr(last_msg, "tool_calls", None):
+                called_tools = _get_called_tool_names(state)
+                for t_name in always_end_queue:
+                    if t_name not in called_tools: return "force_end"
+                return END
+            return "tools"
+
+        async def force_end_node(state: AgentExecState):
+            called_tools = _get_called_tool_names(state)
+            for t_name in always_end_queue:
+                if t_name not in called_tools:
+                    forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
+                    if forced_tool_obj:
+                        llm_forced = llm.bind_tools([forced_tool_obj])
+                        force_msg = SystemMessage(content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR.")
+                        response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
+                        return {"messages": [response]}
+            return {"messages": []}
+
+        agent_graph = StateGraph(AgentExecState)
+        agent_graph.add_node("agent", call_model_node)
+        agent_graph.add_node("tools", tool_node)
+        agent_graph.add_node("force_end", force_end_node)
+        agent_graph.add_edge(START, "agent")
+        agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
+        agent_graph.add_edge("tools", "agent")
+        agent_graph.add_edge("force_end", "tools")
+
+        return {
+            "is_react": True,
+            "graph": agent_graph.compile(),
+            "agent_messages": agent_messages,
+            "run_config": run_config,
+            "max_retries": max_retries,
+            "full_prompt": full_prompt,
+            "llm": llm,
+            "budget": budget,
+            "resolved_execution_mode": resolved_execution_mode,
+            "name": agent_config["name"]
+        }
+
+    async def invoke_agent(
+        self,
+        agent_config: Dict[str, Any],
+        messages: List[Any],
+        rag_context: Optional[str] = None,
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
+    ) -> str:
+        """Invoke an agent with messages and return response."""
+        prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
+        
+        if not prep["is_react"]:
+            response = await prep["llm"].ainvoke(prep["agent_messages"], config=prep["run_config"])
+            return response.content
+
+        from langgraph.errors import GraphRecursionError
+        recursion_limit = max(150, prep["max_retries"] * 10 + 50)
+
+        try:
+            result = await prep["graph"].ainvoke(
+                {"messages": prep["agent_messages"]},
+                config={**prep["run_config"], "recursion_limit": recursion_limit},
+            )
+        except GraphRecursionError as recursion_err:
+            logger.warning(f"[AgentFactory] ⚠️ Recursion limit reached: {recursion_err}")
+            if hasattr(recursion_err, 'args') and len(recursion_err.args) > 1 and 'state' in recursion_err.args[1]:
+                result = recursion_err.args[1]['state']
+            else:
+                try:
+                    response = await prep["llm"].ainvoke([SystemMessage(content=prep["full_prompt"])] + messages, config=prep["run_config"])
+                    return response.content
+                except Exception:
+                    return "Desculpe, ocorreu um erro."
+
+        final_messages = result.get("messages", [])
+        
+        # Logging
+        for msg in final_messages:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    logger.info("[AgentFactory] 🛠️ TOOL_CALL agent='%s' tool=%r", prep["name"], tc.get("name"))
+            if isinstance(msg, ToolMessage):
+                logger.info("[AgentFactory] 📨 TOOL_RESULT tool_call_id=%r", msg.tool_call_id)
+
+        logger.info(
+            "[AgentFactory] 📊 execution mode=%s actions=%s stop_reason=%s",
+            prep["resolved_execution_mode"],
+            prep["budget"].actions_used,
+            prep["budget"].stop_reason(),
+        )
+
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                if not (hasattr(msg, "tool_calls") and msg.tool_calls):
                     return msg.content
 
-            logger.warning(f"[AgentFactory] ⚠️ No non-empty final AIMessage found for agent '{agent_config['name']}'.")
-            return "Ocorreu um erro ao processar a resposta final. Por favor, tente novamente."
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                return msg.content
+
+        return "Ocorreu um erro ao processar a resposta final."
+
+    async def invoke_agent_stream(
+        self,
+        agent_config: Dict[str, Any],
+        messages: List[Any],
+        rag_context: Optional[str] = None,
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
+    ):
+        """Invoke an agent and stream events/chunks."""
+        prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
+        
+        if not prep["is_react"]:
+            async for chunk in prep["llm"].astream(prep["agent_messages"], config=prep["run_config"]):
+                if chunk.content:
+                    yield {"type": "chunk", "data": chunk.content}
+            yield {"type": "final", "data": ""}
+            return
+
+        recursion_limit = max(150, prep["max_retries"] * 10 + 50)
+        
+        try:
+            async for event in prep["graph"].astream_events(
+                {"messages": prep["agent_messages"]},
+                config={**prep["run_config"], "recursion_limit": recursion_limit},
+                version="v2"
+            ):
+                kind = event["event"]
+                
+                # Capture Node changes
+                if kind == "on_chain_start" and event["name"] in ["agent", "tools", "force_end"]:
+                    yield {"type": "node", "data": event["name"]}
+                
+                # Capture LLM Chunks
+                if kind == "on_chat_model_stream":
+                    content = event["data"]["chunk"].content
+                    if content:
+                        yield {"type": "chunk", "data": content}
+                
+                # Capture Tool Calls
+                if kind == "on_tool_start":
+                    yield {
+                        "type": "tool_call", 
+                        "data": {
+                            "name": event["name"],
+                            "args": event["data"].get("input")
+                        }
+                    }
+                
+                # Capture Tool Results
+                if kind == "on_tool_end":
+                    yield {
+                        "type": "tool_result",
+                        "data": {
+                            "name": event["name"],
+                            "output": str(event["data"].get("output"))
+                        }
+                    }
+
+            yield {"type": "final", "data": "completed"}
+            
+        except Exception as e:
+            logger.error(f"[AgentFactory] Stream error: {e}")
+            yield {"type": "error", "data": str(e)}
         
         else:
             # Simple LLM call — add skills reminder at end of prompt
