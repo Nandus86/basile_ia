@@ -549,6 +549,18 @@ async def process_message_stream(
             if transition_data:
                  tz_name = resolve_timezone_name(transition_data)
 
+            # Convert history to LangChain messages
+            from langchain_core.messages import HumanMessage, AIMessage
+            lc_messages = []
+            for msg in (history or []):
+                if msg.get("role") == "user":
+                    lc_messages.append(HumanMessage(content=msg.get("content", "")))
+                elif msg.get("role") == "assistant":
+                    lc_messages.append(AIMessage(content=msg.get("content", "")))
+            
+            # Add current message
+            lc_messages.append(HumanMessage(content=message))
+
             # Record user message in STM
             await redis.add_message(
                 session_id=session_id,
@@ -558,18 +570,36 @@ async def process_message_stream(
             )
 
             # Start streaming
-            async for event in run_supervisor_stream(
-                message=message,
-                session_id=session_id,
-                history=history,
-                agent_id=agent_id,
-                db=db,
-                user_access_level=user_access_level,
-                context_data=context_data
-            ):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                # Small sleep to prevent buffer congestion in some environments
-                await asyncio.sleep(0.01)
+            if agent_id:
+                from app.orchestrator.agent_factory import AgentFactory
+                factory = AgentFactory(db)
+                agent_config = await factory.get_agent_config(agent_id)
+                
+                # Check for bypass mode (similar to production)
+                if agent_config.get("bypass_llm", False):
+                     yield f"data: {json.dumps({'type': 'chunk', 'data': f'[Bypass Mode] Mensagem: {message}'}, ensure_ascii=False)}\n\n"
+                     yield f"data: {json.dumps({'type': 'final', 'data': 'completed'}, ensure_ascii=False)}\n\n"
+                     return
+
+                async for event in factory.invoke_agent_stream(
+                    agent_config=agent_config,
+                    messages=lc_messages,
+                    context_data=context_data
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.01)
+            else:
+                async for event in run_supervisor_stream(
+                    message=message,
+                    session_id=session_id,
+                    history=history, # run_supervisor_stream takes history as dict list and converts it inside if needed, wait.
+                    agent_id=None,
+                    db=db,
+                    user_access_level=user_access_level,
+                    context_data=context_data
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.01)
                 
         except Exception as e:
             import traceback
