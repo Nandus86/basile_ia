@@ -507,6 +507,29 @@
           </v-col>
         </v-row>
         
+        <div v-if="dispStaged && dispStaged.length > 0" class="mb-6">
+            <h3 class="text-subtitle-1 font-weight-bold mb-4 d-flex align-center">
+               <v-icon color="warning" class="mr-2">mdi-clock-fast</v-icon>
+               Fila de Espera (Smart Routing)
+            </h3>
+            <v-row>
+              <v-col v-for="staged in dispStaged" :key="staged.queue_id" cols="12" md="4">
+                <v-card class="glass-card" style="border: 1px solid rgba(255, 152, 0, 0.3);">
+                  <v-card-text class="pa-4">
+                    <div class="d-flex justify-space-between align-center mb-2">
+                       <span class="text-subtitle-2 font-weight-bold">Queue: {{ staged.queue_id }}</span>
+                       <v-chip size="small" color="warning" variant="tonal">{{ staged.time_remaining }}s</v-chip>
+                    </div>
+                    <div class="d-flex align-center">
+                       <v-icon size="20" class="mr-2 text-medium-emphasis">mdi-account-group</v-icon>
+                       <span>{{ staged.total_contacts }} contatos aguardando</span>
+                    </div>
+                  </v-card-text>
+                </v-card>
+              </v-col>
+            </v-row>
+        </div>
+
         <div class="d-flex align-center mb-4">
             <h3 class="text-subtitle-1 font-weight-bold">Campanhas em Execução</h3>
             <v-spacer></v-spacer>
@@ -588,6 +611,7 @@ const activeTab = ref('webhooks')
 
 const dispStats = ref({ total_campaigns: 0, active_campaigns: 0, completed_campaigns: 0, total_sent: 0, total_failed: 0 })
 const dispCampaigns = ref([])
+const dispStaged = ref([])
 const dispLoading = ref(false)
 const dispDialog = ref(false)
 const dispSelected = ref(null)
@@ -607,12 +631,14 @@ const dispHeaders = [
 const fetchDisparadorData = async () => {
     dispLoading.value = true
     try {
-       const [resStats, resCamp] = await Promise.all([
+       const [resStats, resCamp, resStaged] = await Promise.all([
            axiosInstance.get('/disparador/dashboard/stats'),
-           axiosInstance.get('/disparador/dashboard/campaigns')
+           axiosInstance.get('/disparador/dashboard/campaigns'),
+           axiosInstance.get('/disparador/dashboard/staged')
        ])
        dispStats.value = resStats.data
        dispCampaigns.value = resCamp.data
+       dispStaged.value = resStaged.data
     } catch (e) {
        console.error(e)
     } finally {

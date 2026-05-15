@@ -157,3 +157,56 @@ async def get_campaign_report(service_id: str):
         config_id=campaign.get("config_id"),
         config_path=campaign.get("config_path")
     )
+
+@router.get("/staged")
+async def get_staged_queues():
+    import time
+    await disparador_redis.ensure_connected()
+    
+    # Use scan to get all deadline keys
+    keys = []
+    cursor = b'0'
+    while cursor:
+        cursor, partial_keys = await disparador_redis.client.scan(cursor, match="disp:staged:deadline:global:*", count=100)
+        keys.extend(partial_keys)
+        if not cursor or cursor == b'0' or cursor == 0 or cursor == '0':
+            break
+            
+    result = []
+    now = int(time.time())
+    for key in keys:
+        if isinstance(key, bytes):
+            key_str = key.decode("utf-8")
+        else:
+            key_str = str(key)
+            
+        queue_id = key_str.split("global:")[-1]
+        deadline_raw = await disparador_redis.client.get(key)
+        if not deadline_raw:
+            continue
+            
+        deadline = int(deadline_raw)
+        
+        # Get count of contacts
+        index_key = f"disp:staged:index:global:{queue_id}"
+        entries = await disparador_redis.client.smembers(index_key)
+        
+        total_contacts = 0
+        for entry in entries:
+            entry_str = entry.decode("utf-8") if isinstance(entry, bytes) else str(entry)
+            try:
+                config_path, type_id, service_id = entry_str.split(":", 2)
+            except ValueError:
+                continue
+            contacts_key = f"disp:staged:global:{queue_id}:{config_path}:{type_id}:{service_id}"
+            length = await disparador_redis.client.llen(contacts_key)
+            total_contacts += length
+            
+        result.append({
+            "queue_id": queue_id,
+            "deadline": deadline,
+            "time_remaining": max(0, deadline - now),
+            "total_contacts": total_contacts
+        })
+        
+    return result

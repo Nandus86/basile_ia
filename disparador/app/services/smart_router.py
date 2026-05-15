@@ -55,19 +55,24 @@ async def stage_contacts(
         len(contacts), config_path, queue_id, type_id, service_id, accumulation_seconds,
     )
 
-    # Start/reset accumulation timer
+    # Start accumulation timer (does not reset if running)
     await _schedule_routing_timer(queue_id, accumulation_seconds)
 
 
 async def _schedule_routing_timer(queue_id: str, seconds: int):
-    """Start or reset the global accumulation timer for a queue_id."""
+    """Start the global accumulation timer for a queue_id."""
     timer_key = f"global:{queue_id}"
 
-    # Cancel existing timer if any
+    # Do not reset existing timer if any
     existing = _active_timers.get(timer_key)
     if existing and not existing.done():
-        existing.cancel()
-        logger.debug("Reset global accumulation timer for %s", timer_key)
+        logger.debug("Accumulation timer for %s already running, not resetting", timer_key)
+        return
+
+    await disparador_redis.ensure_connected()
+    deadline = int(datetime.now(timezone.utc).timestamp()) + seconds
+    deadline_key = f"disp:staged:deadline:global:{queue_id}"
+    await disparador_redis.client.set(deadline_key, deadline, ex=86400)
 
     # Create new timer
     async def _timer():
@@ -268,6 +273,7 @@ async def execute_routing(queue_id: str):
                 f"disp:staged:meta:global:{queue_id}:{config_path}:{type_id}:{service_id}"
             )
         await disparador_redis.client.delete(index_key)
+        await disparador_redis.client.delete(f"disp:staged:deadline:global:{queue_id}")
 
         logger.info("Global Smart Routing completed for %s — %d messages queued", queue_id, total_messages)
 
