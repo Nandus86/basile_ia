@@ -230,7 +230,17 @@ async def process_message_structured(
     
     # Set request context for deep services (MCP tools)
     from app.context import set_request_context
-    set_request_context({**request.model_dump(), **(request.model_extra or {})})
+    full_payload = {**request.model_dump(), **(request.model_extra or {})}
+    set_request_context(full_payload)
+    
+    # Auto-map extra root fields to context_data
+    standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+    c_data = request.context_data or {}
+    for k, v in full_payload.items():
+        if k not in standard_keys:
+            c_data[k] = v
+    if c_data:
+        request.context_data = c_data
     
     try:
         # Initialize factory and resolve STM
@@ -382,6 +392,16 @@ async def process_message_async(
         # Generate an early job_id or use one passed from enqueue
         job_id = f"job_{uuid.uuid4().hex}"
         
+        # Auto-map extra root fields to context_data
+        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+        full_payload = {**request.model_dump(), **(request.model_extra or {})}
+        c_data = request.context_data or {}
+        for k, v in full_payload.items():
+            if k not in standard_keys:
+                c_data[k] = v
+        if c_data:
+            request.context_data = c_data
+        
         async with async_session_maker() as db_session:
             job_log = JobLog(
                 job_id=job_id,
@@ -429,6 +449,16 @@ async def process_message_structured_async(
         import uuid
         
         job_id = f"job_{uuid.uuid4().hex}"
+        
+        # Auto-map extra root fields to context_data
+        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+        full_payload = {**request.model_dump(), **(request.model_extra or {})}
+        c_data = request.context_data or {}
+        for k, v in full_payload.items():
+            if k not in standard_keys:
+                c_data[k] = v
+        if c_data:
+            request.context_data = c_data
         async with async_session_maker() as db_session:
             job_log = JobLog(
                 job_id=job_id,
@@ -538,6 +568,17 @@ async def process_message_stream(
             session_id = request.session_id
             agent_id = request.agent_id
             user_access_level = request.user_access_level
+            
+            # Auto-map extra root fields to context_data
+            standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url"}
+            full_payload = {**request.model_dump(), **(request.model_extra or {})}
+            c_data = request.context_data or {}
+            for k, v in full_payload.items():
+                if k not in standard_keys:
+                    c_data[k] = v
+            if c_data:
+                request.context_data = c_data
+                
             context_data = request.context_data or {}
             transition_data = request.transition_data or {}
             
