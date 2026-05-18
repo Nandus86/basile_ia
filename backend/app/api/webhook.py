@@ -293,7 +293,7 @@ async def process_message_structured(
             }
         
         # Get agent config
-        agent_config = await factory.get_agent_config(agent)
+        agent_config = await factory.get_agent_config(agent, context_data=request.context_data)
         
         # Build messages
         messages = []
@@ -304,13 +304,71 @@ async def process_message_structured(
                 messages.append(AIMessage(content=msg["content"]))
         messages.append(HumanMessage(content=request.message))
         
-        # Get RAG context if available
-        rag_context = None
+        # Enrich agent prompt and load collaborator tools, memory, and information bases
+        from app.worker.tasks import (
+            _build_information_base_tools,
+            _enrich_agent_prompt,
+            _check_trigger_mcps
+        )
+
+        # Load session context for continuity
+        session_context = None
         try:
-            from app.services.rag_service import get_rag_context
-            rag_context = await get_rag_context(db, agent_config["id"], request.message, limit=5)
-        except Exception:
-            pass
+            session_context = await redis.get_session_context(request.session_id)
+        except Exception as e:
+            print(f"[Structured] ⚠️ Failed to load session context: {e}")
+
+        # [INFORMATION BASE TOOLS] Build IB tools first to know if RAG enrichment should skip
+        has_ib_tools = False
+        try:
+            ib_tools = await _build_information_base_tools(db, str(agent.id), request.context_data)
+            if ib_tools:
+                existing_tools = agent_config.get("tools", []) or []
+                agent_config["tools"] = existing_tools + ib_tools
+                agent_config["has_tools"] = True
+                has_ib_tools = True
+                print(f"[Structured] 🔍 Added {len(ib_tools)} information base tools")
+        except Exception as e:
+            print(f"[Structured] ❌ Error loading information base tools: {e}")
+
+        # Enrich prompt (RAG, InfoBases, VectorMemory, Collaborators tools, Session Continuity)
+        rag_context = await _enrich_agent_prompt(
+            db=db,
+            agent_config=agent_config,
+            agent_id=str(agent.id),
+            message=request.message,
+            session_id=request.session_id,
+            context_data=request.context_data,
+            history=history or [],
+            transition_data=request.transition_data,
+            session_context=session_context,
+            user_access_level=request.user_access_level,
+            has_ib_tools=has_ib_tools,
+            history_source="STM" if history else "NONE",
+        )
+
+        # [TRIGGER MCPs] Check local trigger MCPs
+        try:
+            trigger_results = await _check_trigger_mcps(db, str(agent.id), request.message, request.context_data)
+            if trigger_results:
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
+                print(f"[Structured] 🎯 Trigger MCP results injected")
+        except Exception as e:
+            print(f"[Structured] ❌ Error checking trigger MCPs: {e}")
+
+        # Adicionar regra de encerramento de interação
+        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+            "\n\n## Regra de Encerramento Subentendido\n"
+            "Caso a mensagem atual do usuário seja EXCLUSIVAMENTE um agradecimento final, despedida ou negação de mais ajuda (ex: 'não, era só isso, obrigado', 'tchau', 'valeu'), "
+            "e NÃO contenha nenhuma nova solicitação, você DEVE responder EXATAMENTE E APENAS com o código: `[FIM_DE_INTERACAO]`."
+        )
+
+        # Reforçar a regra de metadados temporais
+        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+            "\n\n## Atenção aos Metadados Temporais\n"
+            "As mensagens no histórico contêm o prefixo `[CONTEXTO_TEMPORAL: ...]`. "
+            "Este prefixo NÃO faz parte do conteúdo da mensagem e NUNCA deve ser incluído na sua resposta."
+        )
         
         # Invoke with structured output
         result = await factory.invoke_agent_structured(
@@ -619,7 +677,7 @@ async def process_message_stream(
                     yield f"data: {json.dumps({'type': 'error', 'data': f'Agente {agent_id} não encontrado.'}, ensure_ascii=False)}\n\n"
                     return
                     
-                agent_config = await factory.get_agent_config(agent_obj)
+                agent_config = await factory.get_agent_config(agent_obj, context_data=context_data)
                 
                 # Check for bypass mode (similar to production)
                 if agent_config.get("bypass_llm", False):
@@ -627,12 +685,79 @@ async def process_message_stream(
                      yield f"data: {json.dumps({'type': 'final', 'data': 'completed'}, ensure_ascii=False)}\n\n"
                      return
 
+                # Enrich agent prompt and load collaborator tools, memory, and information bases
+                from app.worker.tasks import (
+                    _build_information_base_tools,
+                    _enrich_agent_prompt,
+                    _check_trigger_mcps
+                )
+
+                # Load session context for continuity
+                session_context = None
+                try:
+                    session_context = await redis.get_session_context(session_id)
+                except Exception as e:
+                    print(f"[Stream] ⚠️ Failed to load session context: {e}")
+
+                # [INFORMATION BASE TOOLS] Build IB tools first to know if RAG enrichment should skip
+                has_ib_tools = False
+                try:
+                    ib_tools = await _build_information_base_tools(db, agent_id, context_data)
+                    if ib_tools:
+                        existing_tools = agent_config.get("tools", []) or []
+                        agent_config["tools"] = existing_tools + ib_tools
+                        agent_config["has_tools"] = True
+                        has_ib_tools = True
+                        print(f"[Stream] 🔍 Added {len(ib_tools)} information base tools")
+                except Exception as e:
+                    print(f"[Stream] ❌ Error loading information base tools: {e}")
+
+                # Enrich prompt (RAG, InfoBases, VectorMemory, Collaborators tools, Session Continuity)
+                rag_context = await _enrich_agent_prompt(
+                    db=db,
+                    agent_config=agent_config,
+                    agent_id=agent_id,
+                    message=message,
+                    session_id=session_id,
+                    context_data=context_data,
+                    history=history or [],
+                    transition_data=transition_data,
+                    session_context=session_context,
+                    user_access_level=user_access_level,
+                    has_ib_tools=has_ib_tools,
+                    history_source="STM" if history else "NONE",
+                )
+
+                # [TRIGGER MCPs] Check local trigger MCPs
+                try:
+                    trigger_results = await _check_trigger_mcps(db, agent_id, message, context_data)
+                    if trigger_results:
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
+                        print(f"[Stream] 🎯 Trigger MCP results injected")
+                except Exception as e:
+                    print(f"[Stream] ❌ Error checking trigger MCPs: {e}")
+
+                # Adicionar regra de encerramento de interação
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                    "\n\n## Regra de Encerramento Subentendido\n"
+                    "Caso a mensagem atual do usuário seja EXCLUSIVAMENTE um agradecimento final, despedida ou negação de mais ajuda (ex: 'não, era só isso, obrigado', 'tchau', 'valeu'), "
+                    "e NÃO contenha nenhuma nova solicitação, você DEVE responder EXATAMENTE E APENAS com o código: `[FIM_DE_INTERACAO]`."
+                )
+
+                # Reforçar a regra de metadados temporais
+                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                    "\n\n## Atenção aos Metadados Temporais\n"
+                    "As mensagens no histórico contêm o prefixo `[CONTEXTO_TEMPORAL: ...]`. "
+                    "Este prefixo NÃO faz parte do conteúdo da mensagem e NUNCA deve ser incluído na sua resposta."
+                )
+
                 async for event in factory.invoke_agent_stream(
                     agent_config=agent_config,
                     messages=lc_messages,
                     context_data=context_data
                 ):
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0.01)
                     await asyncio.sleep(0.01)
             else:
                 async for event in run_supervisor_stream(
