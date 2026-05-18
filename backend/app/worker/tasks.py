@@ -2337,7 +2337,7 @@ async def process_message_task(
             is_first_interaction = False
 
             # MTM fallback: if no STM history, check PostgreSQL
-            if not history and agent_id and session_id:
+            if global_memory_enabled and not history and agent_id and session_id:
                 mtm_history = await _load_mtm_fallback(db, agent_id, session_id, limit=5)
                 if mtm_history:
                     history = mtm_history
