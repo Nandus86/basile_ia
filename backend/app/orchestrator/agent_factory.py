@@ -1498,7 +1498,84 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         # Inject context data if provided
         if context_data:
             input_schema = agent_config.get("input_schema")
-            context_section = format_context_data_for_prompt(context_data, input_schema)
+            context_section = None  # Initialize before try to avoid UnboundLocalError
+            
+            # --- Ultra-strict filtering based on MCP metadata ---
+            try:
+                from app.services.mcp_tools import get_agent_mcp_metadata
+                mcp_meta = await get_agent_mcp_metadata(self.db, str(agent_config["id"]))
+                
+                from_ai_names = mcp_meta["from_ai_names"]
+                request_only_paths = mcp_meta["request_paths"] - from_ai_names
+                
+                # Add global safety paths that should ALMOST NEVER be seen by AI
+                # unless they are explicitly marked as $fromAI (unlikely)
+                global_safe_prune = {"system.apikey", "system.baseUrlBasileia", "church._id", "member.phone"}
+                request_only_paths.update(global_safe_prune - from_ai_names)
+                
+                # 1. Enrichment: Ensure $fromAI fields are in the context prompt if they exist in source
+                # Only inject if the user hasn't explicitly defined a strict input_schema
+                effective_input_schema = input_schema.copy() if isinstance(input_schema, dict) else {}
+                if not input_schema:
+                    for name in from_ai_names:
+                        if name not in effective_input_schema:
+                            effective_input_schema[name] = {"type": "string", "description": "Campo dinâmico para ferramenta"}
+                
+                # Update input_schema reference for format_context_data_for_prompt
+                input_schema = effective_input_schema
+
+                # 2. Pruning: Identify fields that are ONLY for $request (system) and NOT for $fromAI (agent)
+                # These should be HIDDEN from the agent to prevent "IA decision" leaks.
+                if request_only_paths:
+                    # Create a DEEP copy to avoid mutating original context_data shared across agents/turns
+                    context_data_for_prompt = copy.deepcopy(context_data)
+                    
+                    def prune_path(data, parts):
+                        if not parts or not isinstance(data, dict):
+                            return
+                        key = parts[0]
+                        if len(parts) == 1:
+                            if key in data:
+                                del data[key]
+                        else:
+                            if key in data and isinstance(data[key], dict):
+                                prune_path(data[key], parts[1:])
+
+                    def is_path_in_schema(schema, path_str):
+                        if not schema or not isinstance(schema, dict):
+                            return False
+                        current = schema
+                        if current.get("type") == "object" and "properties" in current:
+                            current = current.get("properties", {})
+                        parts = path_str.split('.')
+                        for part in parts:
+                            if not isinstance(current, dict):
+                                return False
+                            if part not in current:
+                                return False
+                            current = current[part]
+                            if isinstance(current, dict) and current.get("type") == "object" and "properties" in current:
+                                current = current.get("properties", {})
+                        return True
+                    
+                    paths_pruned_count = 0
+                    for path in request_only_paths:
+                        # Skip pruning if the user explicitly requested this field in their input schema
+                        if not is_path_in_schema(input_schema, path):
+                            prune_path(context_data_for_prompt, path.split('.'))
+                            paths_pruned_count += 1
+                    
+                    logger.info(f"[AgentFactory] 🛡️ Pruned {paths_pruned_count} request-only field(s) from prompt context in structured mode.")
+                    
+                    # Use the pruned copy for formatting
+                    context_section = format_context_data_for_prompt(context_data_for_prompt, input_schema)
+                else:
+                    context_section = format_context_data_for_prompt(context_data, input_schema)
+            except Exception as e:
+                logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering in structured mode: {e}")
+                # Fallback: format context without pruning so the agent still works
+                context_section = format_context_data_for_prompt(context_data, input_schema)
+            
             if context_section:
                 system_prompt += context_section
                 

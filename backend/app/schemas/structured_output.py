@@ -145,13 +145,16 @@ def filter_context_data(
         except Exception:
             input_schema = None
             
-    # If the schema is a standard JSON Schema object, extract its properties
-    if input_schema and isinstance(input_schema, dict) and "properties" in input_schema and input_schema.get("type") == "object":
-        input_schema = input_schema["properties"]
+    # Extract properties from standard JSON Schema formats (robust parsing)
+    if isinstance(input_schema, dict):
+        if "properties" in input_schema:
+            input_schema = input_schema["properties"]
+        elif input_schema.get("type") == "object" and "properties" in input_schema:
+            input_schema = input_schema["properties"]
             
     if not input_schema or not isinstance(input_schema, dict):
-        # If no input_schema is defined, we return an empty dict to avoid leaking random context
-        return {}
+        # If no input_schema is defined, return the full context_data (pruning of request-only/sensitive fields still occurs inside AgentFactory)
+        return context_data.copy() if isinstance(context_data, dict) else {}
 
     def filter_by_schema(data: Any, schema: Dict[str, Any]) -> Any:
         if not isinstance(data, dict):
@@ -178,7 +181,23 @@ def filter_context_data(
                 filtered[key] = data_val
         return filtered
 
-    return filter_by_schema(context_data, input_schema)
+    # Try standard filtering
+    filtered_result = filter_by_schema(context_data, input_schema)
+    
+    # Check if we have a nested "request" key in context_data (common in webhook tasks)
+    # where the input_schema defines keys that exist inside context_data["request"] rather than at root
+    if not filtered_result and "request" in context_data and isinstance(context_data["request"], dict):
+        nested_filter = filter_by_schema(context_data["request"], input_schema)
+        if nested_filter:
+            # Re-wrap in request key to preserve format expected by templates (e.g. $request.xxx)
+            filtered_result = {"request": nested_filter}
+            
+    # Fallback: if filtering yields an empty result but original context_data exists,
+    # return the full context_data copy to match pre-0.0.75 behavior and prevent blinding the agent.
+    if not filtered_result and context_data:
+        return context_data.copy()
+        
+    return filtered_result
 
 
 def format_context_data_for_prompt(
