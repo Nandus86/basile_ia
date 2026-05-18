@@ -30,6 +30,7 @@
     <v-tabs v-model="activeTab" color="primary" class="mb-6">
       <v-tab value="webhooks">Webhooks</v-tab>
       <v-tab value="disparador">Disparador</v-tab>
+      <v-tab value="automacao">Automação</v-tab>
     </v-tabs>
 
     <v-window v-model="activeTab">
@@ -709,9 +710,283 @@
                 <v-btn variant="text" @click="dispDialog = false">Fechar</v-btn>
              </v-card-actions>
           </v-card>
-        </v-dialog>
+         </v-dialog>
+      </v-window-item>
+
+      <v-window-item value="automacao">
+        <!-- Selector and Action Bar -->
+        <v-card class="glass-card mb-6">
+          <v-card-text class="d-flex align-center py-4" style="gap: 16px;">
+            <v-icon color="primary" class="mr-2" size="28">mdi-robot-industrial</v-icon>
+            <div style="flex-grow: 1; max-width: 400px;">
+              <v-select
+                v-model="selectedWorkflowId"
+                :items="workflowsList"
+                item-title="name"
+                item-value="id"
+                label="Selecione o Workflow / Automação"
+                variant="outlined"
+                density="compact"
+                hide-details
+              ></v-select>
+            </div>
+            <v-spacer></v-spacer>
+            <v-btn
+              color="primary"
+              variant="tonal"
+              prepend-icon="mdi-refresh"
+              @click="fetchWorkflowExecutions"
+              :loading="wfLoading"
+            >
+              Atualizar Logs
+            </v-btn>
+          </v-card-text>
+        </v-card>
+
+        <!-- Stats row -->
+        <v-row class="mb-6" v-if="selectedWorkflowId">
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="glass-card">
+              <v-card-text>
+                <div class="text-overline">TOTAL DE RUNS</div>
+                <div class="text-h4 text-primary">{{ workflowExecutionsTotal }}</div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="glass-card">
+              <v-card-text>
+                <div class="text-overline text-success">SUCESSOS</div>
+                <div class="text-h4 text-success">{{ wfStats.completed }}</div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="glass-card">
+              <v-card-text>
+                <div class="text-overline text-error">FALHAS</div>
+                <div class="text-h4 text-error">{{ wfStats.failed }}</div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="glass-card">
+              <v-card-text>
+                <div class="text-overline text-info">LATÊNCIA MÉDIA</div>
+                <div class="text-h4 text-info">{{ wfStats.avgDuration }} ms</div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Executions Table -->
+        <v-card class="glass-card" v-if="selectedWorkflowId">
+          <v-card-title class="px-6 py-4">
+            <v-icon class="mr-2" color="primary">mdi-history</v-icon>
+            Histórico de Execuções
+          </v-card-title>
+          <v-divider></v-divider>
+          <v-card-text class="pa-0">
+            <v-data-table
+              :headers="[
+                { title: 'ID do Run', key: 'id', align: 'start' },
+                { title: 'Status', key: 'status', align: 'center' },
+                { title: 'Gatilho', key: 'trigger_type', align: 'center' },
+                { title: 'Duração', key: 'duration_ms', align: 'center' },
+                { title: 'Data/Hora', key: 'created_at', align: 'center' },
+                { title: 'Ações', key: 'actions', sortable: false, align: 'center' }
+              ]"
+              :items="workflowExecutions"
+              :loading="wfLoading"
+              hover
+              hide-default-footer
+              class="bg-transparent"
+            >
+              <template v-slot:item.id="{ item }">
+                <div class="d-flex align-center" style="gap: 8px;">
+                  <code class="text-caption" style="color: #00D1FF">{{ item.id.substring(0, 8) }}...</code>
+                  <v-btn icon variant="text" size="x-small" @click="copyToClipboard(item.id)">
+                    <v-icon size="14">mdi-content-copy</v-icon>
+                  </v-btn>
+                </div>
+              </template>
+
+              <template v-slot:item.status="{ item }">
+                <v-chip :color="getWfStatusColor(item.status)" size="small" variant="tonal">
+                  <v-icon start size="12">{{ getWfStatusIcon(item.status) }}</v-icon>
+                  {{ item.status.toUpperCase() }}
+                </v-chip>
+              </template>
+
+              <template v-slot:item.trigger_type="{ item }">
+                <v-chip size="small" variant="outlined" color="primary">
+                  {{ item.trigger_type || 'manual' }}
+                </v-chip>
+              </template>
+
+              <template v-slot:item.duration_ms="{ item }">
+                <span v-if="item.duration_ms" class="text-body-2 font-weight-medium">
+                  <v-icon size="14" class="mr-1">mdi-timer-outline</v-icon>
+                  {{ item.duration_ms }} ms
+                </span>
+                <span v-else class="text-medium-emphasis">—</span>
+              </template>
+
+              <template v-slot:item.created_at="{ item }">
+                <span class="text-body-2">{{ formatDate(item.created_at) }}</span>
+              </template>
+
+              <template v-slot:item.actions="{ item }">
+                <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-magnify" @click="openWfExecutionDetails(item)">
+                  Investigar
+                </v-btn>
+              </template>
+
+              <template v-slot:bottom>
+                <div class="d-flex align-center justify-end pa-4 border-t" style="gap: 16px;">
+                  <v-pagination
+                    v-model="workflowPage"
+                    :length="Math.ceil(workflowExecutionsTotal / workflowItemsPerPage) || 1"
+                    density="compact"
+                    total-visible="5"
+                    active-color="primary"
+                  ></v-pagination>
+                </div>
+              </template>
+            </v-data-table>
+          </v-card-text>
+        </v-card>
+
+        <div v-else class="text-center py-12 text-medium-emphasis border rounded border-dashed border-opacity-20 mt-6">
+          <v-icon size="48" class="mb-4">mdi-robot-vacuum</v-icon>
+          <div class="text-body-1">Selecione uma automação acima para acompanhar seus logs de execução.</div>
+        </div>
       </v-window-item>
     </v-window>
+
+    <!-- Dialog de Detalhes da Execução da Automação -->
+    <v-dialog v-model="wfDrawer" max-width="950" scrollable>
+      <v-card class="glass-card" style="background: #0D1117 !important" v-if="selectedWfExecution">
+        <v-card-title class="d-flex align-center pa-5 border-b">
+          <v-icon class="mr-2" size="24" :color="getWfStatusColor(selectedWfExecution.status)">
+            {{ getWfStatusIcon(selectedWfExecution.status) }}
+          </v-icon>
+          <div>
+            <span class="text-subtitle-1 font-weight-bold text-white">Execução: {{ selectedWfExecution.id.substring(0, 8) }}</span>
+            <div class="text-caption text-medium-emphasis mt-n1">
+              Iniciado em {{ formatDate(selectedWfExecution.created_at) }} • Duração: {{ selectedWfExecution.duration_ms || 0 }} ms
+            </div>
+          </div>
+          <v-spacer />
+          <v-chip :color="getWfStatusColor(selectedWfExecution.status)" size="small" class="mr-3" variant="flat">
+            {{ selectedWfExecution.status.toUpperCase() }}
+          </v-chip>
+          <v-btn icon variant="text" size="small" @click="wfDrawer = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-tabs v-model="wfDetailTab" color="primary" class="border-b">
+          <v-tab value="timeline">Linha do Tempo</v-tab>
+          <v-tab value="payloads">Entrada e Saída</v-tab>
+          <v-tab value="context">Contexto Completo</v-tab>
+        </v-tabs>
+
+        <v-card-text class="pa-5" style="max-height: 650px; overflow-y: auto;">
+          <!-- ── TAB: TIMELINE ── -->
+          <div v-if="wfDetailTab === 'timeline'">
+            <!-- Alerta se falhar -->
+            <v-alert
+              v-if="selectedWfExecution.status === 'failed' && selectedWfExecution.error_message"
+              type="error"
+              variant="tonal"
+              title="Execução Falhou com Erro Crítico"
+              class="mb-6 text-caption"
+            >
+              <pre class="mt-2 text-tiny" style="white-space: pre-wrap; font-family: monospace;">{{ selectedWfExecution.error_message }}</pre>
+            </v-alert>
+
+            <!-- Timeline Steps -->
+            <v-timeline density="compact" align="start" class="w-100 px-2">
+              <v-timeline-item
+                v-for="step in selectedWfExecution.blocks_executed"
+                :key="step.block_id"
+                :dot-color="step.status === 'success' ? 'success' : 'error'"
+                :icon="step.status === 'success' ? 'mdi-check' : 'mdi-alert'"
+                size="small"
+                class="mb-4"
+              >
+                <div class="d-flex flex-column ga-1 w-100">
+                  <div class="d-flex align-center justify-space-between w-100">
+                    <div class="d-flex align-center" style="gap: 8px;">
+                      <span class="text-subtitle-2 font-weight-bold text-white">{{ step.label || step.block_id }}</span>
+                      <v-chip size="x-small" variant="tonal" color="primary">{{ step.block_type }}</v-chip>
+                    </div>
+                    <span class="text-caption text-medium-emphasis">
+                      <v-icon size="12" class="mr-1">mdi-timer-outline</v-icon>
+                      {{ step.duration_ms || 0 }} ms
+                    </span>
+                  </div>
+
+                  <div class="text-caption text-medium-emphasis" v-if="step.output_key">
+                    Output Key: <code style="color: #00D1FF">{{ step.output_key }}</code>
+                  </div>
+
+                  <!-- Step Error message -->
+                  <v-alert
+                    v-if="step.error"
+                    type="error"
+                    variant="tonal"
+                    density="compact"
+                    class="mt-2 text-tiny"
+                  >
+                    {{ step.error }}
+                  </v-alert>
+                </div>
+              </v-timeline-item>
+            </v-timeline>
+          </div>
+
+          <!-- ── TAB: PAYLOADS ── -->
+          <div v-else-if="wfDetailTab === 'payloads'">
+            <h4 class="text-subtitle-2 font-weight-bold text-white mb-2">Gatilho de Entrada (trigger_data)</h4>
+            <v-sheet rounded class="code-sheet pa-4 mb-6">
+              <div class="d-flex justify-space-between mb-2">
+                <span class="text-caption text-medium-emphasis">JSON Cru</span>
+                <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedWfExecution.trigger_data)">Copiar</v-btn>
+              </div>
+              <pre>{{ formatJSON(selectedWfExecution.trigger_data) }}</pre>
+            </v-sheet>
+
+            <h4 class="text-subtitle-2 font-weight-bold text-white mb-2">Resultado Final (result)</h4>
+            <v-sheet rounded class="code-sheet pa-4">
+              <div class="d-flex justify-space-between mb-2">
+                <span class="text-caption text-medium-emphasis">Retorno Final da Automação</span>
+                <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedWfExecution.result)">Copiar</v-btn>
+              </div>
+              <pre v-if="typeof selectedWfExecution.result === 'object'">{{ formatJSON(selectedWfExecution.result) }}</pre>
+              <pre v-else>{{ selectedWfExecution.result || 'Sem resultado retornado' }}</pre>
+            </v-sheet>
+          </div>
+
+          <!-- ── TAB: CONTEXT ── -->
+          <div v-else-if="wfDetailTab === 'context'">
+            <div class="d-flex justify-space-between align-center mb-4">
+              <h4 class="text-subtitle-2 font-weight-bold text-white">Estado das Variáveis Acumuladas (context)</h4>
+              <v-btn size="x-small" color="primary" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedWfExecution.context)">Copiar Tudo</v-btn>
+            </div>
+            <v-sheet rounded class="code-sheet pa-4">
+              <pre>{{ formatJSON(selectedWfExecution.context) }}</pre>
+            </v-sheet>
+          </div>
+        </v-card-text>
+
+        <v-card-actions class="pa-4 border-t">
+          <v-spacer />
+          <v-btn variant="text" @click="wfDrawer = false">Fechar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
     
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.text }}
@@ -720,7 +995,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import axiosInstance from '@/plugins/axios'
 import VueApexCharts from 'vue3-apexcharts'
 import ApexCharts from 'apexcharts'
@@ -728,6 +1003,29 @@ import ApexCharts from 'apexcharts'
 const apexchart = VueApexCharts
 
 const activeTab = ref('webhooks')
+
+// Workflows / Automações state
+const workflowsList = ref([])
+const selectedWorkflowId = ref(null)
+const workflowExecutions = ref([])
+const workflowExecutionsTotal = ref(0)
+const workflowPage = ref(1)
+const workflowItemsPerPage = ref(20)
+const wfLoading = ref(false)
+const wfStats = computed(() => {
+  const list = workflowExecutions.value || []
+  const total = list.length
+  const completed = list.filter(e => e.status === 'completed').length
+  const failed = list.filter(e => e.status === 'failed').length
+  const totalDuration = list.reduce((acc, curr) => acc + (curr.duration_ms || 0), 0)
+  const avgDuration = total > 0 ? Math.round(totalDuration / total) : 0
+  return { total, completed, failed, avgDuration }
+})
+
+// Details
+const wfDrawer = ref(false)
+const selectedWfExecution = ref(null)
+const wfDetailTab = ref('timeline')
 
 const dispStats = ref({ total_campaigns: 0, active_campaigns: 0, completed_campaigns: 0, total_sent: 0, total_failed: 0 })
 const dispCampaigns = ref([])
@@ -1348,6 +1646,82 @@ const getStatusIcon = (status) => ({ 'completed': 'mdi-check', 'failed': 'mdi-cl
 const formatDate = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 const formatJSON = (obj) => { try { return JSON.stringify(obj, null, 2) } catch { return obj } }
 
+const fetchWorkflows = async () => {
+  try {
+    const { data } = await axiosInstance.get('/workflows')
+    workflowsList.value = data.workflows || []
+    if (workflowsList.value.length > 0 && !selectedWorkflowId.value) {
+      selectedWorkflowId.value = workflowsList.value[0].id
+    }
+  } catch (error) {
+    console.error('Error fetching workflows:', error)
+    showSnackbar('Erro ao buscar lista de automações', 'error')
+  }
+}
+
+const fetchWorkflowExecutions = async () => {
+  if (!selectedWorkflowId.value) return
+  wfLoading.value = true
+  try {
+    const skip = (workflowPage.value - 1) * workflowItemsPerPage.value
+    const { data } = await axiosInstance.get(`/workflows/${selectedWorkflowId.value}/executions`, {
+      params: { skip, limit: workflowItemsPerPage.value }
+    })
+    workflowExecutions.value = data.executions || []
+    workflowExecutionsTotal.value = data.total || 0
+  } catch (error) {
+    console.error('Error fetching executions:', error)
+    showSnackbar('Erro ao buscar logs de execução', 'error')
+  } finally {
+    wfLoading.value = false
+  }
+}
+
+const openWfExecutionDetails = async (execution) => {
+  try {
+    const { data } = await axiosInstance.get(`/workflows/executions/${execution.id}`)
+    selectedWfExecution.value = data
+    wfDrawer.value = true
+    wfDetailTab.value = 'timeline'
+  } catch (error) {
+    console.error('Error fetching execution details:', error)
+    showSnackbar('Erro ao carregar detalhes da execução', 'error')
+  }
+}
+
+const getWfStatusColor = (status) => {
+  return {
+    'completed': 'success',
+    'failed': 'error',
+    'pending': 'warning',
+    'running': 'info'
+  }[status] || 'grey'
+}
+
+const getWfStatusIcon = (status) => {
+  return {
+    'completed': 'mdi-check-circle',
+    'failed': 'mdi-alert-circle',
+    'pending': 'mdi-clock-outline',
+    'running': 'mdi-sync'
+  }[status] || 'mdi-help-circle'
+}
+
+watch(selectedWorkflowId, () => {
+  workflowPage.value = 1
+  fetchWorkflowExecutions()
+})
+
+watch(workflowPage, () => {
+  fetchWorkflowExecutions()
+})
+
+watch(activeTab, (newTab) => {
+  if (newTab === 'automacao') {
+    fetchWorkflows()
+  }
+})
+
 const copyToClipboard = (data) => {
   const text = typeof data === 'object' ? JSON.stringify(data, null, 2) : data
   navigator.clipboard.writeText(text).then(() => showSnackbar('Copiado!', 'success')).catch(() => showSnackbar('Erro ao copiar', 'error'))
@@ -1358,6 +1732,7 @@ const showSnackbar = (text, color = 'success') => { snackbar.value = { show: tru
 onMounted(() => { 
   fetchData()
   fetchDisparadorData()
+  fetchWorkflows()
   connectSSE()
 })
 
