@@ -4,7 +4,13 @@ from pydantic import BaseModel
 from app.services.redis_service import disparador_redis
 from app.services.rabbitmq_service import disparador_rmq
 from app.schemas import CampaignReport, CampaignStatus
+from app.database import get_db
+from app.models.dispatcher_config import DispatcherConfig
+from sqlalchemy.future import select
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 import json
+import uuid
 
 router = APIRouter()
 
@@ -242,3 +248,147 @@ async def get_staged_queues():
         })
         
     return result
+
+@router.post("/campaigns/{service_id}/recreate")
+async def recreate_campaign(service_id: str, db: AsyncSession = Depends(get_db)):
+    # 1. Get campaign metadata
+    campaign = await disparador_redis.get_campaign(service_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+        
+    config_path = campaign.get("config_path")
+    if not config_path:
+        raise HTTPException(status_code=400, detail="config_path not found in campaign metadata")
+        
+    # 2. Get dispatcher config from DB
+    query = select(DispatcherConfig).where(DispatcherConfig.path == config_path)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    if not config:
+        raise HTTPException(status_code=404, detail="Dispatcher config not found for this path")
+        
+    # 3. Retrieve original cached input payload
+    payloads = await disparador_redis.get_campaign_payloads(service_id)
+    if not payloads or "input" not in payloads:
+        raise HTTPException(status_code=404, detail="Original payload not found in cache")
+        
+    input_payload = payloads["input"]
+    
+    # 4. Retrieve campaign contacts
+    contacts = await disparador_redis.get_campaign_contacts(service_id)
+    if not contacts:
+        raise HTTPException(status_code=404, detail="No contacts found for this campaign")
+        
+    cleaned_contacts = []
+    for c in contacts:
+        cleaned_c = {k: v for k, v in c.items() if k not in {"status", "updated_at", "error"}}
+        cleaned_contacts.append(cleaned_c)
+        
+    # 5. Cancel any active run for the old campaign (if running)
+    campaign_key = campaign.get("campaign_key")
+    if campaign_key:
+        await disparador_redis.unlock_campaign(campaign_key)
+        last_run = await disparador_redis.get_last_run(campaign_key)
+        if last_run:
+            await disparador_redis.signal_cancel(last_run)
+            await disparador_redis.set_run_status(last_run, "cancelled")
+            
+    # 6. Wipe Redis metrics for the old campaign (so we start completely fresh)
+    await disparador_redis.client.delete(f"disp:campaign:{service_id}")
+    await disparador_redis.client.delete(f"disp:campaign:contacts:{service_id}")
+    await disparador_redis.client.delete(f"disp:campaign:payloads:{service_id}")
+    await disparador_redis.client.delete(f"disp:dlq:{service_id}")
+    await disparador_redis.client.delete(f"disp:paused:{service_id}")
+    
+    # 7. Build fresh campaign trigger payload
+    # Let's ensure "dispatch_flags" has "lock_bypass": True and a specific flag "recreate": True
+    recreate_payload = dict(input_payload)
+    dispatch_flags = recreate_payload.get("dispatch_flags") or {}
+    if not isinstance(dispatch_flags, dict):
+        dispatch_flags = {}
+    dispatch_flags["lock_bypass"] = True
+    dispatch_flags["recreate"] = True
+    recreate_payload["dispatch_flags"] = dispatch_flags
+    recreate_payload["contacts"] = cleaned_contacts
+    
+    # 8. Re-enqueue to RabbitMQ (disp_jobs) using fresh run_id
+    run_id = uuid.uuid4().hex
+    batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
+    total_contacts = len(cleaned_contacts)
+    
+    # Keep the same campaign_key so it matches but bypass lock
+    if not campaign_key:
+        campaign_key = f"{recreate_payload.get('type_id')}:{recreate_payload.get('queue_id')}:{service_id}"
+        
+    recreate_payload["config_path"] = config_path
+    recreate_payload["campaign_key"] = campaign_key
+    recreate_payload["run_id"] = run_id
+    
+    # Extract contacts for batching
+    payload_dict = dict(recreate_payload)
+    contacts_list = payload_dict.pop("contacts")
+    
+    await disparador_rmq.connect()
+    for i in range(0, total_contacts, batch_size):
+        batch_contacts = contacts_list[i:i+batch_size]
+        batch_payload = payload_dict.copy()
+        batch_payload["contacts"] = batch_contacts
+        
+        try:
+            queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+            message = __import__('aio_pika').Message(
+                body=json.dumps(batch_payload).encode(),
+                delivery_mode=__import__('aio_pika').DeliveryMode.PERSISTENT
+            )
+            await disparador_rmq.channel.default_exchange.publish(
+                message,
+                routing_key="disp_jobs"
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao enfileirar na recriação: {e}")
+            
+    # Set lock and run status
+    await disparador_redis.lock_campaign(campaign_key)
+    await disparador_redis.set_last_run(campaign_key, run_id)
+    
+    return {"message": "Campanha recriada e disparada com sucesso", "new_run_id": run_id}
+
+@router.post("/campaigns/{service_id}/delete")
+async def delete_campaign(service_id: str):
+    # 1. Get campaign metadata
+    campaign = await disparador_redis.get_campaign(service_id)
+    if campaign:
+        campaign_key = campaign.get("campaign_key")
+        if campaign_key:
+            # Unlock the campaign
+            await disparador_redis.unlock_campaign(campaign_key)
+            # Cancel active run (if running)
+            last_run = await disparador_redis.get_last_run(campaign_key)
+            if last_run:
+                await disparador_redis.signal_cancel(last_run)
+                await disparador_redis.set_run_status(last_run, "cancelled")
+                
+    # 2. Wipe Redis keys for the campaign
+    await disparador_redis.client.delete(f"disp:campaign:{service_id}")
+    await disparador_redis.client.delete(f"disp:campaign:contacts:{service_id}")
+    await disparador_redis.client.delete(f"disp:campaign:payloads:{service_id}")
+    await disparador_redis.client.delete(f"disp:dlq:{service_id}")
+    await disparador_redis.client.delete(f"disp:paused:{service_id}")
+    
+    # 3. Clean up any staged queues that match this service_id
+    if campaign:
+        queue_id = campaign.get("queue_id")
+        if queue_id:
+            await disparador_redis.client.delete(f"disp:staged:deadline:global:{queue_id}")
+            await disparador_redis.client.delete(f"disp:staged:index:global:{queue_id}")
+            
+            # Delete keys matching "disp:staged:global:{queue_id}:*"
+            cursor = '0'
+            while True:
+                cursor, keys = await disparador_redis.client.scan(cursor, match=f"disp:staged:global:{queue_id}:*", count=100)
+                for k in keys:
+                    await disparador_redis.client.delete(k)
+                if not cursor or cursor == '0' or cursor == 0:
+                    break
+                    
+    return {"message": "Campanha e filas excluídas e limpas com sucesso"}

@@ -703,6 +703,8 @@
                 <v-btn v-if="dispSelected.status === 'running'" color="warning" prepend-icon="mdi-pause" variant="flat" @click="dispAction('pause')" :loading="dispActionLoading">Pausar</v-btn>
                 <v-btn color="success" prepend-icon="mdi-play" variant="flat" @click="dispAction('resume')" :loading="dispActionLoading">Ativar / Retomar</v-btn>
                 <v-btn v-if="dispReport && dispReport.dlq_count > 0" color="error" prepend-icon="mdi-refresh" variant="flat" @click="dispAction('retry-dlq')" :loading="dispActionLoading">Reprocessar DLQ</v-btn>
+                <v-btn color="info" prepend-icon="mdi-cached" variant="flat" @click="dispAction('recreate')" :loading="dispActionLoading">Recriar</v-btn>
+                <v-btn color="error" prepend-icon="mdi-delete" variant="flat" @click="dispAction('delete')" :loading="dispActionLoading">Excluir</v-btn>
                 <v-spacer></v-spacer>
                 <v-btn variant="text" @click="dispDialog = false">Fechar</v-btn>
              </v-card-actions>
@@ -788,16 +790,24 @@ const dispAction = async (action) => {
     if (!dispSelected.value) return
     dispActionLoading.value = true
     try {
-        const endpoint = action === 'resume'
-          ? `/disparador/dashboard/campaigns/${dispSelected.value.service_id}/${action}`
-          : `/disparador/campaigns/${dispSelected.value.service_id}/${action}`
+        const endpoint = `/disparador/dashboard/campaigns/${dispSelected.value.service_id}/${action}`
         await axiosInstance.post(endpoint)
         if (action === 'retry-dlq') {
             dispReport.value.dlq_count = 0
             snackbar.value = { show: true, text: 'Contatos falhados reenfileirados.', color: 'success' }
+        } else if (action === 'recreate') {
+            snackbar.value = { show: true, text: 'Campanha recriada e disparada com sucesso!', color: 'success' }
+            dispDialog.value = false
+        } else if (action === 'delete') {
+            snackbar.value = { show: true, text: 'Campanha excluída e filas limpas!', color: 'success' }
+            dispDialog.value = false
+        } else if (action === 'pause') {
+            snackbar.value = { show: true, text: 'Campanha pausada com sucesso.', color: 'success' }
+        } else if (action === 'resume') {
+            snackbar.value = { show: true, text: 'Campanha retomada com sucesso.', color: 'success' }
         }
         await fetchDisparadorData()
-        if (action !== 'retry-dlq') {
+        if (action !== 'retry-dlq' && action !== 'recreate' && action !== 'delete') {
            const updated = dispCampaigns.value.find(c => c.service_id === dispSelected.value.service_id)
            if (updated) dispSelected.value = updated
         }
