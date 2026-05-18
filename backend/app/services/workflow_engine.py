@@ -726,6 +726,19 @@ class WorkflowEngine:
                 else:
                     result[key] = value
 
+        # Resolve output type format configuration
+        output_type = config.get('output_type', 'json')
+        if output_type == 'text':
+            text_template = config.get('text_template', '')
+            return resolve_template(text_template, context)
+            
+        if output_type == 'raw_key':
+            raw_key = config.get('raw_key', '')
+            if raw_key in result:
+                return result[raw_key]
+            # Fallback if key not found in result
+            return result
+
         return result
 
     async def _exec_delay(self, config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:

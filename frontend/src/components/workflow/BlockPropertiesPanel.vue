@@ -352,6 +352,50 @@
         <v-btn size="small" variant="tonal" color="primary" @click="addOperation" class="mb-3">
           <v-icon start size="16">mdi-plus</v-icon> Adicionar Operação
         </v-btn>
+
+        <v-divider class="my-3"></v-divider>
+
+        <v-select
+          v-model="config.output_type"
+          :items="[
+            { title: 'Dicionário (JSON)', value: 'json' },
+            { title: 'Texto Plano (Template)', value: 'text' },
+            { title: 'Extrair Chave Direta', value: 'raw_key' }
+          ]"
+          label="Formato do Resultado de Saída"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-textarea
+          v-if="config.output_type === 'text'"
+          v-model="config.text_template"
+          label="Template de Texto de Saída"
+          placeholder="O resultado final é: {{ $step_1.message }}"
+          variant="outlined"
+          density="compact"
+          rows="3"
+          class="mb-3"
+          hint="Suporta variáveis como {{ $contact.name }}"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+
+        <v-text-field
+          v-if="config.output_type === 'raw_key'"
+          v-model="config.raw_key"
+          label="Chave a ser Extraída"
+          placeholder="texto"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="Retornará o valor puro desta chave ao invés do JSON completo"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-text-field>
       </template>
 
       <!-- ═══ DELAY ═══ -->
