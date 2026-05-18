@@ -1828,6 +1828,16 @@ async def _check_workflow_direct_triggers(
         )
 
         final_result = result_ctx.get('result')
+        if isinstance(final_result, dict):
+            if "result" in final_result:
+                final_result = final_result["result"]
+            elif "saida" in final_result:
+                saida_val = final_result["saida"]
+                if isinstance(saida_val, dict) and "result" in saida_val:
+                    final_result = saida_val["result"]
+                else:
+                    final_result = saida_val
+
         if final_result is not None:
             if isinstance(final_result, (dict, list)):
                 return json.dumps(final_result, ensure_ascii=False, indent=2)
@@ -2704,6 +2714,16 @@ async def process_message_task(
                                 )
                                 
                                 wf_result = result_ctx.get('result')
+                                if isinstance(wf_result, dict):
+                                    if "result" in wf_result:
+                                        wf_result = wf_result["result"]
+                                    elif "saida" in wf_result:
+                                        saida_val = wf_result["saida"]
+                                        if isinstance(saida_val, dict) and "result" in saida_val:
+                                            wf_result = saida_val["result"]
+                                        else:
+                                            wf_result = saida_val
+
                                 if wf_result is not None:
                                     if isinstance(wf_result, (dict, list)):
                                         wf_result = json.dumps(wf_result, ensure_ascii=False, indent=2)
