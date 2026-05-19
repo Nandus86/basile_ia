@@ -191,29 +191,19 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
                 "outbound_mode": "ai_formulated",  # sinaliza para o backend
                 "formulation_only": True,            # backend não envia p/ whatsapp, só retorna o texto
             }
-            target_url = getattr(config, 'target_endpoint', None)
-            path = getattr(config, 'path', '/webhook/process')
-            
-            # Resolve o endpoint correto (absoluto ou relativo)
+            # A formulação do texto do rascunho pela IA deve ser SEMPRE síncrona para obter o texto
+            # formulado imediatamente, sem enfileirar tarefas ou criar jobs desnecessários no worker.
+            # Por isso, enviamos a requisição diretamente para o endpoint síncrono `/webhook/process`.
             from app.config import settings as _settings
             base = _settings.BASILE_API_URL.rstrip("/")
+            endpoint = f"{base}/webhook/process"
             
-            if target_url:
-                if target_url.startswith("http"):
-                    endpoint = target_url
-                else:
-                    endpoint = f"{base}/{target_url.lstrip('/')}"
-            else:
-                if path.startswith("http"):
-                    endpoint = path
-                else:
-                    endpoint = f"{base}/{path.lstrip('/')}"
-                    
-            logger.info(f"[OutboundMode] Enviando formulacao para o endpoint: {endpoint}")
+            logger.info(f"[OutboundMode] Enviando formulacao sincrona para o endpoint: {endpoint}")
             async with _httpx.AsyncClient(timeout=60.0) as tmp:
                 resp = await tmp.post(endpoint, json=formulation_payload)
                 resp.raise_for_status()
                 result = resp.json()
+                
             # Pega o texto gerado pela IA
             formulated_text = (
                 result.get("response")
@@ -221,41 +211,6 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
                 or result.get("output")
                 or message_value
             )
-            
-            # Se o endpoint de destino for assíncrono e retornar um job_id, fazemos o polling até obter o resultado completo da IA
-            job_id = result.get("job_id")
-            if job_id:
-                logger.info(f"[OutboundMode] Formulacao retornou job_id {job_id}. Iniciando polling do resultado...")
-                poll_url = f"{base}/webhook/jobs/{job_id}"
-                max_polls = 60  # Até 60 segundos de espera
-                import asyncio
-                for poll_attempt in range(max_polls):
-                    await asyncio.sleep(1.0)
-                    try:
-                        async with _httpx.AsyncClient(timeout=5.0) as poll_client:
-                            poll_resp = await poll_client.get(poll_url)
-                            poll_resp.raise_for_status()
-                            poll_data = poll_resp.json()
-                        
-                        status = poll_data.get("status")
-                        if status == "completed":
-                            job_result = poll_data.get("result")
-                            if isinstance(job_result, dict):
-                                formulated_text = (
-                                    job_result.get("response")
-                                    or job_result.get("output")
-                                    or job_result.get("result")
-                                    or formulated_text
-                                )
-                            elif job_result:
-                                formulated_text = str(job_result)
-                            logger.info(f"[OutboundMode] Polling concluido com sucesso na tentativa {poll_attempt+1}!")
-                            break
-                        elif status == "failed":
-                            logger.error(f"[OutboundMode] Job de formulacao {job_id} falhou no worker.")
-                            break
-                    except Exception as poll_err:
-                        logger.warning(f"[OutboundMode] Erro ao consultar status do job {job_id}: {poll_err}")
             
             passthrough_payload["message"] = formulated_text
             passthrough_payload["outbound_mode"] = "ai_formulated"

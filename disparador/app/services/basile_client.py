@@ -23,7 +23,7 @@ class BasileClient:
         Otherwise it uses the base_url + custom_url (or default /webhook/process).
         Retries 3 times on failure."""
         
-        endpoint = custom_url if custom_url else "/webhook/process"
+        endpoint = custom_url if custom_url else (webhook_path if webhook_path else "/webhook/process")
         
         # If custom_url is a full URL, we need to use a clean post (without base_url prepended by self.client)
         # However, httpx.AsyncClient(base_url=...) will PREPEND base_url if the path starts with /.
