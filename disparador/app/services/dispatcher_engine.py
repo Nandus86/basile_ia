@@ -192,14 +192,26 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
                 "formulation_only": True,            # backend não envia p/ whatsapp, só retorna o texto
             }
             target_url = getattr(config, 'target_endpoint', None)
-            endpoint = target_url if target_url else None
-            async with _httpx.AsyncClient(timeout=60.0) as tmp:
-                if endpoint and endpoint.startswith("http"):
-                    resp = await tmp.post(endpoint, json=formulation_payload)
+            path = getattr(config, 'path', '/webhook/process')
+            
+            # Resolve o endpoint correto (absoluto ou relativo)
+            from app.config import settings as _settings
+            base = _settings.BASILE_API_URL.rstrip("/")
+            
+            if target_url:
+                if target_url.startswith("http"):
+                    endpoint = target_url
                 else:
-                    from app.config import settings as _settings
-                    base = _settings.BASILE_API_URL.rstrip("/")
-                    resp = await tmp.post(f"{base}/webhook/process", json=formulation_payload)
+                    endpoint = f"{base}/{target_url.lstrip('/')}"
+            else:
+                if path.startswith("http"):
+                    endpoint = path
+                else:
+                    endpoint = f"{base}/{path.lstrip('/')}"
+                    
+            logger.info(f"[OutboundMode] Enviando formulacao para o endpoint: {endpoint}")
+            async with _httpx.AsyncClient(timeout=60.0) as tmp:
+                resp = await tmp.post(endpoint, json=formulation_payload)
                 resp.raise_for_status()
                 result = resp.json()
             # Pega o texto gerado pela IA
