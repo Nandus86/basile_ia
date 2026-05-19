@@ -50,6 +50,13 @@ class DispatcherConfigBase(BaseModel):
     timezone_path: Optional[str] = Field(None, description="Dot-notation path for dynamic timezone")
     is_active: bool = True
 
+    # Outbound Context Mode
+    # "agent"         → comportamento padrão (processado pelo agente, message entra como HumanMessage)
+    # "bypass"        → msg direta sem agente, gravada no histórico como AIMessage (assistant)
+    # "ai_formulated" → agente formula o texto, mas é gravado como AIMessage (assistant)
+    outbound_mode: str = Field(default="agent", description="Modo de saída do disparo: agent | bypass | ai_formulated")
+    ai_formulation_prompt: Optional[str] = Field(None, description="Prompt para o agente formular a mensagem no modo ai_formulated")
+
 class DispatcherConfigCreate(DispatcherConfigBase):
     api_key: Optional[str] = Field(None, description="Bearer token/system.apikey to require")
 
@@ -79,6 +86,8 @@ class DispatcherConfigUpdate(BaseModel):
     target_endpoint: Optional[str] = None
     timezone_path: Optional[str] = None
     is_active: Optional[bool] = None
+    outbound_mode: Optional[str] = None
+    ai_formulation_prompt: Optional[str] = None
 
 
 class DispatcherConfigResponse(DispatcherConfigBase):

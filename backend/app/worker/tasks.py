@@ -2168,6 +2168,37 @@ async def process_message_task(
                 agent = await factory.get_agent_by_id(agent_id)
                 
                 # ═══════════════════════════════════════════════════════
+                # Outbound Mode Handling (Bypass & AI Formulated Dispatches)
+                # ═══════════════════════════════════════════════════════
+                if agent:
+                    ctx_data = context_data or {}
+                    outbound_mode = ctx_data.get("outbound_mode")
+                    is_formulation_only = ctx_data.get("formulation_only", False)
+                    
+                    if outbound_mode in ["bypass", "ai_formulated"] and not is_formulation_only:
+                        print(f"[Task] ⚡ Outbound mode '{outbound_mode}' detected. Bypassing agent and saving directly as assistant.")
+                        user_tz_name = _resolve_tz_name(transition_data)
+                        
+                        # Save to history ONLY as assistant (since it's a notification from the system)
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant", content=message, ttl_seconds=86400,
+                            tz_name=user_tz_name
+                        )
+                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", message)
+                        
+                        processing_time = (time.time() - start_time) * 1000
+                        response_data = {
+                            "status": "completed",
+                            "response": message,
+                            "agent_used": f"Outbound ({outbound_mode})",
+                            "processing_time_ms": processing_time,
+                        }
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
+
+                # ═══════════════════════════════════════════════════════
                 # Workflow Keyword Trigger (Bypasses Agent)
                 # ═══════════════════════════════════════════════════════
                 if agent:
@@ -2336,11 +2367,12 @@ async def process_message_task(
                 if history:
                     history_source = "STM"
                 
-                await redis_client.add_message(
-                    session_id=session_id, role="user",
-                    content=message, ttl_seconds=stm_ttl_seconds,
-                    tz_name=_resolve_tz_name(transition_data)
-                )
+                if not (context_data or {}).get("formulation_only", False):
+                    await redis_client.add_message(
+                        session_id=session_id, role="user",
+                        content=message, ttl_seconds=stm_ttl_seconds,
+                        tz_name=_resolve_tz_name(transition_data)
+                    )
 
             # Build context notes based on STM/MTM history
             mtm_context_note = ""
@@ -2370,7 +2402,7 @@ async def process_message_task(
                         print(f"[MTM] 🆕 First contact for session {session_id}")
 
             # MTM: save user message to PostgreSQL
-            if agent_id and session_id:
+            if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
                 await _save_mtm_message(db, agent_id, session_id, "user", message)
 
             # ═══════════════════════════════════════════════════════
@@ -2870,14 +2902,14 @@ async def process_message_task(
                     final_result = _apply_response_variables(final_result, response_vars, context_data)
 
                 if output_text.strip():
-                    if stm_enabled:
+                    if stm_enabled and not (context_data or {}).get("formulation_only", False):
                         await redis_client.add_message(
                             session_id=session_id, role="assistant",
                             content=output_text, ttl_seconds=stm_ttl_seconds,
                             tz_name=_resolve_tz_name(transition_data)
                         )
                     # MTM: save assistant response
-                    if agent_id and session_id:
+                    if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
                         await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
 
                 processing_time = (time.time() - start_time) * 1000

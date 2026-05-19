@@ -163,6 +163,62 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "transition_data": effective_transition_data,
     })
 
+    # ── Outbound Mode Routing ──────────────────────────────────────────────
+    # Determina como a mensagem será tratada no histórico do agente:
+    # "agent"         → fluxo padrão (HumanMessage no histórico)
+    # "bypass"        → envia msg direto + grava como AIMessage (assistant)
+    # "ai_formulated" → LLM formula o texto, envia + grava como AIMessage
+    outbound_mode = getattr(config, "outbound_mode", "agent") or "agent"
+    ai_prompt = getattr(config, "ai_formulation_prompt", None)
+
+    if outbound_mode == "bypass":
+        # Modo Bypass: mensagem vai direto sem acionar o agente como respondedor.
+        # Injeta flag para o backend gravar como role=assistant no histórico.
+        passthrough_payload["outbound_mode"] = "bypass"
+        logger.info(f"[OutboundMode] bypass para {contact['number']} em {service_id}")
+
+    elif outbound_mode == "ai_formulated" and ai_prompt:
+        # Modo AI-Formulated: usa LLM para formular a mensagem a partir do prompt.
+        # A mensagem formulada substitui a original e é gravada como assistant.
+        try:
+            import httpx as _httpx
+            formulation_payload = {
+                "message": ai_prompt,
+                "session_id": f"__formulation__{queue_id}{contact['number']}",
+                "agent_id": str(config.agent_id) if config.agent_id else None,
+                "context_data": enriched_context,
+                "transition_data": effective_transition_data,
+                "outbound_mode": "ai_formulated",  # sinaliza para o backend
+                "formulation_only": True,            # backend não envia p/ whatsapp, só retorna o texto
+            }
+            target_url = getattr(config, 'target_endpoint', None)
+            endpoint = target_url if target_url else None
+            async with _httpx.AsyncClient(timeout=60.0) as tmp:
+                if endpoint and endpoint.startswith("http"):
+                    resp = await tmp.post(endpoint, json=formulation_payload)
+                else:
+                    from app.config import settings as _settings
+                    base = _settings.BASILE_API_URL.rstrip("/")
+                    resp = await tmp.post(f"{base}/webhook/process", json=formulation_payload)
+                resp.raise_for_status()
+                result = resp.json()
+            # Pega o texto gerado pela IA
+            formulated_text = (
+                result.get("response")
+                or result.get("message")
+                or result.get("output")
+                or message_value
+            )
+            passthrough_payload["message"] = formulated_text
+            passthrough_payload["outbound_mode"] = "ai_formulated"
+            logger.info(f"[OutboundMode] ai_formulated para {contact['number']} — texto formulado com {len(formulated_text)} chars")
+        except Exception as e:
+            logger.warning(f"[OutboundMode] ai_formulated falhou para {contact['number']}: {e}. Usando modo agent como fallback.")
+            passthrough_payload["outbound_mode"] = "agent"
+    else:
+        # Modo agent padrão — sem flag adicional, backend trata como HumanMessage
+        passthrough_payload["outbound_mode"] = "agent"
+
     agent_payload = passthrough_payload
     
     target_url = getattr(config, 'target_endpoint', None)

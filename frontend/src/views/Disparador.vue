@@ -41,6 +41,8 @@ const defaultItem = {
   progress_callback_url: '',
   target_endpoint: '',
   timezone_path: '',
+  outbound_mode: 'agent',
+  ai_formulation_prompt: '',
   is_active: true
 }
 
@@ -747,6 +749,122 @@ onMounted(() => {
               Adicionar Regra
             </v-btn>
 
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Outbound Context Mode -->
+            <div class="text-subtitle-1 font-weight-bold mb-1">
+              <v-icon icon="mdi-robot-outline" size="20" class="mr-1"></v-icon>
+              Modo de Saída (Contexto IA)
+            </div>
+            <div class="text-caption text-medium-emphasis mb-4">
+              Define como a mensagem enviada pelo disparo fica gravada no histórico do agente.
+              Isso garante que quando o usuário responder, a IA saiba exatamente do que se trata.
+            </div>
+
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-card
+                  :class="['pa-4 rounded-lg outbound-card', editedItem.outbound_mode === 'bypass' ? 'outbound-card--active-primary' : '']"
+                  variant="outlined"
+                  @click="editedItem.outbound_mode = editedItem.outbound_mode === 'bypass' ? 'agent' : 'bypass'"
+                  style="cursor: pointer;"
+                >
+                  <div class="d-flex align-start gap-3">
+                    <v-switch
+                      :model-value="editedItem.outbound_mode === 'bypass'"
+                      @update:model-value="v => editedItem.outbound_mode = v ? 'bypass' : 'agent'"
+                      color="primary"
+                      hide-details
+                      density="compact"
+                      class="mt-1 flex-shrink-0"
+                      @click.stop
+                    ></v-switch>
+                    <div>
+                      <div class="font-weight-bold text-body-2 mb-1">
+                        <v-icon size="16" class="mr-1">mdi-send-check-outline</v-icon>
+                        Gravar como Mensagem da IA (Bypass)
+                      </div>
+                      <div class="text-caption text-medium-emphasis">
+                        A mensagem pronta é enviada diretamente <strong>sem acionar o agente</strong>.
+                        É gravada no histórico como <code>assistant</code>, para que futuras respostas do usuário
+                        sejam entendidas como referências a esta notificação.
+                      </div>
+                    </div>
+                  </div>
+                </v-card>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-card
+                  :class="['pa-4 rounded-lg outbound-card', editedItem.outbound_mode === 'ai_formulated' ? 'outbound-card--active-secondary' : '']"
+                  variant="outlined"
+                  @click="editedItem.outbound_mode = editedItem.outbound_mode === 'ai_formulated' ? 'agent' : 'ai_formulated'"
+                  style="cursor: pointer;"
+                >
+                  <div class="d-flex align-start gap-3">
+                    <v-switch
+                      :model-value="editedItem.outbound_mode === 'ai_formulated'"
+                      @update:model-value="v => editedItem.outbound_mode = v ? 'ai_formulated' : 'agent'"
+                      color="secondary"
+                      hide-details
+                      density="compact"
+                      class="mt-1 flex-shrink-0"
+                      @click.stop
+                    ></v-switch>
+                    <div>
+                      <div class="font-weight-bold text-body-2 mb-1">
+                        <v-icon size="16" class="mr-1">mdi-creation-outline</v-icon>
+                        Formular com IA e Gravar como Assistente
+                      </div>
+                      <div class="text-caption text-medium-emphasis">
+                        O agente <strong>formula o texto</strong> da mensagem usando o prompt abaixo antes de enviar.
+                        O resultado é gravado como <code>assistant</code>, mantendo o contexto para o usuário responder.
+                      </div>
+                    </div>
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+
+            <v-expand-transition>
+              <div v-if="editedItem.outbound_mode === 'ai_formulated'" class="mt-4">
+                <v-textarea
+                  v-model="editedItem.ai_formulation_prompt"
+                  label="Prompt de Formulação da IA"
+                  variant="outlined"
+                  rows="4"
+                  auto-grow
+                  hint="Instrua o agente sobre como criar a mensagem. Ex: 'Crie um convite acolhedor para {{ $request.contact_name }} sobre o culto de domingo às 19h.'"
+                  persistent-hint
+                  prepend-inner-icon="mdi-text-box-edit-outline"
+                ></v-textarea>
+              </div>
+            </v-expand-transition>
+
+            <v-alert
+              v-if="editedItem.outbound_mode === 'bypass'"
+              type="info"
+              variant="tonal"
+              density="compact"
+              class="mt-3"
+              icon="mdi-send-check-outline"
+            >
+              <strong>Bypass Ativo:</strong> A mensagem será enviada diretamente e gravada como
+              <code>assistant</code> no histórico. O agente não é acionado para formular a resposta.
+            </v-alert>
+            <v-alert
+              v-if="editedItem.outbound_mode === 'ai_formulated'"
+              type="success"
+              variant="tonal"
+              density="compact"
+              class="mt-3"
+              icon="mdi-creation-outline"
+            >
+              <strong>IA Formulada Ativa:</strong> O agente criará a mensagem com base no prompt acima
+              e a enviará gravando como <code>assistant</code> — sem parecer que foi o usuário que perguntou.
+            </v-alert>
+
+            <v-divider class="my-4"></v-divider>
+
             <v-row>
               <v-col cols="12">
                 <v-switch
@@ -880,5 +998,16 @@ onMounted(() => {
 }
 .gap-2 {
   gap: 8px;
+}
+.outbound-card {
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+.outbound-card--active-primary {
+  border-color: rgb(var(--v-theme-primary)) !important;
+  background-color: rgba(var(--v-theme-primary), 0.06) !important;
+}
+.outbound-card--active-secondary {
+  border-color: rgb(var(--v-theme-secondary)) !important;
+  background-color: rgba(var(--v-theme-secondary), 0.06) !important;
 }
 </style>

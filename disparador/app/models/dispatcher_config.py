@@ -59,6 +59,13 @@ class DispatcherConfig(Base):
     # Timezone Dinâmico
     timezone_path = Column(String(500), nullable=True) # Ex: church.address.timezone
     
+    # Outbound Context Mode
+    # "agent"          → comportamento padrão (msg enviada pelo agente, entra como human no agente)
+    # "bypass"         → msg enviada diretamente sem acionar agente, gravada no histórico como assistant
+    # "ai_formulated"  → agente formula o texto antes de enviar, mas a msg é gravada como assistant
+    outbound_mode = Column(String(20), default="agent", nullable=False)
+    ai_formulation_prompt = Column(String(2000), nullable=True)  # Prompt para modo ai_formulated
+    
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
