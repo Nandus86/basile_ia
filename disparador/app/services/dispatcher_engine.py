@@ -221,6 +221,42 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
                 or result.get("output")
                 or message_value
             )
+            
+            # Se o endpoint de destino for assíncrono e retornar um job_id, fazemos o polling até obter o resultado completo da IA
+            job_id = result.get("job_id")
+            if job_id:
+                logger.info(f"[OutboundMode] Formulacao retornou job_id {job_id}. Iniciando polling do resultado...")
+                poll_url = f"{base}/webhook/jobs/{job_id}"
+                max_polls = 60  # Até 60 segundos de espera
+                import asyncio
+                for poll_attempt in range(max_polls):
+                    await asyncio.sleep(1.0)
+                    try:
+                        async with _httpx.AsyncClient(timeout=5.0) as poll_client:
+                            poll_resp = await poll_client.get(poll_url)
+                            poll_resp.raise_for_status()
+                            poll_data = poll_resp.json()
+                        
+                        status = poll_data.get("status")
+                        if status == "completed":
+                            job_result = poll_data.get("result")
+                            if isinstance(job_result, dict):
+                                formulated_text = (
+                                    job_result.get("response")
+                                    or job_result.get("output")
+                                    or job_result.get("result")
+                                    or formulated_text
+                                )
+                            elif job_result:
+                                formulated_text = str(job_result)
+                            logger.info(f"[OutboundMode] Polling concluido com sucesso na tentativa {poll_attempt+1}!")
+                            break
+                        elif status == "failed":
+                            logger.error(f"[OutboundMode] Job de formulacao {job_id} falhou no worker.")
+                            break
+                    except Exception as poll_err:
+                        logger.warning(f"[OutboundMode] Erro ao consultar status do job {job_id}: {poll_err}")
+            
             passthrough_payload["message"] = formulated_text
             passthrough_payload["outbound_mode"] = "ai_formulated"
             logger.info(f"[OutboundMode] ai_formulated para {contact['number']} — texto formulado com {len(formulated_text)} chars")
