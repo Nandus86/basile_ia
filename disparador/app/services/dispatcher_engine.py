@@ -178,46 +178,12 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         logger.info(f"[OutboundMode] bypass para {contact['number']} em {service_id}")
 
     elif outbound_mode == "ai_formulated" and ai_prompt:
-        # Modo AI-Formulated: usa LLM para formular a mensagem a partir do prompt.
-        # A mensagem formulada substitui a original e é gravada como assistant.
-        try:
-            import httpx as _httpx
-            formulation_payload = {
-                "message": ai_prompt,
-                "session_id": f"__formulation__{queue_id}{contact['number']}",
-                "agent_id": str(config.agent_id) if config.agent_id else None,
-                "context_data": enriched_context,
-                "transition_data": effective_transition_data,
-                "outbound_mode": "ai_formulated",  # sinaliza para o backend
-                "formulation_only": True,            # backend não envia p/ whatsapp, só retorna o texto
-            }
-            # A formulação do texto do rascunho pela IA deve ser SEMPRE síncrona para obter o texto
-            # formulado imediatamente, sem enfileirar tarefas ou criar jobs desnecessários no worker.
-            # Por isso, enviamos a requisição diretamente para o endpoint síncrono `/webhook/process`.
-            from app.config import settings as _settings
-            base = _settings.BASILE_API_URL.rstrip("/")
-            endpoint = f"{base}/webhook/process"
-            
-            logger.info(f"[OutboundMode] Enviando formulacao sincrona para o endpoint: {endpoint}")
-            async with _httpx.AsyncClient(timeout=60.0) as tmp:
-                resp = await tmp.post(endpoint, json=formulation_payload)
-                resp.raise_for_status()
-                result = resp.json()
-                
-            # Pega o texto gerado pela IA
-            formulated_text = (
-                result.get("response")
-                or result.get("message")
-                or result.get("output")
-                or message_value
-            )
-            
-            passthrough_payload["message"] = formulated_text
-            passthrough_payload["outbound_mode"] = "ai_formulated"
-            logger.info(f"[OutboundMode] ai_formulated para {contact['number']} — texto formulado com {len(formulated_text)} chars")
-        except Exception as e:
-            logger.warning(f"[OutboundMode] ai_formulated falhou para {contact['number']}: {e}. Usando modo agent como fallback.")
-            passthrough_payload["outbound_mode"] = "agent"
+        # Modo AI-Formulated: envia a instrução de formulação como a mensagem inicial.
+        # O backend irá executar a IA normalmente sobre esta instrução e gravar a saída como assistant,
+        # sem salvar a instrução do disparador no histórico como se fosse enviada pelo usuário.
+        passthrough_payload["message"] = ai_prompt
+        passthrough_payload["outbound_mode"] = "ai_formulated"
+        logger.info(f"[OutboundMode] ai_formulated direta (1 job) para {contact['number']} em {service_id}")
     else:
         # Modo agent padrão — sem flag adicional, backend trata como HumanMessage
         passthrough_payload["outbound_mode"] = "agent"

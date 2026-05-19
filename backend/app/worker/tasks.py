@@ -2175,8 +2175,8 @@ async def process_message_task(
                     outbound_mode = ctx_data.get("outbound_mode")
                     is_formulation_only = ctx_data.get("formulation_only", False)
                     
-                    if outbound_mode in ["bypass", "ai_formulated"] and not is_formulation_only:
-                        print(f"[Task] ⚡ Outbound mode '{outbound_mode}' detected. Bypassing agent and saving directly as assistant.")
+                    if outbound_mode == "bypass":
+                        print(f"[Task] ⚡ Outbound mode 'bypass' detected. Bypassing agent and saving directly as assistant.")
                         user_tz_name = _resolve_tz_name(transition_data)
                         
                         # Save to history ONLY as assistant (since it's a notification from the system)
@@ -2190,7 +2190,7 @@ async def process_message_task(
                         response_data = {
                             "status": "completed",
                             "response": message,
-                            "agent_used": f"Outbound ({outbound_mode})",
+                            "agent_used": "Outbound (bypass)",
                             "processing_time_ms": processing_time,
                         }
                         if callback_url:
@@ -2367,7 +2367,7 @@ async def process_message_task(
                 if history:
                     history_source = "STM"
                 
-                if not (context_data or {}).get("formulation_only", False):
+                if not (context_data or {}).get("formulation_only", False) and (context_data or {}).get("outbound_mode") != "ai_formulated":
                     await redis_client.add_message(
                         session_id=session_id, role="user",
                         content=message, ttl_seconds=stm_ttl_seconds,
@@ -2402,7 +2402,7 @@ async def process_message_task(
                         print(f"[MTM] 🆕 First contact for session {session_id}")
 
             # MTM: save user message to PostgreSQL
-            if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
+            if agent_id and session_id and not (context_data or {}).get("formulation_only", False) and (context_data or {}).get("outbound_mode") != "ai_formulated":
                 await _save_mtm_message(db, agent_id, session_id, "user", message)
 
             # ═══════════════════════════════════════════════════════
