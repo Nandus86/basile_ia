@@ -94,6 +94,7 @@ async def list_agents(
             provider_id=agent.provider_id,
             execution_mode=ExecutionModeEnum(getattr(agent.execution_mode, 'value', 'balanced')),
             bypass_llm=agent.bypass_llm,
+            swarm_mode=agent.swarm_mode,
             created_at=agent.created_at
         ))
     
@@ -201,6 +202,7 @@ async def get_agent(
         created_at=agent.created_at,
         updated_at=agent.updated_at,
         bypass_llm=agent.bypass_llm,
+        swarm_mode=agent.swarm_mode,
         mcps=[{"id": m.id, "name": m.name} for m in agent.mcps],
         mcp_groups=[{"id": g.id, "name": g.name, "description": g.description} for g in agent.mcp_groups],
         skills=[{"id": s.id, "name": s.name, "is_active": s.is_active} for s in agent.skills],
