@@ -511,18 +511,22 @@
                           </template>
                         </v-switch>
                       </v-col>
-                      <v-col cols="12" sm="6" v-if="formData.is_orchestrator && formData.collaboration_enabled">
+                      <v-col cols="12" sm="6" v-if="formData.is_orchestrator">
                         <v-switch
                           v-model="formData.swarm_mode"
                           label="Modo Swarm (Enxame)"
                           color="amber-darken-2"
                           hide-details
                           density="comfortable"
+                          :disabled="!formData.collaboration_enabled"
                         >
                           <template v-slot:prepend>
-                            <v-icon :color="formData.swarm_mode ? 'amber' : 'grey'">mdi-bee</v-icon>
+                            <v-icon :color="formData.swarm_mode && formData.collaboration_enabled ? 'amber' : 'grey'">mdi-bee</v-icon>
                           </template>
                         </v-switch>
+                        <p v-if="!formData.collaboration_enabled" class="text-caption text-warning mt-1 ml-10">
+                          Ative a Colaboração para habilitar o modo Swarm.
+                        </p>
                       </v-col>
                       <v-col cols="12" sm="6">
                         <v-select
@@ -727,6 +731,23 @@
                   </v-card-title>
                   <v-divider></v-divider>
                   <v-card-text>
+                    <div v-if="formData.is_orchestrator" class="mb-4">
+                      <v-switch
+                        v-model="formData.swarm_mode"
+                        label="Modo Swarm (Enxame)"
+                        color="amber-darken-2"
+                        hide-details
+                        density="comfortable"
+                        :disabled="!formData.collaboration_enabled"
+                      >
+                        <template v-slot:prepend>
+                          <v-icon :color="formData.swarm_mode && formData.collaboration_enabled ? 'amber' : 'grey'">mdi-bee</v-icon>
+                        </template>
+                      </v-switch>
+                      <p v-if="!formData.collaboration_enabled" class="text-caption text-error mt-1 ml-10">
+                        Ative a "Colaboração" na aba Geral para habilitar o modo Swarm.
+                      </p>
+                    </div>
                     <v-alert type="info" variant="tonal" density="compact" class="mb-0">
                       <template v-slot:prepend>
                         <v-icon>mdi-information</v-icon>
