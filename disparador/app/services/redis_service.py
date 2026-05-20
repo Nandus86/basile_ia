@@ -99,7 +99,7 @@ class DisparadorRedis:
         key = f"disp:campaign:contacts:{service_id}"
         mapping = {}
         for c in contacts:
-            number = c.get("number") or c.get("phone")
+            number = c.get("number") or c.get("phone") or c.get("user_id")
             if not number: continue
             
             # Store everything that comes in the contact object
@@ -114,6 +114,8 @@ class DisparadorRedis:
             await self.client.expire(key, 604800)
 
     async def update_contact_status(self, service_id: str, number: str, status: str, error: str = None):
+        if not number:
+            return
         await self.ensure_connected()
         key = f"disp:campaign:contacts:{service_id}"
         raw = await self.client.hget(key, number)
@@ -273,7 +275,7 @@ class DisparadorRedis:
     # -- Rate Limiting --
     async def check_rate_limit(self, number: str, cooldown_seconds: int = 0) -> bool:
         """Returns True if allowed, False if blocked"""
-        if cooldown_seconds <= 0:
+        if not number or cooldown_seconds <= 0:
             return True
             
         await self.ensure_connected()

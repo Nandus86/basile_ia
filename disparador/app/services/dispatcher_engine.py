@@ -109,13 +109,16 @@ async def send_progress(url: str, service_id: str, total: int, sent: int, failed
         logger.warning(f"Failed to send progress callback to {url}: {e}")
 
 async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, service_id: str, context_data: dict, transition_data: dict, callback_url: str, batch_position: int, batch_total: int, message_text: str = None, source_payload: dict = None):
+    # Determine the identifier to use for rate limits, status and session key
+    contact_number = contact.get("number") or contact.get("phone") or contact.get("user_id")
+
     # Rate Limit
-    is_allowed = await disparador_redis.check_rate_limit(contact["number"])
+    is_allowed = await disparador_redis.check_rate_limit(contact_number)
     if not is_allowed:
-        logger.info(f"Rate limit skipped dispatch for {contact['number']} in {service_id}")
+        logger.info(f"Rate limit skipped dispatch for {contact_number} in {service_id}")
         await disparador_redis.increment_failed(service_id)
         await disparador_redis.add_to_dlq(service_id, contact, "Rate limit: Disparo muito recente para este número")
-        await disparador_redis.update_contact_status(service_id, contact["number"], "failed", error="Rate limit")
+        await disparador_redis.update_contact_status(service_id, contact_number, "failed", error="Rate limit")
         return
 
     # Gera Index
@@ -128,7 +131,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         **(context_data or {}),
         **contact, # Injeta todos os campos extras do contato (email, cargo, etc)
         "contact_name": contact["name"],
-        "contact_phone": contact["number"],
+        "contact_phone": contact.get("number") or contact.get("phone") or "",
         "dispatcher_index": index,
         "dispatcher_triggers": config.triggers,
         "dispatcher_buttons": config.buttons if config.buttons_enabled else [],
@@ -156,7 +159,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
 
     passthrough_payload.update({
         "message": message_value,
-        "session_id": f"{queue_id}{contact['number']}",
+        "session_id": f"{queue_id}{contact_number or ''}",
         "agent_id": str(config.agent_id) if config.agent_id else None,
         "callback_url": callback_url,
         "context_data": enriched_context,
@@ -175,7 +178,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         # Modo Bypass: mensagem vai direto sem acionar o agente como respondedor.
         # Injeta flag para o backend gravar como role=assistant no histórico.
         passthrough_payload["outbound_mode"] = "bypass"
-        logger.info(f"[OutboundMode] bypass para {contact['number']} em {service_id}")
+        logger.info(f"[OutboundMode] bypass para {contact_number} em {service_id}")
 
     elif outbound_mode == "ai_formulated" and ai_prompt:
         # Modo AI-Formulated: envia a instrução de formulação como a mensagem inicial.
@@ -183,7 +186,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         # sem salvar a instrução do disparador no histórico como se fosse enviada pelo usuário.
         passthrough_payload["message"] = ai_prompt
         passthrough_payload["outbound_mode"] = "ai_formulated"
-        logger.info(f"[OutboundMode] ai_formulated direta (1 job) para {contact['number']} em {service_id}")
+        logger.info(f"[OutboundMode] ai_formulated direta (1 job) para {contact_number} em {service_id}")
     else:
         # Modo agent padrão — sem flag adicional, backend trata como HumanMessage
         passthrough_payload["outbound_mode"] = "agent"
@@ -201,11 +204,11 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     except Exception as e:
         await disparador_redis.add_to_dlq(service_id, contact, str(e))
         await disparador_redis.increment_failed(service_id)
-        await disparador_redis.update_contact_status(service_id, contact["number"], "failed", error=str(e))
+        await disparador_redis.update_contact_status(service_id, contact_number, "failed", error=str(e))
         return
     
     await disparador_redis.increment_sent(service_id)
-    await disparador_redis.update_contact_status(service_id, contact["number"], "sent")
+    await disparador_redis.update_contact_status(service_id, contact_number, "sent")
     
     # Delay
     delay = random.randint(config.min_variation_seconds, config.max_variation_seconds)
