@@ -641,10 +641,11 @@
                              <th class="text-left py-2">Status</th>
                              <th class="text-left py-2">Horário</th>
                              <th class="text-left py-2">Erro</th>
+                             <th class="text-center py-2">Ações</th>
                           </tr>
                        </thead>
                        <tbody>
-                          <tr v-for="c in dispReport.contacts" :key="c.number" class="hover:bg-white/5">
+                          <tr v-for="c in dispReport.contacts" :key="c.number || c.user_id" class="hover:bg-white/5">
                              <td class="text-caption py-2">
                                 <div class="font-weight-bold">{{ c.name }}</div>
                                 <div class="text-tiny text-medium-emphasis">{{ c.number }}</div>
@@ -664,6 +665,18 @@
                              </td>
                              <td class="text-tiny text-medium-emphasis">{{ formatDate(c.updated_at) }}</td>
                              <td class="text-tiny text-error text-truncate" style="max-width: 120px;">{{ c.error || '—' }}</td>
+                             <td class="text-center">
+                                <v-btn
+                                   size="x-small"
+                                   variant="tonal"
+                                   color="orange"
+                                   prepend-icon="mdi-send-clock"
+                                   :loading="redispatchingContact === (c.number || c.user_id)"
+                                   @click="redispatchContact(c)"
+                                >
+                                   Redisparar
+                                </v-btn>
+                             </td>
                           </tr>
                        </tbody>
                     </v-table>
@@ -1035,6 +1048,7 @@ const dispDialog = ref(false)
 const dispSelected = ref(null)
 const dispReport = ref(null)
 const dispActionLoading = ref(false)
+const redispatchingContact = ref(null)
 
 const dispHeaders = [
   { title: 'QUEUE ID', key: 'queue_id' },
@@ -1113,6 +1127,29 @@ const dispAction = async (action) => {
         snackbar.value = { show: true, text: 'Erro ao executar ação.', color: 'error' }
     } finally {
         dispActionLoading.value = false
+    }
+}
+
+const redispatchContact = async (contact) => {
+    if (!dispSelected.value) return
+    const contactKey = contact.number || contact.user_id
+    redispatchingContact.value = contactKey
+    try {
+        const endpoint = `/disparador/dashboard/campaigns/${dispSelected.value.service_id}/redispatch-contact`
+        await axiosInstance.post(endpoint, { contact })
+        snackbar.value = { show: true, text: `Contato ${contact.name || ''} reenfileirado com sucesso!`, color: 'success' }
+        // Update local contact status to pending
+        if (dispReport.value && dispReport.value.contacts) {
+            const c = dispReport.value.contacts.find(x => (x.number || x.user_id) === contactKey)
+            if (c) {
+                c.status = 'pending'
+                c.error = null
+            }
+        }
+    } catch (e) {
+        snackbar.value = { show: true, text: `Erro ao redisparar contato: ${e.response?.data?.detail || e.message}`, color: 'error' }
+    } finally {
+        redispatchingContact.value = null
     }
 }
 

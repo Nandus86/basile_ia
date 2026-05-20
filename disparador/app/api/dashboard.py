@@ -392,3 +392,78 @@ async def delete_campaign(service_id: str):
                     break
                     
     return {"message": "Campanha e filas excluídas e limpas com sucesso"}
+
+class RedispatchContactRequest(BaseModel):
+    contact: dict
+
+@router.post("/campaigns/{service_id}/redispatch-contact")
+async def redispatch_contact(service_id: str, payload: RedispatchContactRequest, db: AsyncSession = Depends(get_db)):
+    """Redispatch a single contact from an existing campaign."""
+    contact = payload.contact
+
+    # 1. Get campaign metadata
+    campaign = await disparador_redis.get_campaign(service_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    config_path = campaign.get("config_path")
+    if not config_path:
+        raise HTTPException(status_code=400, detail="config_path not found in campaign metadata")
+
+    # 2. Get dispatcher config from DB
+    query = select(DispatcherConfig).where(DispatcherConfig.path == config_path)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    if not config:
+        raise HTTPException(status_code=404, detail="Dispatcher config not found for this path")
+
+    # 3. Retrieve original cached input payload for context
+    payloads = await disparador_redis.get_campaign_payloads(service_id)
+    input_payload = payloads.get("input", {}) if payloads else {}
+
+    campaign_key = campaign.get("campaign_key", f"redispatch:{service_id}")
+
+    # 4. Build single-contact job payload
+    # Clean contact metadata added by the tracking system
+    cleaned_contact = {k: v for k, v in contact.items() if k not in {"status", "updated_at", "error"}}
+
+    redispatch_payload = {
+        "type_id": input_payload.get("type_id", "redispatch"),
+        "queue_id": input_payload.get("queue_id", "redispatch"),
+        "service_id": service_id,
+        "contacts": [cleaned_contact],
+        "message": input_payload.get("message", "DISPARADOR_START"),
+        "callback_url": input_payload.get("callback_url", ""),
+        "context_data": input_payload.get("context_data", {}),
+        "transition_data": input_payload.get("transition_data", {}),
+        "system": input_payload.get("system", {"apikey": None}),
+        "config_path": config_path,
+        "campaign_key": campaign_key,
+        "run_id": uuid.uuid4().hex,
+        "dispatch_flags": {"lock_bypass": True},
+        "timestamp_create": "",
+    }
+
+    # Copy global and church data if available in original payload
+    for key in ("global", "church"):
+        if key in input_payload:
+            redispatch_payload[key] = input_payload[key]
+
+    # 5. Enqueue to RabbitMQ
+    await disparador_rmq.connect()
+    try:
+        queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+        message = __import__('aio_pika').Message(
+            body=json.dumps(redispatch_payload).encode(),
+            delivery_mode=__import__('aio_pika').DeliveryMode.PERSISTENT
+        )
+        await disparador_rmq.channel.default_exchange.publish(message, routing_key="disp_jobs")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao enfileirar redispatch: {e}")
+
+    # 6. Reset contact status in Redis
+    contact_number = contact.get("number") or contact.get("phone") or contact.get("user_id")
+    if contact_number:
+        await disparador_redis.update_contact_status(service_id, contact_number, "pending")
+
+    return {"message": f"Contato {contact.get('name', '')} reenfileirado com sucesso", "run_id": redispatch_payload["run_id"]}
