@@ -82,6 +82,7 @@ class AgentBase(BaseModel):
     vector_memory_enabled: bool = False
     information_bases_global_search_enabled: bool = False
     training_memory_enabled: bool = False
+    swarm_mode: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = Field(default=None)
     response_style: str = "structured"
@@ -161,6 +162,7 @@ class AgentUpdate(BaseModel):
     vector_memory_enabled: Optional[bool] = None
     information_bases_global_search_enabled: Optional[bool] = None
     training_memory_enabled: Optional[bool] = None
+    swarm_mode: Optional[bool] = None
     status_updates_enabled: Optional[bool] = None
     status_updates_config: Optional[Dict[str, Any]] = None
     planner_prompt: Optional[str] = None
@@ -203,6 +205,7 @@ class AgentResponse(BaseModel):
     vector_memory_enabled: bool = False
     information_bases_global_search_enabled: bool = False
     training_memory_enabled: bool = False
+    swarm_mode: bool = False
     status_updates_enabled: bool = False
     status_updates_config: Optional[Dict[str, Any]] = None
     planner_prompt: Optional[str] = None
@@ -251,6 +254,7 @@ class AgentListItem(BaseModel):
     vector_memory_enabled: bool = False
     information_bases_global_search_enabled: bool = False
     training_memory_enabled: bool = False
+    swarm_mode: bool = False
     mcp_count: int = 0
     collaborator_count: int = 0
     group_id: Optional[UUID] = None

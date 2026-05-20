@@ -269,6 +269,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             "max_tokens": int(agent.max_tokens),
             "access_level": agent.access_level.value,
             "collaboration_enabled": agent.collaboration_enabled,
+            "swarm_mode": getattr(agent, "swarm_mode", False),
             "has_tools": len(tools) > 0,
             "tools": tools,
             "output_schema": agent.output_schema,  # Custom structured output schema

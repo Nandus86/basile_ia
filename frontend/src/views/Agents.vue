@@ -511,6 +511,19 @@
                           </template>
                         </v-switch>
                       </v-col>
+                      <v-col cols="12" sm="6" v-if="formData.is_orchestrator && formData.collaboration_enabled">
+                        <v-switch
+                          v-model="formData.swarm_mode"
+                          label="Modo Swarm (Enxame)"
+                          color="amber-darken-2"
+                          hide-details
+                          density="comfortable"
+                        >
+                          <template v-slot:prepend>
+                            <v-icon :color="formData.swarm_mode ? 'amber' : 'grey'">mdi-bee</v-icon>
+                          </template>
+                        </v-switch>
+                      </v-col>
                       <v-col cols="12" sm="6">
                         <v-select
                           v-model="formData.execution_mode"
@@ -2481,6 +2494,7 @@ const formData = reactive({
   is_active: true,
   access_level: 'normal',
   collaboration_enabled: true,
+  swarm_mode: false,
   vector_memory_enabled: false,
   information_bases_global_search_enabled: false,
   is_orchestrator: false,
@@ -3020,6 +3034,7 @@ function resetForm() {
      is_active: true,
      access_level: 'normal',
      collaboration_enabled: true,
+     swarm_mode: false,
      vector_memory_enabled: false,
      information_bases_global_search_enabled: false,
      is_orchestrator: false,
@@ -3320,6 +3335,7 @@ async function openDialog(agent = null) {
         is_active: fullAgent.is_active ?? true,
         access_level: fullAgent.access_level || 'normal',
         collaboration_enabled: fullAgent.collaboration_enabled ?? true,
+        swarm_mode: fullAgent.swarm_mode ?? false,
         vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
         information_bases_global_search_enabled: fullAgent.information_bases_global_search_enabled ?? false,
         is_orchestrator: fullAgent.is_orchestrator ?? false,
@@ -3752,6 +3768,7 @@ async function duplicateAgent(agent) {
       is_active: false,
       access_level: fullAgent.access_level || 'normal',
       collaboration_enabled: fullAgent.collaboration_enabled ?? true,
+      swarm_mode: fullAgent.swarm_mode ?? false,
       vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
       information_bases_global_search_enabled: fullAgent.information_bases_global_search_enabled ?? false,
       is_orchestrator: fullAgent.is_orchestrator ?? false,

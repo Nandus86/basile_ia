@@ -121,6 +121,7 @@ class Agent(Base):
     
     # Collaboration settings (horizontal)
     collaboration_enabled = Column(Boolean, default=True, nullable=False)
+    swarm_mode = Column(Boolean, default=False, nullable=False)
     
     # Orchestrator mode - hierarchical control over subordinates
     is_orchestrator = Column(Boolean, default=False, nullable=False)

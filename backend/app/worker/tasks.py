@@ -606,8 +606,13 @@ async def _enrich_agent_prompt(
     agent_model = agent_config.get("agent_model")
     is_orchestrator = getattr(agent_model, "is_orchestrator", False) if agent_model else False
     has_collaboration = getattr(agent_model, "collaboration_enabled", False) if agent_model else False
+    use_swarm = getattr(agent_model, "swarm_mode", False) if agent_model else False
     
-    if agent_model and is_orchestrator and has_collaboration:
+    if agent_model and is_orchestrator and has_collaboration and use_swarm:
+        # 🐝 Swarm Mode: delegate execution to run_swarm
+        agent_config["_use_swarm"] = True
+        print(f"[Task] 🐝 Swarm mode enabled for '{agent_config['name']}' — collaborators will act as a Swarm.")
+    elif agent_model and is_orchestrator and has_collaboration:
         # v0.0.9: Orchestrator agents get collaborators as TOOLS
         # The ReAct agent naturally decides when to call each one
         print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — loading collaborator tools")
@@ -2798,6 +2803,28 @@ async def process_message_task(
                     response_data["response"] = final_result
                     
                 retry_count = max_retries + 1  # Skip the while loop below
+
+            if agent_config.get("_use_swarm"):
+                try:
+                    from app.orchestrator.swarm import run_swarm
+                    swarm_res = await run_swarm(
+                        agent_config=agent_config,
+                        message=message,
+                        session_id=session_id,
+                        history=messages,
+                        db=db,
+                        context_data=context_data,
+                        user_access_level=user_access_level,
+                    )
+                    final_result = swarm_res.get("response", "")
+                    agent_used = swarm_res.get("agent_used", agent_config["name"])
+                    output_text = str(final_result)
+                    retry_count = max_retries + 1  # Skip standard execution
+                except Exception as e:
+                    print(f"[Task] 🐝 Swarm execution failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
 
             while retry_count <= max_retries:
                 try:
