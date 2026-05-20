@@ -12,8 +12,6 @@ class ContactItem(BaseModel):
         if isinstance(data, dict):
             num = data.get('number')
             ph = data.get('phone')
-            if not num and not ph:
-                raise ValueError("Either 'number' or 'phone' must be provided")
             if not num and ph:
                 data['number'] = ph
         return data

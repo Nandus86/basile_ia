@@ -17,6 +17,7 @@ async def lifespan(app: FastAPI):
     await basile_client.close()
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import logging
@@ -40,7 +41,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors(), "message": "Falha na validação do payload"},
+        content=jsonable_encoder({"detail": exc.errors(), "message": "Falha na validação do payload"}),
     )
 app.add_middleware(
     CORSMiddleware,
