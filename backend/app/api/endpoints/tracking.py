@@ -311,6 +311,9 @@ async def redo_job(job_id: str, db: AsyncSession = Depends(get_db)):
 
         processing_time = (time.time() - start_time) * 1000
 
+        if isinstance(result_data, dict):
+            result_data["recreated"] = True
+
         # Update the new JobLog with the result
         new_job_log.status = "completed"
         new_job_log.response_data = result_data
