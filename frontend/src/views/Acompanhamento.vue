@@ -29,12 +29,14 @@
     <!-- Tabs Header -->
     <v-tabs v-model="activeTab" color="primary" class="mb-6">
       <v-tab value="webhooks">Webhooks</v-tab>
+      <v-tab value="notificacoes">Notificações</v-tab>
       <v-tab value="disparador">Disparador</v-tab>
       <v-tab value="automacao">Automação</v-tab>
     </v-tabs>
 
     <v-window v-model="activeTab">
-      <v-window-item value="webhooks">
+      <template v-for="tabItem in ['webhooks', 'notificacoes']" :key="tabItem">
+      <v-window-item :value="tabItem">
     <!-- Charts Section -->
     <v-row class="mb-6">
       <v-col cols="12" md="6">
@@ -94,7 +96,7 @@
       <v-card-text class="px-6 py-4" style="max-height: 65vh; overflow-y:auto; padding-bottom: 20px;">
         <v-row dense>
           <v-col cols="12" sm="6" md="3">
-            <v-text-field v-model="searchPath" prepend-inner-icon="mdi-magnify" placeholder="Buscar Path..." variant="outlined" density="compact" hide-details @keyup.enter="fetchLogs"></v-text-field>
+            <v-combobox v-model="searchPaths" :items="availablePaths" multiple chips closable-chips prepend-inner-icon="mdi-magnify" placeholder="Buscar Paths..." variant="outlined" density="compact" hide-details @update:model-value="onSearchPathsChange"></v-combobox>
           </v-col>
           <v-col cols="12" sm="6" md="3">
             <v-text-field v-model="searchSessionId" prepend-inner-icon="mdi-identifier" placeholder="Buscar Session ID..." variant="outlined" density="compact" hide-details @keyup.enter="fetchLogs"></v-text-field>
@@ -487,10 +489,11 @@
           <div v-else class="text-center pa-8 text-medium-emphasis">
             Nenhuma mensagem encontrada para esta sessão.
           </div>
-        </v-card-text>
+        </v-card-actions>
       </v-card>
     </v-dialog>
       </v-window-item>
+      </template>
 
       <v-window-item value="disparador">
         <v-row class="mb-6 mt-2">
@@ -1226,7 +1229,29 @@ const itemsPerPageOptions = [
   { value: 500, title: '500' },
   { value: 1000, title: '1000' },
 ]
-const searchPath = ref('')
+const searchPaths = ref([])
+const availablePaths = computed(() => {
+  return pathChartOptions.value.xaxis?.categories || []
+})
+const onSearchPathsChange = () => {
+  const key = activeTab.value === 'notificacoes' ? 'notificacoes_search_paths' : 'acompanhamento_search_paths'
+  localStorage.setItem(key, JSON.stringify(searchPaths.value));
+  fetchLogs();
+}
+
+watch(activeTab, (newVal) => {
+  if (['webhooks', 'notificacoes'].includes(newVal)) {
+    const key = newVal === 'notificacoes' ? 'notificacoes_search_paths' : 'acompanhamento_search_paths'
+    try {
+      const saved = localStorage.getItem(key);
+      searchPaths.value = saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      searchPaths.value = [];
+    }
+    page.value = 1;
+    fetchLogs();
+  }
+})
 const searchSessionId = ref('')
 const searchChurchName = ref('')
 const searchMemberName = ref('')
@@ -1417,7 +1442,7 @@ const fetchLogs = async () => {
     const skip = (page.value - 1) * itemsPerPage.value
     let url = `/tracking/logs?skip=${skip}&limit=${itemsPerPage.value}`
     if (statusFilter.value) url += `&status=${encodeURIComponent(statusFilter.value)}`
-    if (searchPath.value) url += `&path=${encodeURIComponent(searchPath.value)}`
+    if (searchPaths.value && searchPaths.value.length > 0) url += `&path=${encodeURIComponent(searchPaths.value.join(','))}`
     if (searchSessionId.value) url += `&session_id=${encodeURIComponent(searchSessionId.value)}`
     if (searchChurchName.value) url += `&church_name=${encodeURIComponent(searchChurchName.value)}`
     if (searchMemberName.value) url += `&member_name=${encodeURIComponent(searchMemberName.value)}`
@@ -1767,6 +1792,14 @@ const copyToClipboard = (data) => {
 const showSnackbar = (text, color = 'success') => { snackbar.value = { show: true, text, color } }
 
 onMounted(() => { 
+  try {
+    const key = activeTab.value === 'notificacoes' ? 'notificacoes_search_paths' : 'acompanhamento_search_paths'
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) searchPaths.value = parsed;
+    }
+  } catch (e) {}
   fetchData()
   fetchDisparadorData()
   fetchWorkflows()

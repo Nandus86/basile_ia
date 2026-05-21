@@ -44,7 +44,11 @@ async def get_tracking_logs(
     if status:
         query = query.where(JobLog.status == status)
     if path:
-        query = query.where(JobLog.webhook_path.ilike(f"%{path}%"))
+        from sqlalchemy import or_
+        paths = [p.strip() for p in path.split(",") if p.strip()]
+        if paths:
+            conditions = [JobLog.webhook_path.ilike(f"%{p}%") for p in paths]
+            query = query.where(or_(*conditions))
     if session_id:
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"session_id\":%{session_id}%"))
     if church_name:
