@@ -37,52 +37,38 @@
     <v-window v-model="activeTab">
       <template v-for="tabItem in ['webhooks', 'notificacoes']" :key="tabItem">
       <v-window-item :value="tabItem">
-    <!-- Charts Section -->
-    <v-row class="mb-6">
-      <v-col cols="12" md="6">
-        <v-card class="glass-card h-100">
-          <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
-            <h3 class="text-subtitle-1 font-weight-medium text-white mb-4 d-flex align-center">
-              <v-icon class="mr-2" size="20" color="primary">mdi-chart-donut</v-icon>
-              Status dos Jobs Processados
-            </h3>
-            <template v-if="statsLoading">
-              <div class="d-flex justify-center py-12">
-                <v-progress-circular indeterminate color="primary"></v-progress-circular>
-              </div>
-            </template>
-            <template v-else-if="statusChartSeries.length > 0">
-              <apexchart type="donut" width="100%" height="280" :options="statusChartOptions" :series="statusChartSeries" id="statusChart"></apexchart>
-            </template>
-            <template v-else>
-              <div class="text-center py-12 text-medium-emphasis">Nenhum dado encontrado</div>
-            </template>
-          </v-card-text>
+    <!-- Stats Summary Row -->
+    <v-card class="glass-card mb-6 overflow-x-auto" style="white-space: nowrap; overflow-y: hidden;">
+      <v-card-text class="d-flex align-center py-4" style="gap: 16px;">
+        <!-- Total Card -->
+        <v-card color="#7b1fa2" class="d-inline-flex flex-column align-center justify-center pa-3 rounded-lg" min-width="120" elevation="2">
+          <div class="text-overline text-white opacity-80 mb-1" style="line-height: 1.2;">TOTAL</div>
+          <div class="text-h5 font-weight-bold text-white" style="line-height: 1.2;">{{ trackingStats.total_calls || 0 }}</div>
         </v-card>
-      </v-col>
-      
-      <v-col cols="12" md="6">
-        <v-card class="glass-card h-100">
-          <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
-            <h3 class="text-subtitle-1 font-weight-medium text-white mb-4 d-flex align-center">
-              <v-icon class="mr-2" size="20" color="info">mdi-chart-bar</v-icon>
-              Top 5 Webhooks Processados
-            </h3>
-            <template v-if="statsLoading">
-              <div class="d-flex justify-center py-12">
-                <v-progress-circular indeterminate color="primary"></v-progress-circular>
-              </div>
-            </template>
-            <template v-else-if="pathChartSeries[0].data.length > 0">
-              <apexchart type="bar" height="280" :options="pathChartOptions" :series="pathChartSeries" id="pathChart"></apexchart>
-            </template>
-            <template v-else>
-              <div class="text-center py-12 text-medium-emphasis">Nenhum dado encontrado</div>
-            </template>
-          </v-card-text>
+
+        <!-- Divider -->
+        <v-divider vertical class="mx-2 bg-white opacity-20" style="height: 40px; align-self: center;"></v-divider>
+        
+        <!-- Path Cards -->
+        <v-card 
+          v-for="(item, i) in trackingStats.by_path" 
+          :key="i"
+          color="#9c27b0" 
+          class="d-inline-flex flex-column align-center justify-center pa-3 rounded-lg" 
+          min-width="120"
+          elevation="1"
+        >
+          <div class="text-overline text-white opacity-80 mb-1 text-truncate" style="max-width: 180px; line-height: 1.2;" :title="item.path">
+            {{ item.path.split('/').pop().toUpperCase() }}
+          </div>
+          <div class="text-h5 font-weight-bold text-white" style="line-height: 1.2;">{{ item.count }}</div>
         </v-card>
-      </v-col>
-    </v-row>
+        
+        <div v-if="trackingStats.by_path?.length === 0" class="text-medium-emphasis text-body-2 font-italic ml-2">
+          Nenhum dado encontrado
+        </div>
+      </v-card-text>
+    </v-card>
 
     <!-- Data Table -->
     <v-card class="glass-card">
@@ -1248,7 +1234,7 @@ const internalPaths = ref([
 ])
 
 const availablePaths = computed(() => {
-  const chartPaths = pathChartOptions.value.xaxis?.categories || []
+  const chartPaths = trackingStats.value.by_path?.map(i => i.path) || []
   const all = new Set([
      ...chartPaths,
      ...webhooksList.value,
@@ -1441,19 +1427,13 @@ function getSessionId(item) {
   return item.request_data?.session_id || item.session_id || null
 }
 
+const trackingStats = ref({ total_calls: 0, by_path: [] })
+
 const fetchStats = async () => {
   statsLoading.value = true
   try {
     const { data } = await axiosInstance.get('/tracking/stats')
-    const statusMap = { 'completed': '#00FC8B', 'failed': '#FF0055', 'queued': '#FFB800', 'in_progress': '#00D1FF' }
-    if (data.by_status?.length > 0) {
-      statusChartSeries.value = data.by_status.map(i => i.count)
-      statusChartOptions.value = { ...statusChartOptions.value, labels: data.by_status.map(i => i.status.toUpperCase()), colors: data.by_status.map(i => statusMap[i.status] || '#666') }
-    } else { statusChartSeries.value = [] }
-    if (data.by_path?.length > 0) {
-      pathChartSeries.value = [{ name: 'Requisições', data: data.by_path.map(i => i.count) }]
-      pathChartOptions.value = { ...pathChartOptions.value, xaxis: { ...pathChartOptions.value.xaxis, categories: data.by_path.map(i => i.path) } }
-    } else { pathChartSeries.value = [{ name: 'Requisições', data: [] }] }
+    trackingStats.value = data
   } catch (error) {
     showSnackbar('Erro ao carregar estatísticas', 'error')
   } finally { statsLoading.value = false }

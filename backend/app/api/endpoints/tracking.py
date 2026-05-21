@@ -152,8 +152,8 @@ async def get_tracking_stats(db: AsyncSession = Depends(get_db)):
     status_result = await db.execute(status_query)
     status_counts = [{"status": row[0], "count": row[1]} for row in status_result.all()]
     
-    # Group by path (top 5)
-    path_query = select(JobLog.webhook_path, func.count(JobLog.id)).group_by(JobLog.webhook_path).order_by(desc(func.count(JobLog.id))).limit(5)
+    # Group by path (all paths)
+    path_query = select(JobLog.webhook_path, func.count(JobLog.id)).group_by(JobLog.webhook_path).order_by(desc(func.count(JobLog.id)))
     path_result = await db.execute(path_query)
     path_counts = [{"path": row[0], "count": row[1]} for row in path_result.all()]
     
