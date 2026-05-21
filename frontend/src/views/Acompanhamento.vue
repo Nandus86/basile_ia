@@ -489,7 +489,7 @@
           <div v-else class="text-center pa-8 text-medium-emphasis">
             Nenhuma mensagem encontrada para esta sessão.
           </div>
-        </v-card-actions>
+        </v-card-text>
       </v-card>
     </v-dialog>
       </v-window-item>
