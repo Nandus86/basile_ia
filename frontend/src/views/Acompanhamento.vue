@@ -1230,8 +1230,31 @@ const itemsPerPageOptions = [
   { value: 1000, title: '1000' },
 ]
 const searchPaths = ref([])
+const webhooksList = ref([])
+const fetchWebhooksList = async () => {
+  try {
+    const { data } = await axiosInstance.get('/webhooks-config')
+    if (data && data.webhooks) {
+      webhooksList.value = data.webhooks.map(w => w.path)
+    }
+  } catch(e) {}
+}
+
+const internalPaths = ref([
+  '/process',
+  '/disparo/campaign',
+  '/webhook/n8n',
+  '/webhook/trigger/personalizado'
+])
+
 const availablePaths = computed(() => {
-  return pathChartOptions.value.xaxis?.categories || []
+  const chartPaths = pathChartOptions.value.xaxis?.categories || []
+  const all = new Set([
+     ...chartPaths,
+     ...webhooksList.value,
+     ...internalPaths.value
+  ])
+  return Array.from(all).sort()
 })
 const onSearchPathsChange = () => {
   const key = activeTab.value === 'notificacoes' ? 'notificacoes_search_paths' : 'acompanhamento_search_paths'
@@ -1800,6 +1823,7 @@ onMounted(() => {
       if (Array.isArray(parsed)) searchPaths.value = parsed;
     }
   } catch (e) {}
+  fetchWebhooksList()
   fetchData()
   fetchDisparadorData()
   fetchWorkflows()
