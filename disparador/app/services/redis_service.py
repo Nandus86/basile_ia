@@ -98,9 +98,11 @@ class DisparadorRedis:
         await self.ensure_connected()
         key = f"disp:campaign:contacts:{service_id}"
         mapping = {}
-        for c in contacts:
+        for i, c in enumerate(contacts):
             number = c.get("number") or c.get("phone") or c.get("user_id")
-            if not number: continue
+            if not number:
+                logger.warning(f"[RedisService] Contact {i} in service_id={service_id} has no identity (dropped from tracking). Contact data: {c}")
+                continue
             
             # Store everything that comes in the contact object
             contact_data = dict(c)
@@ -115,6 +117,7 @@ class DisparadorRedis:
 
     async def update_contact_status(self, service_id: str, number: str, status: str, error: str = None):
         if not number:
+            logger.warning(f"[RedisService] update_contact_status called with empty number for service_id={service_id}, status={status}")
             return
         await self.ensure_connected()
         key = f"disp:campaign:contacts:{service_id}"

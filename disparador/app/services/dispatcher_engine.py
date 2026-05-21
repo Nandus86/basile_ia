@@ -112,6 +112,8 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     # Determine the identifier to use for rate limits, status and session key
     contact_number = contact.get("number") or contact.get("phone") or contact.get("user_id")
 
+    logger.info(f"[DispatcherEngine] Dispatching contact {batch_position + 1}/{batch_total}: contact_number='{contact_number}', service_id={service_id}")
+
     # Rate Limit
     is_allowed = await disparador_redis.check_rate_limit(contact_number)
     if not is_allowed:
@@ -224,6 +226,13 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     await asyncio.sleep(lb_delay)
 
 async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, run_id: str, campaign_key: str, message_text: str = None, source_payload: dict = None, timestamp_create: str = None):
+    import uuid
+    for i, c in enumerate(contacts):
+        if not (c.get("number") or c.get("phone") or c.get("user_id")):
+            fallback_id = f"unknown_{uuid.uuid4().hex[:8]}"
+            logger.warning(f"[DispatcherEngine] dispatch_batch: Contact without identity found! Assigning fallback user_id '{fallback_id}' to contact data: {c}")
+            c["user_id"] = fallback_id
+
     total = len(contacts)
     if total == 0:
         return

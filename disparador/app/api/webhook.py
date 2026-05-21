@@ -45,6 +45,11 @@ async def receive_dispatch(
         if payload.queue_id in blocklist:
             raise HTTPException(status_code=403, detail=f"Queue ID '{payload.queue_id}' está bloqueado")
 
+    logger.info(f"[Webhook] Payload received: path={path}, queue_id={payload.queue_id}, type_id={payload.type_id}, service_id={payload.service_id}. Contacts count: {len(payload.contacts)}")
+    for i, contact in enumerate(payload.contacts):
+        if not contact.number and not contact.phone:
+            logger.warning(f"[Webhook] Contact {i} (name='{contact.name}') has empty number and phone. Payload data: {contact.model_dump()}")
+
     # Smart Queue Routing — check if this type_id has a routing rule
     routing_rules = config.queue_routing_rules or []
     if routing_rules:

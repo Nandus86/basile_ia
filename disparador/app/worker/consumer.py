@@ -44,6 +44,12 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                 
             config_path = payload.get("config_path")
             
+            logger.info(f"[Worker] Processing dispatch message for run_id={run_id}, service_id={service_id}, type_id={type_id}, queue_id={queue_id}. Contacts count: {len(contacts)}")
+            for i, c in enumerate(contacts):
+                num = c.get('number') or c.get('phone') or c.get('user_id')
+                if not num:
+                    logger.warning(f"[Worker] Contact {i} (name='{c.get('name')}') arrived with empty number/phone/user_id. Payload data: {c}")
+
             if not config_path:
                 logger.error(f"Missing config_path in payload")
                 active_tasks.pop(run_id, None)
