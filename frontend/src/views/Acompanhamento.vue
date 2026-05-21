@@ -41,7 +41,7 @@
     <v-card class="glass-card mb-6 overflow-x-auto" style="white-space: nowrap; overflow-y: hidden;">
       <v-card-text class="d-flex align-center py-4" style="gap: 16px;">
         <!-- Total Card -->
-        <v-card color="#7b1fa2" class="d-inline-flex flex-column align-center justify-center pa-3 rounded-lg" min-width="120" elevation="2">
+        <v-card class="d-inline-flex flex-column align-center justify-center pa-3 rounded-lg border" min-width="120" elevation="0" style="background-color: rgba(123, 31, 162, 0.3); border-color: rgba(255,255,255,0.1) !important;">
           <div class="text-overline text-white opacity-80 mb-1" style="line-height: 1.2;">TOTAL</div>
           <div class="text-h5 font-weight-bold text-white" style="line-height: 1.2;">{{ trackingStats.total_calls || 0 }}</div>
         </v-card>
@@ -53,10 +53,10 @@
         <v-card 
           v-for="(item, i) in trackingStats.by_path" 
           :key="i"
-          color="#9c27b0" 
-          class="d-inline-flex flex-column align-center justify-center pa-3 rounded-lg" 
+          class="d-inline-flex flex-column align-center justify-center pa-3 rounded-lg border" 
           min-width="120"
-          elevation="1"
+          elevation="0"
+          style="background-color: rgba(156, 39, 176, 0.3); border-color: rgba(255,255,255,0.1) !important;"
         >
           <div class="text-overline text-white opacity-80 mb-1 text-truncate" style="max-width: 180px; line-height: 1.2;" :title="item.path">
             {{ item.path.split('/').pop().toUpperCase() }}
