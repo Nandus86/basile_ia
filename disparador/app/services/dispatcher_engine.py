@@ -159,6 +159,9 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         }
     }
 
+    dispatch_flags = source_payload.get("dispatch_flags") or {}
+    is_recreated = bool(dispatch_flags.get("recreate", False))
+
     passthrough_payload.update({
         "message": message_value,
         "session_id": f"{queue_id}{contact_number or ''}",
@@ -166,6 +169,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "callback_url": callback_url,
         "context_data": enriched_context,
         "transition_data": effective_transition_data,
+        "recreated": is_recreated,
     })
 
     # ── Outbound Mode Routing ──────────────────────────────────────────────
