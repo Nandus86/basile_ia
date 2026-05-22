@@ -54,7 +54,13 @@ async def get_tracking_logs(
     if church_name:
         query = query.where(JobLog.request_data.cast(String).ilike(f"%\"church_name\":%{church_name}%"))
     if member_name:
-        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"))
+        from sqlalchemy import or_
+        query = query.where(
+            or_(
+                JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"),
+                JobLog.request_data.cast(String).ilike(f"%\"name\":%{member_name}%")
+            )
+        )
     if user_message:
         query = query.where(JobLog.request_data.cast(String).ilike(f"%{user_message}%"))
     if agent_response:
@@ -77,8 +83,9 @@ async def get_tracking_logs(
                 item.session_id = request_data.get("session_id")
             church = request_data.get("church") or {}
             member = request_data.get("member") or {}
+            context_data = request_data.get("context_data") or {}
             item.church_name = church.get("church_name")
-            item.member_fullname = member.get("fullname")
+            item.member_fullname = member.get("fullname") or context_data.get("name") or request_data.get("name")
             item.user_message = request_data.get("message")
             
         response_data = log.response_data
@@ -126,8 +133,9 @@ async def get_job_details(job_id: str, db: AsyncSession = Depends(get_db)):
             item.session_id = request_data.get("session_id")
         church = request_data.get("church") or {}
         member = request_data.get("member") or {}
+        context_data = request_data.get("context_data") or {}
         item.church_name = church.get("church_name")
-        item.member_fullname = member.get("fullname")
+        item.member_fullname = member.get("fullname") or context_data.get("name") or request_data.get("name")
         item.user_message = request_data.get("message")
         
     response_data = job_log.response_data

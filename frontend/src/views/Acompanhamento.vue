@@ -138,6 +138,9 @@
 
         <template v-slot:item.member_fullname="{ item }">
           <span v-if="item.member_fullname" class="text-body-2">{{ item.member_fullname }}</span>
+          <span v-else-if="item.request_data?.member?.fullname" class="text-body-2">{{ item.request_data.member.fullname }}</span>
+          <span v-else-if="item.request_data?.context_data?.name" class="text-body-2">{{ item.request_data.context_data.name }}</span>
+          <span v-else-if="item.request_data?.name" class="text-body-2">{{ item.request_data.name }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
