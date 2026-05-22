@@ -71,6 +71,15 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     active_tasks.pop(run_id, None)
                     return
 
+            # Concurrency lock per campaign
+            global active_campaigns_lock
+            if 'active_campaigns_lock' not in globals():
+                active_campaigns_lock = set()
+
+            while campaign_key in active_campaigns_lock:
+                await asyncio.sleep(1.0)
+            
+            active_campaigns_lock.add(campaign_key)
             try:
                 # 3. Execute Dispatch
                 await dispatch_batch(
@@ -92,6 +101,7 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                 logger.info(f"Task for run {run_id} gracefully cancelled.")
                 raise
             finally:
+                active_campaigns_lock.remove(campaign_key)
                 if active_tasks.get(run_id) == current_task:
                     active_tasks.pop(run_id, None)
 
