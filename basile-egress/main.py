@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from app.database import engine, Base
 from app.redis_client import redis_client
-from app.api import result, status
+from app.api import result, status, pipelines
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(pipelines.router, prefix="/pipelines", tags=["Pipelines"])
 app.include_router(result.router, prefix="/result", tags=["Result"])
 app.include_router(status.router, prefix="/status", tags=["Status"])
 

@@ -37,6 +37,8 @@ const defaultItem = {
   output_method: 'POST',
   output_schema: null,
   output_headers: null,
+  default_callback_url: '',
+  egress_pipeline_path: '',
   retry_config: { maxRetries: 3, delays: [5000, 15000, 60000] }
 }
 
@@ -484,6 +486,31 @@ onMounted(() => {
                   label="Método HTTP"
                   variant="outlined"
                 ></v-select>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Callback / Egress -->
+            <div class="text-subtitle-1 font-weight-bold mb-3">Callback (Opcional)</div>
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="editedItem.default_callback_url"
+                  label="URL de Callback Padrão"
+                  variant="outlined"
+                  hint="URL HTTP para onde o agente enviará o resultado final"
+                  persistent-hint
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="editedItem.egress_pipeline_path"
+                  label="Pipeline de Egress (Path)"
+                  variant="outlined"
+                  hint="Nome/Slug do pipeline no Egress (ex: meu-erp). Se preenchido, direciona o callback para o Egress."
+                  persistent-hint
+                ></v-text-field>
               </v-col>
             </v-row>
 

@@ -29,6 +29,9 @@ class WebhookPipelineBase(BaseModel):
     output_schema: Optional[Dict[str, Any]] = None
     output_headers: Optional[Dict[str, Any]] = None
     
+    default_callback_url: Optional[str] = None
+    egress_pipeline_path: Optional[str] = None
+    
     retry_config: Dict[str, Any] = Field(default={"maxRetries": 3, "delays": [5000, 15000, 60000]})
 
 
@@ -48,6 +51,8 @@ class WebhookPipelineUpdate(BaseModel):
     output_method: Optional[str] = None
     output_schema: Optional[Dict[str, Any]] = None
     output_headers: Optional[Dict[str, Any]] = None
+    default_callback_url: Optional[str] = None
+    egress_pipeline_path: Optional[str] = None
     retry_config: Optional[Dict[str, Any]] = None
 
 

@@ -1,9 +1,13 @@
 """
 Result API - Receives results from worker and sends to webhooks
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from datetime import datetime, timezone
 
+from app.database import get_db
+from app.models.pipeline import EgressPipeline
 from app.schemas.result import ResultInput, ResultOutput
 from app.services.output_transformer import transform_output
 from app.services.webhook_sender import webhook_sender
@@ -21,13 +25,6 @@ async def save_result_status(
 ) -> None:
     """Save result status to Redis"""
     status_key = f"result:status:{job_id}"
-    status_data = {
-        "job_id": job_id,
-        "status": status,
-        "attempts": str(attempts),
-        "last_error": last_error or "",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
     
     import json
     await redis_client.hset(status_key, "status", status)
@@ -36,16 +33,44 @@ async def save_result_status(
     await redis_client.hset(status_key, "updated_at", datetime.now(timezone.utc).isoformat())
 
 
+async def _resolve_pipeline(result: ResultInput, db: AsyncSession):
+    """Resolve configuration from EgressPipeline if pipeline_path is provided"""
+    if not result.pipeline_path:
+        if not result.output_url:
+            raise HTTPException(status_code=400, detail="Either output_url or pipeline_path must be provided")
+        return result
+
+    query = select(EgressPipeline).where(
+        EgressPipeline.path == result.pipeline_path,
+        EgressPipeline.is_active == True
+    )
+    db_result = await db.execute(query)
+    pipeline = db_result.scalar_one_or_none()
+
+    if not pipeline:
+        raise HTTPException(status_code=404, detail=f"Active pipeline '{result.pipeline_path}' not found")
+
+    # Override result input with pipeline config
+    result.output_url = pipeline.output_url
+    result.output_method = pipeline.output_method
+    
+    if pipeline.output_schema:
+        result.output_schema = pipeline.output_schema
+    if pipeline.output_headers:
+        result.output_headers = pipeline.output_headers
+    if pipeline.retry_config:
+        result.retry_config = pipeline.retry_config
+        
+    return result
+
+
 @router.post("", response_model=ResultOutput)
-async def receive_result(result: ResultInput):
+async def receive_result(result: ResultInput, db: AsyncSession = Depends(get_db)):
     """
     Receive result from worker and send to webhook.
-    
-    Pipeline:
-    1. Transform output using output_schema
-    2. Send to output_url with retry
-    3. Save status to Redis
     """
+    result = await _resolve_pipeline(result, db)
+    
     await save_result_status(result.job_id, "processing", attempts=0)
     
     transformed = transform_output(
@@ -87,10 +112,12 @@ async def receive_result(result: ResultInput):
 
 
 @router.post("/sync", response_model=ResultOutput)
-async def receive_result_sync(result: ResultInput):
+async def receive_result_sync(result: ResultInput, db: AsyncSession = Depends(get_db)):
     """
     Receive result and send to webhook synchronously without retry.
     """
+    result = await _resolve_pipeline(result, db)
+    
     transformed = transform_output(
         result.response,
         result.output_schema,

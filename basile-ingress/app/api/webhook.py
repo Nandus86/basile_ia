@@ -65,10 +65,24 @@ async def receive_webhook(
         "message": normalized.get("message", ""),
         "session_id": normalized.get("session_id", ""),
     }
-    for key in ("agent_id", "user_access_level", "context_data", "transition_data", "callback_url"):
+    for key in ("agent_id", "user_access_level", "context_data", "transition_data"):
         val = normalized.get(key)
         if val is not None:
             worker_payload[key] = val
+            
+    # Resolve callback
+    callback_url = normalized.get("callback_url") or pipeline.default_callback_url
+    egress_path = normalized.get("egress_pipeline_path") or pipeline.egress_pipeline_path
+    
+    if egress_path:
+        worker_payload["pipeline_path"] = egress_path
+        # If user provided an egress path but no explicit callback, point to the internal Egress service
+        if not callback_url:
+            # Assumes Egress runs on egress-api or accessible via gateway
+            callback_url = "http://basile-egress:8000/egress-api/result"
+            
+    if callback_url:
+        worker_payload["callback_url"] = callback_url
 
     # ── Try to forward immediately ──
     output_url = pipeline.output_url
