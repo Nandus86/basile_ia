@@ -90,6 +90,42 @@ def is_within_time_window(config, payload: dict) -> bool:
         # Crosses midnight
         return start <= current_time or current_time <= end
 
+def get_seconds_until_window_opens(config, payload: dict) -> int:
+    """Calculate the exact number of seconds until the next dispatch window opens."""
+    tz_name = "America/Sao_Paulo"
+    
+    if config.timezone_path and payload:
+        path = config.timezone_path.replace("{{", "").replace("}}", "").replace("$timestamp.", "").strip()
+        parts = path.split(".")
+        curr = payload
+        for p in parts:
+            if isinstance(curr, dict) and p in curr:
+                curr = curr[p]
+            else:
+                curr = None
+                break
+        
+        if isinstance(curr, str) and curr:
+            try:
+                ZoneInfo(curr)
+                tz_name = curr
+            except Exception:
+                pass
+
+    try:
+        now_tz = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        now_tz = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+    start_t = parse_time(config.start_time)
+    next_start = now_tz.replace(hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0)
+    
+    if now_tz >= next_start:
+        from datetime import timedelta
+        next_start += timedelta(days=1)
+        
+    return int((next_start - now_tz).total_seconds())
+
 async def send_progress(url: str, service_id: str, total: int, sent: int, failed: int = 0, status: str = "running"):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -284,24 +320,40 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
 
             # Window Check
             if not is_within_time_window(config, source_payload):
-                logger.info(f"Campaign {service_id} out of time window. Requeuing remaining {len(contacts)-i} contacts.")
-                # Re-queue others
-                for c in contacts[i:]:
-                    requeue_payload = {
-                        "type_id": type_id,
-                        "queue_id": queue_id,
-                        "service_id": service_id,
-                        "contact": c,
-                        "context_data": context_data,
-                        "transition_data": transition_data,
-                        "callback_url": callback_url,
-                        "campaign_key": campaign_key,
-                        "run_id": run_id,
-                        "dispatch_flags": {"lock_bypass": True},
-                        "timestamp_create": timestamp_create or datetime.now(ZoneInfo("UTC")).isoformat()
-                    }
-                    # Publish individual missing messages
-                    await disparador_rmq.publish_contact(type_id, queue_id, requeue_payload)
+                logger.info(f"Campaign {service_id} out of time window. Staging remaining {len(contacts)-i} contacts in Smart Router.")
+                
+                delay_seconds = get_seconds_until_window_opens(config, source_payload)
+                from app.services.smart_router import stage_contacts
+                
+                # Reconstruct contacts list
+                remaining_contacts = contacts[i:]
+                
+                # Payload meta without contacts
+                payload_meta = {
+                    "message": message_text,
+                    "callback_url": callback_url,
+                    "context_data": context_data,
+                    "transition_data": transition_data,
+                    "campaign_key": campaign_key,
+                    "dispatch_flags": {"lock_bypass": True},
+                    "timestamp_create": timestamp_create or datetime.now(ZoneInfo("UTC")).isoformat()
+                }
+                if source_payload:
+                    for k, v in source_payload.items():
+                        if k not in payload_meta and k not in ["contacts", "contact"]:
+                            payload_meta[k] = v
+                
+                # We do not await here if we are inside a batch that could hold the loop for long,
+                # but stage_contacts is fast (just Redis operations).
+                await stage_contacts(
+                    config_path=config.path,
+                    queue_id=queue_id,
+                    type_id=type_id,
+                    service_id=service_id,
+                    contacts=remaining_contacts,
+                    payload_meta=payload_meta,
+                    accumulation_seconds=delay_seconds
+                )
 
                 await disparador_redis.delete_run_status(run_id)
                 break
