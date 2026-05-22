@@ -11,6 +11,9 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -26,13 +29,23 @@ async def get_dashboard_stats():
     completed = sum(1 for c in campaigns if c.get("status") == "completed")
     total_sent = sum(c.get("sent", 0) for c in campaigns)
     total_failed = sum(c.get("failed", 0) for c in campaigns)
+    # Get RabbitMQ queue status
+    mq_pending = 0
+    try:
+        await disparador_rmq.connect()
+        if disparador_rmq.channel:
+            queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True, passive=True)
+            mq_pending = queue.declaration_result.message_count
+    except Exception as e:
+        logger.warning(f"Failed to get mq_pending: {e}")
     
     return {
         "total_campaigns": len(campaigns),
         "active_campaigns": active,
         "completed_campaigns": completed,
         "total_sent": total_sent,
-        "total_failed": total_failed
+        "total_failed": total_failed,
+        "mq_pending": mq_pending
     }
 
 @router.get("/campaigns")

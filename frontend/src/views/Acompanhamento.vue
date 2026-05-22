@@ -486,16 +486,19 @@
 
       <v-window-item value="disparador">
         <v-row class="mb-6 mt-2">
-          <v-col cols="12" md="3">
+          <v-col cols="12" sm="6" md="2">
             <v-card class="glass-card"><v-card-text><div class="text-overline">ATIVAS / PAUSADAS</div><div class="text-h4 text-primary">{{ dispStats.active_campaigns }}</div></v-card-text></v-card>
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="glass-card"><v-card-text><div class="text-overline">AGUARDANDO NO MQ</div><div class="text-h4 text-warning">{{ dispStats.mq_pending || 0 }}</div></v-card-text></v-card>
+          </v-col>
+          <v-col cols="12" sm="6" md="2">
             <v-card class="glass-card"><v-card-text><div class="text-overline">ENVIADAS HOJE</div><div class="text-h4 text-success">{{ dispStats.total_sent }}</div></v-card-text></v-card>
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" sm="6" md="2">
             <v-card class="glass-card"><v-card-text><div class="text-overline">COMPLETAS</div><div class="text-h4 text-info">{{ dispStats.completed_campaigns }}</div></v-card-text></v-card>
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" sm="6" md="3">
             <v-card class="glass-card"><v-card-text><div class="text-overline">FALHAS (DLQ)</div><div class="text-h4 text-error">{{ dispStats.total_failed }}</div></v-card-text></v-card>
           </v-col>
         </v-row>

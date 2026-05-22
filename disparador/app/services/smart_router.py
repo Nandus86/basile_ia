@@ -19,6 +19,46 @@ logger = logging.getLogger(__name__)
 _active_timers: Dict[str, asyncio.Task] = {}
 
 
+async def recover_staged_timers():
+    """Recover and restart timers for staged global queues from Redis on startup."""
+    import time
+    await disparador_redis.ensure_connected()
+    logger.info("Starting recovery of global Smart Routing timers...")
+
+    cursor = '0'
+    keys = []
+    while True:
+        cursor, partial_keys = await disparador_redis.client.scan(cursor, match="disp:staged:deadline:global:*", count=100)
+        keys.extend(partial_keys)
+        if not cursor or cursor == '0' or cursor == 0:
+            break
+
+    now = int(time.time())
+    recovered_count = 0
+
+    for key in keys:
+        key_str = key.decode("utf-8") if isinstance(key, bytes) else str(key)
+        queue_id = key_str.split("global:")[-1]
+        
+        deadline_raw = await disparador_redis.client.get(key)
+        if not deadline_raw:
+            continue
+            
+        deadline = int(deadline_raw)
+        time_remaining = max(0, deadline - now)
+        
+        if time_remaining <= 0:
+            logger.info("Timer for queue %s expired while offline. Executing immediately.", queue_id)
+            asyncio.create_task(execute_routing(queue_id))
+            recovered_count += 1
+        else:
+            logger.info("Recovered timer for queue %s. Re-arming for %d seconds.", queue_id, time_remaining)
+            await _schedule_routing_timer(queue_id, time_remaining)
+            recovered_count += 1
+            
+    logger.info("Recovered %d global Smart Routing timers.", recovered_count)
+
+
 async def stage_contacts(
     config_path: str,
     queue_id: str,

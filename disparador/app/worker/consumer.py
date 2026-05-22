@@ -116,6 +116,10 @@ async def start_consumer():
             await disparador_rmq.connect()
             await disparador_redis.connect()
             
+            from app.services.smart_router import recover_staged_timers
+            await recover_staged_timers()
+
+            
             if not disparador_rmq.channel:
                 raise Exception("RabbitMQ channel not open")
 
