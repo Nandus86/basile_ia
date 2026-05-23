@@ -342,6 +342,8 @@ def _build_dispatch_plan(
         total = len(info["contacts"])
         pct = info["percentage"]
         batch_size = max(1, math.ceil(total * pct / 100))
+        # Cap batch size to 10 to prevent RabbitMQ consumer timeout
+        batch_size = min(batch_size, 10)
         batches_info[entry_key] = {
             "remaining": list(info["contacts"]),
             "batch_size": batch_size,
@@ -350,7 +352,7 @@ def _build_dispatch_plan(
 
     cycles = []
     total_queued = 0
-    max_iterations = 1000  # safety
+    max_iterations = 100000  # safety for large lists
 
     for _ in range(max_iterations):
         cycle = []

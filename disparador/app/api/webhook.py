@@ -115,6 +115,7 @@ async def receive_dispatch(
 
     run_id = uuid.uuid4().hex
     batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
+    batch_size = min(batch_size, 10) # Cap batch size to prevent MQ timeout
     total_contacts = len(payload.contacts)
 
     payload_dict = payload.model_dump()

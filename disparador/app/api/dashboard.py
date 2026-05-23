@@ -327,6 +327,7 @@ async def recreate_campaign(service_id: str, db: AsyncSession = Depends(get_db))
     # 8. Re-enqueue to RabbitMQ (disp_jobs) using fresh run_id
     run_id = uuid.uuid4().hex
     batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
+    batch_size = min(batch_size, 10) # Cap batch size to prevent MQ timeout
     total_contacts = len(cleaned_contacts)
     
     # Keep the same campaign_key so it matches but bypass lock
