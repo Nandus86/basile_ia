@@ -30,26 +30,19 @@ class BasileClient:
         # If we pass a full URL to self.client.post, it might error or behave unexpectedly depending on httpx version.
         # To be safe, if endpoint starts with http, we use a temporary client or check if we can override.
         
-        max_retries = 3
-        backoff = 2.0
-        
-        for attempt in range(max_retries):
-            try:
-                if endpoint.startswith("http"):
-                    async with httpx.AsyncClient(timeout=120.0) as tmp_client:
-                        resp = await tmp_client.post(endpoint, json=payload)
-                        resp.raise_for_status()
-                        return resp.json()
-                else:
-                    # Uses self.client with configured base_url
-                    resp = await self.client.post(endpoint, json=payload)
+        try:
+            if endpoint.startswith("http"):
+                async with httpx.AsyncClient(timeout=120.0) as tmp_client:
+                    resp = await tmp_client.post(endpoint, json=payload)
                     resp.raise_for_status()
                     return resp.json()
-            except httpx.HTTPError as e:
-                logger.error(f"Error calling target {endpoint} (Attempt {attempt+1}/{max_retries}): {str(e)}")
-                if attempt == max_retries - 1:
-                    raise Exception(f"Failed after {max_retries} attempts: {str(e)}")
-                await asyncio.sleep(backoff)
-                backoff *= 2
+            else:
+                # Uses self.client with configured base_url
+                resp = await self.client.post(endpoint, json=payload)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPError as e:
+            logger.error(f"Error calling target {endpoint}: {str(e)}")
+            raise Exception(f"Failed to call agent: {str(e)}")
 
 basile_client = BasileClient()

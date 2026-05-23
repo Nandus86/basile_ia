@@ -161,6 +161,11 @@ async def start_consumer():
                 await close_event.wait()
                 logger.warning("RabbitMQ closed. Reconnecting...")
                 
+                # Cancel active tasks to prevent duplicate processing on requeue
+                for t in active_tasks.values():
+                    t.cancel()
+                active_tasks.clear()
+                
         except asyncio.CancelledError:
             break
         except Exception as e:
