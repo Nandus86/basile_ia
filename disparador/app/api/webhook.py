@@ -34,6 +34,19 @@ async def receive_dispatch(
         
     if config.api_key and x_api_key != config.api_key:
         raise HTTPException(status_code=403, detail="Invalid API Key")
+
+    # Idempotency Lock: Prevent external systems from sending duplicate requests
+    campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
+    is_new_request = await disparador_redis.client.set(f"disp:idempotency:{campaign_key}", "1", nx=True, ex=604800) # 7 days TTL
+    if not is_new_request:
+        logger.warning(f"[Webhook] Duplicate request blocked for {campaign_key}. Returning success to stop external retries.")
+        return DispatchAcceptedResponse(
+            service_id=payload.service_id,
+            campaign_key=campaign_key,
+            run_id="duplicate_ignored",
+            queued_count=0,
+            status="ignored_duplicate"
+        )
     
     # Queue ID filter
     allowlist = config.queue_id_allowlist or []
