@@ -318,6 +318,12 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
                 logger.info(f"Campaign {service_id} is paused. Waiting 5s...")
                 await asyncio.sleep(5.0)
 
+            # Deleted Check
+            if await disparador_redis.is_deleted(service_id):
+                logger.warning(f"Campaign {service_id} was deleted mid-batch. Aborting.")
+                await disparador_redis.delete_run_status(run_id)
+                break
+
             # Window Check
             if not is_within_time_window(config, source_payload):
                 logger.info(f"Campaign {service_id} out of time window. Staging remaining {len(contacts)-i} contacts in Smart Router.")
