@@ -71,6 +71,12 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     active_tasks.pop(run_id, None)
                     return
 
+            # Check if campaign was explicitly deleted
+            if await disparador_redis.is_deleted(service_id):
+                logger.warning(f"Campaign {service_id} was deleted. Dropping pending message.")
+                active_tasks.pop(run_id, None)
+                return
+
             # Concurrency lock per campaign
             global active_campaigns_lock
             if 'active_campaigns_lock' not in globals():

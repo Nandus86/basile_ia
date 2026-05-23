@@ -255,6 +255,15 @@ class DisparadorRedis:
         await self.ensure_connected()
         return await self.client.exists(f"disp:paused:{service_id}") == 1
 
+    # -- Deleted Marker --
+    async def mark_deleted(self, service_id: str, ttl: int = 604800):
+        await self.ensure_connected()
+        await self.client.set(f"disp:deleted:{service_id}", "1", ex=ttl)
+
+    async def is_deleted(self, service_id: str) -> bool:
+        await self.ensure_connected()
+        return await self.client.exists(f"disp:deleted:{service_id}") == 1
+
     # -- DLQ --
     async def add_to_dlq(self, service_id: str, contact: dict, error: str, attempts: int = 1):
         await self.ensure_connected()

@@ -388,6 +388,9 @@ async def delete_campaign(service_id: str):
     await disparador_redis.client.delete(f"disp:dlq:{service_id}")
     await disparador_redis.client.delete(f"disp:paused:{service_id}")
     
+    # Mark as deleted so worker drops pending messages
+    await disparador_redis.mark_deleted(service_id)
+    
     # 3. Clean up any staged queues that match this service_id
     if campaign:
         queue_id = campaign.get("queue_id")
