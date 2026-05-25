@@ -66,9 +66,9 @@ class ResultStatusResponse(BaseModel):
     status: str
     attempts: int
     last_error: Optional[str]
-    created_at: datetime
-    updated_at: datetime
-    sent_at: Optional[datetime]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
     
     model_config = {"from_attributes": True}
 

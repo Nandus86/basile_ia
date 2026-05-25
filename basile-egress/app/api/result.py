@@ -30,6 +30,12 @@ async def save_result_status(
     status_key = f"result:status:{job_id}"
     
     import json
+    
+    # Check if created_at exists, if not set it
+    existing_created_at = await redis_client.hget(status_key, "created_at")
+    if not existing_created_at:
+        await redis_client.hset(status_key, "created_at", datetime.now(timezone.utc).isoformat())
+        
     await redis_client.hset(status_key, "status", status)
     await redis_client.hset(status_key, "attempts", str(attempts))
     await redis_client.hset(status_key, "last_error", last_error or "")
