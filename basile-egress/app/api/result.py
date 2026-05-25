@@ -5,6 +5,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.models.pipeline import EgressPipeline
@@ -37,8 +40,11 @@ async def _resolve_pipeline(result: ResultInput, db: AsyncSession):
     """Resolve configuration from EgressPipeline if pipeline_path is provided"""
     if not result.pipeline_path:
         if not result.output_url:
-            raise HTTPException(status_code=400, detail="Either output_url or pipeline_path must be provided")
+            logger.error(f"Missing pipeline_path or output_url in request payload: {result.model_dump()}")
+            raise HTTPException(status_code=400, detail="Either output_url or pipeline_path must be provided. Make sure to pass ?pipeline_path=X in the callback URL.")
         return result
+
+    logger.info(f"Resolving egress pipeline path: {result.pipeline_path}")
 
     query = select(EgressPipeline).where(
         EgressPipeline.path == result.pipeline_path,

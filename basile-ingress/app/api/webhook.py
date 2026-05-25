@@ -79,7 +79,7 @@ async def receive_webhook(
         # If user provided an egress path but no explicit callback, point to the internal Egress service
         if not callback_url:
             # Assumes Egress runs on egress-api or accessible via gateway
-            callback_url = "http://basile-egress:8000/egress-api/result"
+            callback_url = f"http://basile-egress:8000/egress-api/result?pipeline_path={egress_path}"
             
     if callback_url:
         worker_payload["callback_url"] = callback_url
