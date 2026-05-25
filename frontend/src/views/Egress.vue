@@ -132,7 +132,12 @@ const defaultPipelineItem = {
   description: '',
   output_url: '',
   output_method: 'POST',
-  output_schema: null,
+  output_schema: {
+    messageRequired: true,
+    sessionIdField: 'session_id',
+    mappings: {},
+    defaults: {}
+  },
   output_headers: null,
   retry_config: { maxRetries: 3, delays: [5000, 15000, 60000] }
 }
@@ -156,6 +161,7 @@ const fetchPipelines = async () => {
 const openCreatePipeline = () => {
   editedPipelineItem.value = JSON.parse(JSON.stringify(defaultPipelineItem))
   isEditingPipeline.value = false
+  mappingEntries.value = []
   pipelineDialog.value = true
 }
 
@@ -164,8 +170,12 @@ const openEditPipeline = (item) => {
   if (!copy.retry_config) {
     copy.retry_config = { maxRetries: 3, delays: [5000, 15000, 60000] }
   }
+  if (!copy.output_schema) {
+    copy.output_schema = { ...defaultPipelineItem.output_schema }
+  }
   editedPipelineItem.value = copy
   isEditingPipeline.value = true
+  syncMappingsFromItem()
   pipelineDialog.value = true
 }
 
@@ -216,6 +226,32 @@ const deletePipeline = async () => {
     pipelineDeleteDialog.value = false
     pipelineToDelete.value = null
   }
+}
+
+
+// --- Mappings Helpers ---
+const mappingEntries = ref([])
+
+const syncMappingsFromItem = () => {
+  const m = editedPipelineItem.value.output_schema?.mappings || {}
+  mappingEntries.value = Object.entries(m).map(([k, v]) => ({ from: k, to: v }))
+}
+
+const syncMappingsToItem = () => {
+  const obj = {}
+  mappingEntries.value.forEach(e => {
+    if (e.from && e.to) obj[e.from] = e.to
+  })
+  editedPipelineItem.value.output_schema.mappings = obj
+}
+
+const addMapping = () => {
+  mappingEntries.value.push({ from: '', to: '' })
+}
+
+const removeMapping = (index) => {
+  mappingEntries.value.splice(index, 1)
+  syncMappingsToItem()
 }
 
 
@@ -586,6 +622,53 @@ onMounted(() => {
                 ></v-select>
               </v-col>
             </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Output Schema -->
+            <div class="text-subtitle-1 font-weight-bold mb-3">Esquema de Saída</div>
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-switch
+                  v-model="editedPipelineItem.output_schema.messageRequired"
+                  color="deep-orange"
+                  label="Mensagem obrigatória"
+                  hint="Exige o campo result/message na saída do worker"
+                  persistent-hint
+                ></v-switch>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="editedPipelineItem.output_schema.sessionIdField"
+                  label="Campo de Session ID"
+                  variant="outlined"
+                  hint="Nome do campo que receberá o ID da sessão no webhook"
+                  persistent-hint
+                ></v-text-field>
+              </v-col>
+            </v-row>
+
+            <!-- Mappings -->
+            <div class="mt-4 bg-surface-variant pa-4 rounded-lg">
+              <div class="d-flex align-center mb-3">
+                <span class="font-weight-medium">Mapeamento de Campos</span>
+                <v-spacer></v-spacer>
+                <v-btn size="small" color="deep-orange" variant="tonal" prepend-icon="mdi-plus" @click="addMapping">
+                  Adicionar
+                </v-btn>
+              </div>
+              <div v-for="(entry, index) in mappingEntries" :key="index" class="d-flex gap-2 mb-2 align-center">
+                <v-text-field v-model="entry.from" label="Campo interno (do agent)" variant="outlined" density="compact" hide-details @blur="syncMappingsToItem"></v-text-field>
+                <v-icon size="20" class="mx-1">mdi-arrow-right</v-icon>
+                <v-text-field v-model="entry.to" label="Campo externo (para o webhook)" variant="outlined" density="compact" hide-details @blur="syncMappingsToItem"></v-text-field>
+                <v-btn icon color="error" variant="text" size="small" @click="removeMapping(index)">
+                  <v-icon icon="mdi-trash-can-outline"></v-icon>
+                </v-btn>
+              </div>
+              <div v-if="mappingEntries.length === 0" class="text-caption text-medium-emphasis">
+                Nenhum mapeamento configurado.
+              </div>
+            </div>
 
             <v-divider class="my-4"></v-divider>
 

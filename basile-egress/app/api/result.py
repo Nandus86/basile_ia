@@ -73,13 +73,17 @@ async def receive_result(result: ResultInput, db: AsyncSession = Depends(get_db)
     
     await save_result_status(result.job_id, "processing", attempts=0)
     
-    transformed = transform_output(
-        result.response,
-        result.output_schema,
-        result.job_id,
-        result.session_id,
-        result.agent_used
-    )
+    try:
+        transformed = transform_output(
+            result.response,
+            result.output_schema,
+            result.job_id,
+            result.session_id,
+            result.agent_used
+        )
+    except ValueError as ve:
+        await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve))
+        raise HTTPException(status_code=422, detail=str(ve))
     
     retry_config = result.retry_config or {
         "maxRetries": 3,
@@ -118,13 +122,17 @@ async def receive_result_sync(result: ResultInput, db: AsyncSession = Depends(ge
     """
     result = await _resolve_pipeline(result, db)
     
-    transformed = transform_output(
-        result.response,
-        result.output_schema,
-        result.job_id,
-        result.session_id,
-        result.agent_used
-    )
+    try:
+        transformed = transform_output(
+            result.response,
+            result.output_schema,
+            result.job_id,
+            result.session_id,
+            result.agent_used
+        )
+    except ValueError as ve:
+        await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve))
+        raise HTTPException(status_code=422, detail=str(ve))
     
     success, error_msg = await webhook_sender.send(
         result.output_url,

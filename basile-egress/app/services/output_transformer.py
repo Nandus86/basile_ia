@@ -46,13 +46,16 @@ def transform_output(
     """
     mappings = output_schema.get("mappings", {}) if output_schema else {}
     defaults = output_schema.get("defaults", {}) if output_schema else {}
+    message_required = output_schema.get("messageRequired", True) if output_schema else True
+    session_id_field = output_schema.get("sessionIdField", "session_id") if output_schema else "session_id"
     
     transformed = {
         "job_id": job_id,
     }
     
     if session_id:
-        transformed["session_id"] = session_id
+        set_nested_value(transformed, session_id_field, session_id)
+        
     if agent_used:
         transformed["agent_used"] = agent_used
     
@@ -60,6 +63,15 @@ def transform_output(
         value = get_nested_value(response, internal_field)
         if value is not None:
             set_nested_value(transformed, external_field, value)
+            
+    if "result" not in transformed and "message" not in transformed:
+        message_value = get_nested_value(response, "result") or get_nested_value(response, "message")
+        if message_value is not None:
+            transformed["result"] = message_value
+        elif message_required:
+            raise ValueError("message (result) is required but not found in worker response")
+        else:
+            transformed["result"] = ""
     
     for key, default_value in defaults.items():
         if key not in transformed:
