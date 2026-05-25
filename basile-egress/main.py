@@ -1,9 +1,15 @@
 """
 basile-egress - Result Output Service
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 from app.database import engine, Base
 from app.redis_client import redis_client
@@ -41,6 +47,19 @@ app.add_middleware(
 app.include_router(pipelines.router, prefix="/pipelines", tags=["Pipelines"])
 app.include_router(result.router, prefix="/result", tags=["Result"])
 app.include_router(status.router, prefix="/status", tags=["Status"])
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    body = await request.body()
+    logger.error(f"Validation error on {request.url}")
+    logger.error(f"Request body: {body.decode(errors='replace')}")
+    logger.error(f"Errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": body.decode(errors='replace')}
+    )
+
 
 
 @app.get("/")
