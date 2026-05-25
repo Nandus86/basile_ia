@@ -2,9 +2,12 @@
 Webhook Receive Endpoint — Normalizes, forwards, and queues on failure
 """
 import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.models.pipeline import WebhookPipeline
@@ -56,6 +59,7 @@ async def receive_webhook(
             path
         )
     except ValueError as e:
+        logger.error(f"Validation error in webhook payload for path '{path}': {e}. Payload: {payload}")
         raise HTTPException(status_code=400, detail=str(e))
 
     job_id = normalized["job_id"]
@@ -139,6 +143,7 @@ async def test_webhook(
             path
         )
     except ValueError as e:
+        logger.error(f"Validation error in test webhook payload for path '{path}': {e}. Payload: {test_request.payload}")
         raise HTTPException(status_code=400, detail=str(e))
 
     return TestWebhookResponse(
