@@ -65,10 +65,20 @@ async def _resolve_pipeline(result: ResultInput, db: AsyncSession):
 
 
 @router.post("", response_model=ResultOutput)
-async def receive_result(result: ResultInput, db: AsyncSession = Depends(get_db)):
+async def receive_result(
+    result: ResultInput, 
+    pipeline_path: str = None, 
+    output_url: str = None, 
+    db: AsyncSession = Depends(get_db)
+):
     """
     Receive result from worker and send to webhook.
     """
+    if pipeline_path and not result.pipeline_path:
+        result.pipeline_path = pipeline_path
+    if output_url and not result.output_url:
+        result.output_url = output_url
+        
     result = await _resolve_pipeline(result, db)
     
     await save_result_status(result.job_id, "processing", attempts=0)
@@ -116,10 +126,20 @@ async def receive_result(result: ResultInput, db: AsyncSession = Depends(get_db)
 
 
 @router.post("/sync", response_model=ResultOutput)
-async def receive_result_sync(result: ResultInput, db: AsyncSession = Depends(get_db)):
+async def receive_result_sync(
+    result: ResultInput, 
+    pipeline_path: str = None, 
+    output_url: str = None, 
+    db: AsyncSession = Depends(get_db)
+):
     """
     Receive result and send to webhook synchronously without retry.
     """
+    if pipeline_path and not result.pipeline_path:
+        result.pipeline_path = pipeline_path
+    if output_url and not result.output_url:
+        result.output_url = output_url
+        
     result = await _resolve_pipeline(result, db)
     
     try:
