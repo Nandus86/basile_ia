@@ -1748,11 +1748,11 @@ async def _check_global_trigger_keywords(
                     print(f"[GlobalTrigger] ❌ Error executing tool '{tool.name}': {tool_err}")
                     results_parts.append(f"### Erro ao executar '{mcp.name}': {tool_err}")
         except Exception as e:
-            print(f"[GlobalTrigger] ❌ Error processing MCP '{mcp.name}': {e}")
+            print(f"[Trigger] ❌ Error processing MCP '{mcp.name}': {e}")
 
     if results_parts:
         return (
-            "\n\n## ⚡ Dados Pré-Executados via Trigger Global\n\n"
+            "\n\n## ⚡ Dados Pré-Executados via Trigger de MCP\n\n"
             "Os seguintes MCPs foram ativados automaticamente por palavras-chave na mensagem do usuário. "
             "Use os dados abaixo para compor sua resposta:\n\n"
             + "\n\n".join(results_parts)
@@ -1767,7 +1767,7 @@ async def _check_workflow_direct_triggers(
     agent_id: str,
     message: str,
     context_data: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
+) -> tuple[Any, bool]:
     """
     Check if any active workflows associated with the agent have trigger_keywords matching the message.
     If a match is found, execute the workflow DIRECTLY and return its final result.
@@ -1780,7 +1780,7 @@ async def _check_workflow_direct_triggers(
     import json
 
     if not agent_id:
-        return None
+        return None, False
 
     # Load agent with workflows
     result = await db.execute(
@@ -1790,11 +1790,11 @@ async def _check_workflow_direct_triggers(
     )
     agent_obj = result.scalar_one_or_none()
     if not agent_obj or not agent_obj.workflows:
-        return None
+        return None, False
 
     active_workflows = [w for w in agent_obj.workflows if w.is_active]
     if not active_workflows:
-        return None
+        return None, False
 
     best_match = None
     for wf in active_workflows:
@@ -1814,7 +1814,7 @@ async def _check_workflow_direct_triggers(
                     best_match = candidate
 
     if not best_match:
-        return None
+        return None, False
 
     wf = best_match["workflow"]
     print(f"[WorkflowTrigger] 🎯 Workflow '{wf.name}' triggered by keyword '{best_match['keyword']}'")
@@ -1844,15 +1844,17 @@ async def _check_workflow_direct_triggers(
                     final_result = saida_val
 
         if final_result is not None:
+            if is_direct:
+                return final_result, True
             if isinstance(final_result, (dict, list)):
-                return json.dumps(final_result, ensure_ascii=False, indent=2)
-            return str(final_result)
+                return json.dumps(final_result, ensure_ascii=False, indent=2), False
+            return str(final_result), False
 
-        return f"Automação '{wf.name}' executada com sucesso."
+        return f"Automação '{wf.name}' executada com sucesso.", False
 
     except Exception as e:
         print(f"[WorkflowTrigger] ❌ Error executing workflow '{wf.name}': {e}")
-        return None
+        return None, False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2207,30 +2209,39 @@ async def process_message_task(
                 # Workflow Keyword Trigger (Bypasses Agent)
                 # ═══════════════════════════════════════════════════════
                 if agent:
-                    wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
-                    if wf_direct_response:
+                    wf_direct_response, is_direct = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
+                    if wf_direct_response is not None:
                         print(f"[Task] ⚡ Workflow direct trigger executed. Bypassing agent.")
                         
+                        import json
+                        if is_direct:
+                            wf_str = json.dumps(wf_direct_response, ensure_ascii=False) if isinstance(wf_direct_response, (dict, list)) else str(wf_direct_response)
+                        else:
+                            wf_str = wf_direct_response
+
                         # Save to history
                         await redis_client.add_message(
                             session_id=session_id, role="user", content=message, ttl_seconds=86400,
                             tz_name=_resolve_tz_name(transition_data)
                         )
                         await redis_client.add_message(
-                            session_id=session_id, role="assistant", content=wf_direct_response, ttl_seconds=86400,
+                            session_id=session_id, role="assistant", content=wf_str, ttl_seconds=86400,
                             tz_name=_resolve_tz_name(transition_data)
                         )
                         # Save to MTM
                         await _save_mtm_message(db, str(agent.id), session_id, "user", message)
-                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_direct_response)
+                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_str)
 
                         processing_time = (time.time() - start_time) * 1000
-                        response_data = {
-                            "status": "completed",
-                            "response": wf_direct_response,
-                            "agent_used": "Workflow Automation",
-                            "processing_time_ms": processing_time,
-                        }
+                        if is_direct:
+                            response_data = wf_direct_response if isinstance(wf_direct_response, dict) else {"response": wf_direct_response}
+                        else:
+                            response_data = {
+                                "status": "completed",
+                                "response": wf_direct_response,
+                                "agent_used": "Workflow Automation",
+                                "processing_time_ms": processing_time,
+                            }
                         if callback_url:
                             from app.worker.tasks import _send_callback
                             await _send_callback(callback_url, response_data)
@@ -2751,6 +2762,38 @@ async def process_message_task(
                                 )
                                 
                                 wf_result = result_ctx.get('result')
+                                is_direct = getattr(wf, "return_direct_payload", False)
+                                
+                                if is_direct:
+                                    if isinstance(wf_result, dict):
+                                        if "result" in wf_result:
+                                            wf_result = wf_result["result"]
+                                        elif "saida" in wf_result:
+                                            saida_val = wf_result["saida"]
+                                            if isinstance(saida_val, dict) and "result" in saida_val:
+                                                wf_result = saida_val["result"]
+                                            else:
+                                                wf_result = saida_val
+                                    
+                                    response_data = wf_result if isinstance(wf_result, dict) else {"response": wf_result}
+                                    
+                                    # Still save to MTM if possible
+                                    wf_str = json.dumps(wf_result, ensure_ascii=False) if isinstance(wf_result, (dict, list)) else str(wf_result)
+                                    if output_text := wf_str.strip():
+                                        if stm_enabled:
+                                            await redis_client.add_message(
+                                                session_id=session_id, role="assistant",
+                                                content=output_text, ttl_seconds=stm_ttl_seconds,
+                                                tz_name=_resolve_tz_name(transition_data)
+                                            )
+                                        if agent_id and session_id:
+                                            await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
+
+                                    if callback_url:
+                                        from app.worker.tasks import _send_callback
+                                        await _send_callback(callback_url, response_data)
+                                    return response_data
+
                                 if isinstance(wf_result, dict):
                                     if "result" in wf_result:
                                         wf_result = wf_result["result"]

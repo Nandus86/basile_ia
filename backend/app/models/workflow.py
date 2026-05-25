@@ -25,6 +25,9 @@ class Workflow(Base):
     trigger_keywords = Column(JSON, default=list)
     trigger_match_mode = Column(String(20), default="word", nullable=False)
     
+    # Return raw JSON directly as payload
+    return_direct_payload = Column(Boolean, default=False)
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
