@@ -1377,7 +1377,7 @@ async def _build_workflow_tools(
         if len(tool_desc) > 1000:
             tool_desc = tool_desc[:997] + "..."
 
-        def _make_workflow_invoker(_wf_id, _wf_name, _database, _ctx):
+        def _make_workflow_invoker(_wf_id, _wf_name, _database, _ctx, _is_direct):
             async def _invoke_workflow(**kwargs) -> str:
                 """Invoke a workflow automation with the given payload and AI parameters."""
                 try:
@@ -1409,12 +1409,20 @@ async def _build_workflow_tools(
 
                     # Use the clean final result (last block output only)
                     final_result = result_ctx.get('result')
+                    
+                    if _is_direct:
+                        from app.worker.tasks import DirectPayloadException
+                        raise DirectPayloadException(final_result)
+                        
                     if final_result is not None:
                         return f"Automação '{_wf_name}' executada com sucesso.\n\nResultado:\n{_json.dumps(final_result, ensure_ascii=False, indent=2)}"
 
                     return f"Automação '{_wf_name}' executada com sucesso (sem resultado de saída)."
 
                 except Exception as e:
+                    from app.worker.tasks import DirectPayloadException
+                    if isinstance(e, DirectPayloadException):
+                        raise
                     print(f"[WorkflowTool] ❌ Error executing workflow '{_wf_name}': {e}")
                     return f"Erro ao executar automação '{_wf_name}': {str(e)}"
             return _invoke_workflow
@@ -1424,6 +1432,7 @@ async def _build_workflow_tools(
             _wf_name=wf.name,
             _database=db,
             _ctx=context_data,
+            _is_direct=getattr(wf, "return_direct_payload", False)
         )
 
         tool = StructuredTool.from_function(
