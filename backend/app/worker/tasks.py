@@ -23,6 +23,11 @@ from app.worker.status_monitor import StatusMonitor
 
 logger = logging.getLogger(__name__)
 
+class DirectPayloadException(Exception):
+    """Exception raised to instantly stop agents and return the direct workflow payload."""
+    def __init__(self, payload):
+        self.payload = payload
+
 # ─────────────────────────────────────────────────────────────
 # Shared helpers
 # ─────────────────────────────────────────────────────────────
@@ -2233,15 +2238,14 @@ async def process_message_task(
                         await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_str)
 
                         processing_time = (time.time() - start_time) * 1000
-                        if is_direct:
-                            response_data = wf_direct_response if isinstance(wf_direct_response, dict) else {"response": wf_direct_response}
-                        else:
-                            response_data = {
-                                "status": "completed",
-                                "response": wf_direct_response,
-                                "agent_used": "Workflow Automation",
-                                "processing_time_ms": processing_time,
-                            }
+                        response_data = {
+                            "status": "completed",
+                            "response": wf_direct_response if isinstance(wf_direct_response, str) else "Automação executada por gatilho.",
+                            "agent_used": "Workflow Automation",
+                            "processing_time_ms": processing_time,
+                        }
+                        if is_direct and isinstance(wf_direct_response, dict):
+                            response_data.update(wf_direct_response)
                         if callback_url:
                             from app.worker.tasks import _send_callback
                             await _send_callback(callback_url, response_data)
@@ -2775,7 +2779,15 @@ async def process_message_task(
                                             else:
                                                 wf_result = saida_val
                                     
-                                    response_data = wf_result if isinstance(wf_result, dict) else {"response": wf_result}
+                                    response_data = {
+                                        "status": "completed",
+                                        "response": wf_result if isinstance(wf_result, str) else "Automação finalizada.",
+                                        "agent_used": "Workflow Automation (Bypass)",
+                                        "processing_time_ms": (time.time() - start_time) * 1000,
+                                        "is_hitl_pause": False
+                                    }
+                                    if isinstance(wf_result, dict):
+                                        response_data.update(wf_result)
                                     
                                     # Still save to MTM if possible
                                     wf_str = json.dumps(wf_result, ensure_ascii=False) if isinstance(wf_result, (dict, list)) else str(wf_result)
@@ -3096,6 +3108,24 @@ async def process_message_task(
                     print(f"[Task] Failed to launch vector memory tasks: {e}")
 
             return response_data
+
+    except DirectPayloadException as e:
+        print(f"[Task] ⚡ Swarm/Agent execution aborted due to DirectPayloadException")
+        wf_direct_response = e.payload
+        processing_time = (time.time() - start_time) * 1000
+        response_data = {
+            "status": "completed",
+            "response": wf_direct_response if isinstance(wf_direct_response, str) else "Automação finalizada.",
+            "agent_used": "Workflow Automation (Tool Trigger)",
+            "processing_time_ms": processing_time,
+        }
+        if isinstance(wf_direct_response, dict):
+            response_data.update(wf_direct_response)
+
+        if callback_url:
+            from app.worker.tasks import _send_callback
+            await _send_callback(callback_url, response_data)
+        return response_data
 
     except Exception as e:
         import traceback
