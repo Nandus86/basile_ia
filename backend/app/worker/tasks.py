@@ -616,6 +616,24 @@ async def _enrich_agent_prompt(
         # v0.0.9: Orchestrator agents get collaborators as TOOLS
         # The ReAct agent naturally decides when to call each one
         print(f"[Task] 🔄 Orchestrator '{agent_config['name']}' — loading collaborator tools")
+
+        # ── SHORT-CIRCUIT: check collaborator workflows for direct payload ──
+        # Before building collaborator tools and invoking the orchestrator LLM,
+        # scan ALL collaborators' workflows for keyword match + return_direct_payload=True.
+        # If found, execute the automation directly and skip the entire orchestrator chain.
+        try:
+            shortcut_result = await _check_collaborator_workflow_shortcuts(
+                db, str(agent_model.id), message, context_data
+            )
+            if shortcut_result:
+                agent_config["__direct_payload_result"] = shortcut_result
+                print(f"[Task] ⚡ Orchestrator short-circuit activated — skipping collaborator tools and LLM")
+                return rag_context
+        except Exception as sc_err:
+            import traceback
+            print(f"[Task] ⚠️ Error in collaborator workflow short-circuit check: {sc_err}")
+            traceback.print_exc()
+
         try:
             collab_tools, mandatory_instructions, deterministic_matches, always_start, always_end = await _build_collaborator_tools(
                 db, agent_model, message, context_data, user_access_level=user_access_level
@@ -1796,6 +1814,146 @@ async def _check_global_trigger_keywords(
         )
 
     return None
+
+
+async def _check_collaborator_workflow_shortcuts(
+    db,
+    agent_id: str,
+    message: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    SHORT-CIRCUIT for orchestrator agents:
+    Scans workflows of ALL collaborators looking for keyword match
+    + return_direct_payload=True.
+
+    If found, executes the automation DIRECTLY (no LLM involved)
+    and returns a dict with __direct_payload=True.
+
+    This runs BEFORE _build_collaborator_tools and the orchestrator LLM,
+    so the entire orchestrator chain is bypassed.
+
+    Returns:
+        - dict with __direct_payload=True if a matching workflow is found and executed
+        - None if no match or if no workflows have return_direct_payload=True
+    """
+    from app.models.agent import Agent as AgentModel, AgentCollaborator, CollaborationStatus
+    from app.models.workflow import Workflow
+    from app.services.workflow_engine import WorkflowEngine
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    import json
+
+    if not agent_id:
+        return None
+
+    # Load the orchestrator with its collaborator settings → collaborator agents → their workflows
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(
+            selectinload(AgentModel.collaborator_settings)
+                .selectinload(AgentCollaborator.collaborator)
+                .selectinload(AgentModel.workflows)
+        )
+        .where(AgentModel.id == agent_id)
+    )
+    orchestrator_agent = result.scalar_one_or_none()
+    if not orchestrator_agent or not orchestrator_agent.collaborator_settings:
+        return None
+
+    # Collect all active collaborators (not blocked)
+    active_collabs = []
+    for setting in orchestrator_agent.collaborator_settings:
+        if setting.status != CollaborationStatus.BLOCKED and setting.collaborator:
+            active_collabs.append(setting.collaborator)
+
+    if not active_collabs:
+        return None
+
+    # Scan each collaborator's workflows for keyword match + return_direct_payload
+    best_match = None
+    for collab in active_collabs:
+        collab_workflows = getattr(collab, "workflows", []) or []
+        active_wfs = [w for w in collab_workflows if w.is_active and getattr(w, "return_direct_payload", False)]
+
+        for wf in active_wfs:
+            wf_kws = getattr(wf, "trigger_keywords", []) or []
+            wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
+
+            for kw in wf_kws:
+                if _match_true_trigger_keyword(message, kw, wf_mode):
+                    candidate = {
+                        "workflow": wf,
+                        "collaborator": collab,
+                        "keyword": kw,
+                        "mode": wf_mode,
+                        "keyword_len": len((kw or "").strip()),
+                    }
+                    if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
+                        best_match = candidate
+
+    if not best_match:
+        return None
+
+    wf = best_match["workflow"]
+    collab = best_match["collaborator"]
+    print(
+        f"[ShortCircuit] ⚡ Orchestrator short-circuit! "
+        f"Collaborator '{collab.name}' → Workflow '{wf.name}' "
+        f"triggered by keyword '{best_match['keyword']}' (return_direct_payload=True)"
+    )
+
+    try:
+        engine = WorkflowEngine(db)
+        trigger_data = (context_data or {}).copy()
+        trigger_data["message"] = message
+        trigger_data["matched_keyword"] = best_match["keyword"]
+
+        result_ctx = await engine.execute(
+            workflow_id=wf.id,
+            trigger_data=trigger_data,
+            trigger_type="keyword_trigger",
+        )
+
+        final_result = result_ctx.get("result")
+        if isinstance(final_result, dict):
+            if "result" in final_result:
+                final_result = final_result["result"]
+            elif "saida" in final_result:
+                saida_val = final_result["saida"]
+                if isinstance(saida_val, dict) and "result" in saida_val:
+                    final_result = saida_val["result"]
+                else:
+                    final_result = saida_val
+
+        direct_payload = {
+            "__direct_payload": True,
+            "status": "completed",
+            "agent_used": f"Workflow Automation ({wf.name} via {collab.name})",
+            "workflow_name": wf.name,
+            "collaborator_name": collab.name,
+            "matched_keyword": best_match["keyword"],
+        }
+        if isinstance(final_result, dict):
+            direct_payload.update(final_result)
+            if "response" not in direct_payload:
+                direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+        elif isinstance(final_result, list):
+            direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+            direct_payload["data"] = final_result
+        elif final_result is not None:
+            direct_payload["response"] = str(final_result)
+        else:
+            direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
+
+        print(f"[ShortCircuit] ✅ Direct payload returned with {len(direct_payload)} fields")
+        return direct_payload
+
+    except Exception as e:
+        import traceback
+        print(f"[ShortCircuit] ❌ Error executing workflow '{wf.name}': {e}")
+        traceback.print_exc()
+        return None
 
 
 async def _check_workflow_direct_triggers(
