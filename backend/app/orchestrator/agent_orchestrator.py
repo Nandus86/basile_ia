@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from app.models.agent import Agent, AgentCollaborator, CollaborationStatus
 from app.config import settings
+from app.worker.exceptions import DirectPayloadException
 
 
 class AgentOrchestrator:
@@ -260,6 +261,67 @@ Responda APENAS em JSON válido com este formato exato:
         """
         if monitor:
             monitor.log_progress(f"Consultando agente colaborador: {agent.name}")
+
+        # Support bypass_llm for collaborator agents
+        if getattr(agent, "bypass_llm", False):
+            print(f"[Collaborator] ⚡ Agent '{agent.name}' is in bypass_llm mode. Bypassing LLM execution.")
+            from app.services.workflow_engine import WorkflowEngine
+            from app.models.agent import Agent as AgentModel
+            from sqlalchemy import select as sa_select
+            from sqlalchemy.orm import selectinload
+            import json as _json
+
+            collab_result = await self.db.execute(
+                sa_select(AgentModel)
+                .options(selectinload(AgentModel.workflows))
+                .where(AgentModel.id == agent.id)
+            )
+            collab_obj = collab_result.scalar_one_or_none()
+
+            wf_result = None
+            if collab_obj and collab_obj.workflows:
+                active_workflows = [w for w in collab_obj.workflows if w.is_active]
+                if active_workflows:
+                    wf = active_workflows[0]  # Take the first active workflow
+                    print(f"[Collaborator] ⚡ Bypass Mode: Executing workflow '{wf.name}' automatically.")
+
+                    engine = WorkflowEngine(self.db)
+                    trigger_data = (context_data or {}).copy()
+                    trigger_data["message"] = message
+
+                    result_ctx = await engine.execute(
+                        workflow_id=wf.id,
+                        trigger_data=trigger_data,
+                        trigger_type="bypass_auto_trigger",
+                    )
+
+                    wf_result = result_ctx.get('result')
+                    is_direct = getattr(wf, "return_direct_payload", False)
+
+                    if is_direct:
+                        print(f"[Collaborator] ⚡ Direct payload requested. Aborting with DirectPayloadException.")
+                        raise DirectPayloadException(wf_result)
+
+                    if isinstance(wf_result, dict):
+                        if "result" in wf_result:
+                            wf_result = wf_result["result"]
+                        elif "saida" in wf_result:
+                            saida_val = wf_result["saida"]
+                            if isinstance(saida_val, dict) and "result" in saida_val:
+                                wf_result = saida_val["result"]
+                            else:
+                                wf_result = saida_val
+
+                    if wf_result is not None:
+                        if isinstance(wf_result, (dict, list)):
+                            response_text = _json.dumps(wf_result, ensure_ascii=False, indent=2)
+                        else:
+                            response_text = str(wf_result)
+                    else:
+                        response_text = f"Automação '{wf.name}' executada com sucesso."
+
+                    return (agent.name, response_text)
+
         from app.orchestrator.agent_factory import AgentFactory
         import json
         
@@ -776,7 +838,9 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         
         collaborator_responses = {}
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
+                if isinstance(result, DirectPayloadException) or result.__class__.__name__ == "DirectPayloadException":
+                    raise result
                 continue
             name, response = result
             if response:
@@ -906,7 +970,9 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         
         collaborator_responses = {}
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
+                if isinstance(result, DirectPayloadException) or result.__class__.__name__ == "DirectPayloadException":
+                    raise result
                 continue
             name, response = result
             if response:

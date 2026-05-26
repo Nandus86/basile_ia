@@ -23,10 +23,7 @@ from app.worker.status_monitor import StatusMonitor
 
 logger = logging.getLogger(__name__)
 
-class DirectPayloadException(BaseException):
-    """Exception raised to instantly stop agents and return the direct workflow payload."""
-    def __init__(self, payload):
-        self.payload = payload
+from app.worker.exceptions import DirectPayloadException
 
 # ─────────────────────────────────────────────────────────────
 # Shared helpers
@@ -1411,7 +1408,7 @@ async def _build_workflow_tools(
                     final_result = result_ctx.get('result')
                     
                     if _is_direct:
-                        from app.worker.tasks import DirectPayloadException
+                        from app.worker.exceptions import DirectPayloadException
                         raise DirectPayloadException(final_result)
                         
                     if final_result is not None:
@@ -1420,7 +1417,7 @@ async def _build_workflow_tools(
                     return f"Automação '{_wf_name}' executada com sucesso (sem resultado de saída)."
 
                 except Exception as e:
-                    from app.worker.tasks import DirectPayloadException
+                    from app.worker.exceptions import DirectPayloadException
                     if isinstance(e, DirectPayloadException):
                         raise
                     print(f"[WorkflowTool] ❌ Error executing workflow '{_wf_name}': {e}")
@@ -1949,13 +1946,20 @@ async def _check_collaborator_workflow_direct_payload(
             wf_kws = getattr(wf, "trigger_keywords", []) or []
             wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
 
-            for kw in wf_kws:
-                if _match_true_trigger_keyword(message, kw, wf_mode):
+            # Check both workflow trigger keywords AND collaborator trigger keywords (if collaborator has bypass_llm=True)
+            kws_to_check = [(kw, wf_mode) for kw in wf_kws]
+            if getattr(collab_obj, "bypass_llm", False):
+                collab_kws = getattr(collab_obj, "trigger_keywords", []) or []
+                collab_mode = getattr(collab_obj, "true_trigger_match_mode", "word") or "word"
+                kws_to_check.extend([(kw, collab_mode) for kw in collab_kws])
+
+            for kw, mode in kws_to_check:
+                if _match_true_trigger_keyword(message, kw, mode):
                     candidate = {
                         "workflow": wf,
                         "collaborator": collab_obj,
                         "keyword": kw,
-                        "mode": wf_mode,
+                        "mode": mode,
                         "keyword_len": len((kw or "").strip()),
                     }
                     if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
