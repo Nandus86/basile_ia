@@ -315,17 +315,6 @@
             density="compact"
             @update:model-value="markUnsaved"
           ></v-select>
-
-          <v-switch
-            v-model="workflow.return_direct_payload"
-            label="Retornar Payload Direto"
-            color="primary"
-            density="compact"
-            class="mb-2 mt-2"
-            hint="Se ativado, retorna o JSON final bruto da automação na API (bypass/keywords)"
-            persistent-hint
-            @change="markUnsaved"
-          ></v-switch>
         </v-card-text>
         <v-card-actions class="pa-4 bg-surface-variant">
           <v-spacer></v-spacer>
@@ -617,7 +606,6 @@ async function saveDefinition() {
       is_active: workflow.value.is_active,
       trigger_keywords: workflow.value.trigger_keywords || [],
       trigger_match_mode: workflow.value.trigger_match_mode || 'word',
-      return_direct_payload: workflow.value.return_direct_payload || false,
       definition
     })
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
