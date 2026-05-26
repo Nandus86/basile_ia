@@ -3138,6 +3138,30 @@ async def process_message_task(
                     final_result = swarm_res.get("response", "")
                     agent_used = swarm_res.get("agent_used", agent_config["name"])
                     output_text = str(final_result)
+
+                    # Save to history
+                    if output_text.strip():
+                        if stm_enabled and not (context_data or {}).get("formulation_only", False):
+                            await redis_client.add_message(
+                                session_id=session_id, role="assistant",
+                                content=output_text, ttl_seconds=stm_ttl_seconds,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
+                        if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
+                            await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
+
+                    processing_time = (time.time() - start_time) * 1000
+                    response_data = {
+                        "status": "completed",
+                        "agent_used": agent_used,
+                        "processing_time_ms": processing_time,
+                        "is_hitl_pause": False,
+                    }
+                    if isinstance(final_result, dict):
+                        response_data.update(final_result)
+                    else:
+                        response_data["response"] = final_result
+
                     retry_count = max_retries + 1  # Skip standard execution
                 except Exception as e:
                     print(f"[Task] 🐝 Swarm execution failed: {e}")
