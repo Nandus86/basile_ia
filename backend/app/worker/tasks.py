@@ -1408,6 +1408,8 @@ async def _build_workflow_tools(
                     final_result = result_ctx.get('result')
                     
                     if _is_direct:
+                        if isinstance(_ctx, dict):
+                            _ctx["__direct_payload__"] = final_result
                         from app.worker.exceptions import DirectPayloadException
                         raise DirectPayloadException(final_result)
                         
@@ -2330,6 +2332,10 @@ async def process_message_task(
 
             factory = AgentFactory(db)
 
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
+
             # ── Resolve agent ──
             if agent_id:
                 agent = await factory.get_agent_by_id(agent_id)
@@ -2915,6 +2921,10 @@ async def process_message_task(
                 traceback.print_exc()
 
             # ── Execute agent ──
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
+
             resilience_cfg = agent_config.get("resilience", {}) if agent_config else {}
             max_retries = resilience_cfg.get("max_retries", 2)
             timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
@@ -3073,7 +3083,14 @@ async def process_message_task(
                     traceback.print_exc()
                     raise
 
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
+
             while retry_count <= max_retries:
+                if context_data and "__direct_payload__" in context_data:
+                    from app.worker.exceptions import DirectPayloadException
+                    raise DirectPayloadException(context_data["__direct_payload__"])
                 try:
                     import asyncio
                     if agent_config.get("output_schema"):
@@ -3107,6 +3124,10 @@ async def process_message_task(
                         final_result = response
                         agent_used = agent_config["name"]
                         output_text = str(final_result)
+
+                    if context_data and "__direct_payload__" in context_data:
+                        from app.worker.exceptions import DirectPayloadException
+                        raise DirectPayloadException(context_data["__direct_payload__"])
                 except asyncio.TimeoutError:
                     print(f"[Task] ⏱️ Agent execution timed out after {timeout_seconds}s")
                     raise

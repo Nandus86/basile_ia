@@ -891,6 +891,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 return called
 
             async def call_model_node(state: AgentExecState):
+                if context_data and "__direct_payload__" in context_data:
+                    from app.worker.exceptions import DirectPayloadException
+                    raise DirectPayloadException(context_data["__direct_payload__"])
                 if not budget.can_continue():
                     return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
 
@@ -1270,6 +1273,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             return called
 
         async def call_model_node(state: AgentExecState):
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
             if not budget.can_continue():
                 return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
             called_tools = _get_called_tool_names(state)
@@ -1336,6 +1342,10 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         execution_mode_override: Optional[str] = None,
     ) -> str:
         """Invoke an agent with messages and return response."""
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
+
         prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
         
         if not prep["is_react"]:
@@ -1378,6 +1388,10 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             prep["budget"].stop_reason(),
         )
 
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
+
         for msg in reversed(final_messages):
             if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
                 if not (hasattr(msg, "tool_calls") and msg.tool_calls):
@@ -1398,6 +1412,10 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         execution_mode_override: Optional[str] = None,
     ):
         """Invoke an agent and stream events/chunks."""
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
+
         prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
         
         if not prep["is_react"]:
@@ -1469,6 +1487,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         Invoke an agent with structured JSON output.
         Uses the agent's output_schema if defined, otherwise uses default.
         """
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
         from app.schemas.structured_output import get_output_schema_for_agent, format_context_data_for_prompt
         
         llm = self.create_llm(agent_config)
@@ -1619,6 +1640,9 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
         
         try:
             result = await structured_llm.ainvoke(all_messages, config=run_config)
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
             return result.model_dump()
         except Exception as e:
             logger.error(f"[AgentFactory] ❌ Structured output error em '{agent_config['name']}': {e}", exc_info=True)
@@ -1651,6 +1675,10 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
                             return partial_data
                 except Exception as inner_e:
                     logger.error(f"[AgentFactory] ❌ Falha ao recuperar JSON parcial: {inner_e}")
+            
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
             
             # Fallback final se falhar e não recuperar JSON parcial
             regular_response = await self.invoke_agent(

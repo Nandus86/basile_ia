@@ -259,6 +259,10 @@ Responda APENAS em JSON válido com este formato exato:
         Directly injects context_data into the input message based on input_schema.
         response_style: "structured" (ACHADOS/DADOS/RECOMENDAÇÃO) or "natural" (direct response).
         """
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
+
         if monitor:
             monitor.log_progress(f"Consultando agente colaborador: {agent.name}")
 
@@ -295,11 +299,10 @@ Responda APENAS em JSON válido com este formato exato:
                         trigger_type="bypass_auto_trigger",
                     )
 
-                    wf_result = result_ctx.get('result')
-                    is_direct = getattr(wf, "return_direct_payload", False)
-
                     if is_direct:
                         print(f"[Collaborator] ⚡ Direct payload requested. Aborting with DirectPayloadException.")
+                        if isinstance(context_data, dict):
+                            context_data["__direct_payload__"] = wf_result
                         raise DirectPayloadException(wf_result)
 
                     if isinstance(wf_result, dict):
@@ -726,9 +729,11 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                     messages=messages,
                     rag_context=None,
                     context_data=context_data, # Let factory handle it
-                )
-            
             print(f"[Orchestrator] ✅ Collaborator '{agent.name}' responded")
+            
+            if context_data and "__direct_payload__" in context_data:
+                from app.worker.exceptions import DirectPayloadException
+                raise DirectPayloadException(context_data["__direct_payload__"])
 
             # Sanitize structured JSON responses (achados/dados/recomendacao)
             # to prevent raw internal JSON from reaching the orchestrator or end user
@@ -836,6 +841,10 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
+        
         collaborator_responses = {}
         for result in results:
             if isinstance(result, BaseException):
@@ -903,6 +912,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         primary_response: str,
         context: str = "",
         monitor: Optional[Any] = None,
+        context_data: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Post-response orchestration fallback."""
         if not hasattr(primary_agent, 'collaboration_enabled') or not primary_agent.collaboration_enabled:
@@ -958,6 +968,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 message=message,
                 history=[],
                 context=context,
+                context_data=context_data,
                 orientation=orientation,
                 primary_agent=primary_agent,
                 monitor=monitor,
@@ -967,6 +978,10 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         ]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        if context_data and "__direct_payload__" in context_data:
+            from app.worker.exceptions import DirectPayloadException
+            raise DirectPayloadException(context_data["__direct_payload__"])
         
         collaborator_responses = {}
         for result in results:

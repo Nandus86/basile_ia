@@ -635,12 +635,12 @@ Você tem acesso a ferramentas externas. USE-AS ATIVAMENTE quando o usuário ped
                 from app.orchestrator.agent_orchestrator import AgentOrchestrator
                 orchestrator = AgentOrchestrator(db)
                 
-                # Run orchestration
                 orchestrated_response = await orchestrator.orchestrate(
                     message=state["message"],
                     primary_agent=agent_model,
                     primary_response=response_text,
-                    context=""
+                    context="",
+                    context_data=state.get("context_data")
                 )
                 
                 if orchestrated_response != response_text:
