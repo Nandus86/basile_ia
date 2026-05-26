@@ -25,6 +25,9 @@ class Workflow(Base):
     trigger_keywords = Column(JSON, default=list)
     trigger_match_mode = Column(String(20), default="word", nullable=False)
     
+    # Direct payload return — bypass LLM and merge automation result into API response
+    return_direct_payload = Column(Boolean, default=False, nullable=False)
+    
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

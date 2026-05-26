@@ -781,14 +781,32 @@ async def _enrich_agent_prompt(
                 user_access_level=user_access_level,
             )
             if subordinate_context:
-                print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
-                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                    f"\n\n## Colaboradores (Subordinados)\n"
-                    f"Os seguintes especialistas forneceram contribuições sobre a solicitação do usuário. "
-                    f"Se as respostas já estiverem adequadas para o usuário final, utilize-as diretamente. "
-                    f"Se necessário, sintetize e adapte o conteúdo para garantir clareza e coesão:\n"
-                    f"{subordinate_context}\n"
-                )
+                # ── Check for __direct_payload bypass from collaborator ──
+                if isinstance(subordinate_context, str) and subordinate_context.startswith("__DIRECT_PAYLOAD_BYPASS__"):
+                    import json as _dp_json
+                    payload_json = subordinate_context[len("__DIRECT_PAYLOAD_BYPASS__"):]
+                    try:
+                        direct_data = _dp_json.loads(payload_json)
+                        agent_config["__direct_payload_result"] = direct_data
+                        print(f"[Task] ⚡ Direct payload bypass detected from collaborator — LLM will be skipped")
+                    except (_dp_json.JSONDecodeError, ValueError):
+                        print(f"[Task] ⚠️ Failed to parse direct payload JSON, falling back to normal flow")
+                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                            f"\n\n## Colaboradores (Subordinados)\n"
+                            f"Os seguintes especialistas forneceram contribuições sobre a solicitação do usuário. "
+                            f"Se as respostas já estiverem adequadas para o usuário final, utilize-as diretamente. "
+                            f"Se necessário, sintetize e adapte o conteúdo para garantir clareza e coesão:\n"
+                            f"{payload_json}\n"
+                        )
+                else:
+                    print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
+                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                        f"\n\n## Colaboradores (Subordinados)\n"
+                        f"Os seguintes especialistas forneceram contribuições sobre a solicitação do usuário. "
+                        f"Se as respostas já estiverem adequadas para o usuário final, utilize-as diretamente. "
+                        f"Se necessário, sintetize e adapte o conteúdo para garantir clareza e coesão:\n"
+                        f"{subordinate_context}\n"
+                    )
         except Exception as e:
             import traceback
             print(f"[Task] Orchestrator pre-consultation error: {e}")
@@ -1253,6 +1271,24 @@ async def _build_collaborator_tools(
                             print(f"[CollabTool] ⚠️ Erro no Planner LLM, enviando instrução original. Erro: {planner_err}")
 
                     from app.services.collaborator_executor import CollaboratorExecutor
+                    
+                    # ── EARLY CHECK: Workflow Direct Triggers on Collaborator (Orchestrator path) ──
+                    try:
+                        from app.worker.tasks import _check_workflow_direct_triggers
+                        wf_direct = await _check_workflow_direct_triggers(
+                            _database, str(_agent.id), instrucao, _ctx
+                        )
+                        if wf_direct is not None:
+                            if isinstance(wf_direct, dict) and wf_direct.get("__direct_payload"):
+                                import json as _wf_json
+                                print(f"[CollabTool] ⚡ Workflow direct payload bypass for '{_agent.name}'")
+                                return _wf_json.dumps(wf_direct, ensure_ascii=False)
+                            elif isinstance(wf_direct, str):
+                                print(f"[CollabTool] ⚡ Workflow trigger bypass for '{_agent.name}'")
+                                return wf_direct
+                    except Exception as _wf_err:
+                        print(f"[CollabTool] ⚠️ Error checking workflow triggers: {_wf_err}")
+                    
                     executor = CollaboratorExecutor(db=_database)
                     name, response = await executor.invoke(
                         collaborator=_agent,
@@ -1767,11 +1803,17 @@ async def _check_workflow_direct_triggers(
     agent_id: str,
     message: str,
     context_data: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
+) -> Optional[Any]:
     """
     Check if any active workflows associated with the agent have trigger_keywords matching the message.
     If a match is found, execute the workflow DIRECTLY and return its final result.
     This bypasses the AI agent entirely.
+    
+    Returns:
+        - dict with __direct_payload=True when workflow.return_direct_payload is True
+          (all automation fields are at root level for merging into response_data)
+        - str when return_direct_payload is False (legacy behavior)
+        - None when no match
     """
     from app.models.agent import Agent as AgentModel
     from app.services.workflow_engine import WorkflowEngine
@@ -1817,7 +1859,8 @@ async def _check_workflow_direct_triggers(
         return None
 
     wf = best_match["workflow"]
-    print(f"[WorkflowTrigger] 🎯 Workflow '{wf.name}' triggered by keyword '{best_match['keyword']}'")
+    is_direct_payload = getattr(wf, "return_direct_payload", False)
+    print(f"[WorkflowTrigger] 🎯 Workflow '{wf.name}' triggered by keyword '{best_match['keyword']}' (return_direct_payload={is_direct_payload})")
     
     try:
         engine = WorkflowEngine(db)
@@ -1843,6 +1886,33 @@ async def _check_workflow_direct_triggers(
                 else:
                     final_result = saida_val
 
+        # ── Direct Payload Mode: return dict with all automation fields ──
+        if is_direct_payload:
+            direct_payload = {
+                "__direct_payload": True,
+                "status": "completed",
+                "agent_used": f"Workflow Automation ({wf.name})",
+                "workflow_name": wf.name,
+                "matched_keyword": best_match["keyword"],
+            }
+            if isinstance(final_result, dict):
+                # Merge all automation fields at root level
+                direct_payload.update(final_result)
+                # Ensure 'response' key exists for downstream compatibility
+                if "response" not in direct_payload:
+                    direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+            elif isinstance(final_result, list):
+                direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+                direct_payload["data"] = final_result
+            elif final_result is not None:
+                direct_payload["response"] = str(final_result)
+            else:
+                direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
+            
+            print(f"[WorkflowTrigger] ⚡ Direct payload returned with {len(direct_payload)} fields")
+            return direct_payload
+
+        # ── Legacy Mode: return string ──
         if final_result is not None:
             if isinstance(final_result, (dict, list)):
                 return json.dumps(final_result, ensure_ascii=False, indent=2)
@@ -2208,33 +2278,75 @@ async def process_message_task(
                 # ═══════════════════════════════════════════════════════
                 if agent:
                     wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
-                    if wf_direct_response:
-                        print(f"[Task] ⚡ Workflow direct trigger executed. Bypassing agent.")
-                        
-                        # Save to history
-                        await redis_client.add_message(
-                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
-                            tz_name=_resolve_tz_name(transition_data)
-                        )
-                        await redis_client.add_message(
-                            session_id=session_id, role="assistant", content=wf_direct_response, ttl_seconds=86400,
-                            tz_name=_resolve_tz_name(transition_data)
-                        )
-                        # Save to MTM
-                        await _save_mtm_message(db, str(agent.id), session_id, "user", message)
-                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_direct_response)
+                    if wf_direct_response is not None:
+                        # ── Direct Payload Mode (dict with __direct_payload) ──
+                        if isinstance(wf_direct_response, dict) and wf_direct_response.get("__direct_payload"):
+                            print(f"[Task] ⚡ Workflow direct trigger with DIRECT PAYLOAD. Merging into response.")
+                            
+                            response_text = wf_direct_response.get("response", "")
+                            
+                            # Save to history
+                            await redis_client.add_message(
+                                session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
+                            if response_text:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                            # Save to MTM
+                            await _save_mtm_message(db, str(agent.id), session_id, "user", message)
+                            if response_text:
+                                await _save_mtm_message(db, str(agent.id), session_id, "assistant", str(response_text))
 
-                        processing_time = (time.time() - start_time) * 1000
-                        response_data = {
-                            "status": "completed",
-                            "response": wf_direct_response,
-                            "agent_used": "Workflow Automation",
-                            "processing_time_ms": processing_time,
-                        }
-                        if callback_url:
-                            from app.worker.tasks import _send_callback
-                            await _send_callback(callback_url, response_data)
-                        return response_data
+                            processing_time = (time.time() - start_time) * 1000
+                            # Build response_data: merge ALL automation fields at root level
+                            response_data = {
+                                "status": "completed",
+                                "processing_time_ms": processing_time,
+                            }
+                            # Merge automation fields (except internal markers)
+                            for k, v in wf_direct_response.items():
+                                if k != "__direct_payload":
+                                    response_data[k] = v
+                            
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                            return response_data
+                        
+                        # ── Legacy Mode (string result) ──
+                        elif isinstance(wf_direct_response, str):
+                            print(f"[Task] ⚡ Workflow direct trigger executed. Bypassing agent.")
+                            
+                            # Save to history
+                            await redis_client.add_message(
+                                session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
+                            await redis_client.add_message(
+                                session_id=session_id, role="assistant", content=wf_direct_response, ttl_seconds=86400,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
+                            # Save to MTM
+                            await _save_mtm_message(db, str(agent.id), session_id, "user", message)
+                            await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_direct_response)
+
+                            processing_time = (time.time() - start_time) * 1000
+                            response_data = {
+                                "status": "completed",
+                                "response": wf_direct_response,
+                                "agent_used": "Workflow Automation",
+                                "processing_time_ms": processing_time,
+                            }
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                            return response_data
 
                 if agent:
                     agent_config = await factory.get_agent_config(agent, context_data=context_data)
@@ -2713,6 +2825,50 @@ async def process_message_task(
             timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
             retry_count = 0
 
+            # ── Direct Payload Bypass (from Collaborator Workflow) ──
+            # If _enrich_agent_prompt detected a __direct_payload from a collaborator,
+            # skip the primary agent's LLM entirely and return the automation payload
+            if agent_config and agent_config.get("__direct_payload_result"):
+                direct_data = agent_config["__direct_payload_result"]
+                print(f"[Task] ⚡ Direct payload bypass from collaborator workflow — skipping primary LLM")
+                
+                response_text = direct_data.get("response", "")
+                
+                # Save to history
+                user_tz_name = _resolve_tz_name(transition_data)
+                if stm_enabled:
+                    await redis_client.add_message(
+                        session_id=session_id, role="user", content=message, ttl_seconds=stm_ttl_seconds,
+                        tz_name=user_tz_name
+                    )
+                    if response_text:
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=stm_ttl_seconds,
+                            tz_name=user_tz_name
+                        )
+                # Save to MTM
+                if agent_id and session_id:
+                    if response_text:
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
+                
+                processing_time = (time.time() - start_time) * 1000
+                # Build response_data: merge ALL automation fields at root level
+                response_data = {
+                    "status": "completed",
+                    "processing_time_ms": processing_time,
+                }
+                # Merge automation fields (except internal markers)
+                for k, v in direct_data.items():
+                    if k != "__direct_payload":
+                        response_data[k] = v
+                
+                response_transition_data = _merge_transition_data(transition_data, context_data)
+                if response_transition_data:
+                    response_data["transition_data"] = response_transition_data
+                if callback_url:
+                    await _send_callback(callback_url, response_data)
+                return response_data
+
             # ── Bypass LLM (Passthrough) ──
             if agent_config and agent_config.get("bypass_llm", False):
                 print(f"[Task] ⚡ Agent '{agent_config.get('name', 'Unknown')}' is in bypass_llm mode. Skipping AI execution.")
@@ -2863,6 +3019,61 @@ async def process_message_task(
                 except asyncio.TimeoutError:
                     print(f"[Task] ⏱️ Agent execution timed out after {timeout_seconds}s")
                     raise
+
+                # ── Check if orchestrator output contains __direct_payload from collaborator tool ──
+                if isinstance(output_text, str) and '"__direct_payload"' in output_text:
+                    import json as _dp_check
+                    try:
+                        # Try to extract the JSON from the output
+                        # The LLM might wrap it in text, so find the JSON object
+                        json_start = output_text.find('{"__direct_payload"')
+                        if json_start == -1:
+                            json_start = output_text.find('{"\\"__direct_payload\\"')
+                        if json_start >= 0:
+                            # Find matching closing brace
+                            brace_count = 0
+                            json_end = json_start
+                            for i in range(json_start, len(output_text)):
+                                if output_text[i] == '{':
+                                    brace_count += 1
+                                elif output_text[i] == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0:
+                                        json_end = i + 1
+                                        break
+                            json_str = output_text[json_start:json_end]
+                            parsed = _dp_check.loads(json_str)
+                            if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                                print(f"[Task] ⚡ Direct payload detected in orchestrator output — intercepting")
+                                agent_config["__direct_payload_result"] = parsed
+                                # Remove internal marker and set clean response
+                                parsed.pop("__direct_payload", None)
+                                
+                                processing_time = (time.time() - start_time) * 1000
+                                response_data = {
+                                    "status": "completed",
+                                    "processing_time_ms": processing_time,
+                                }
+                                response_data.update(parsed)
+                                
+                                response_text = parsed.get("response", "")
+                                if response_text and stm_enabled:
+                                    await redis_client.add_message(
+                                        session_id=session_id, role="assistant",
+                                        content=str(response_text), ttl_seconds=stm_ttl_seconds,
+                                        tz_name=_resolve_tz_name(transition_data)
+                                    )
+                                if response_text and agent_id and session_id:
+                                    await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
+                                
+                                response_transition_data = _merge_transition_data(transition_data, context_data)
+                                if response_transition_data:
+                                    response_data["transition_data"] = response_transition_data
+                                if callback_url:
+                                    await _send_callback(callback_url, response_data)
+                                return response_data
+                    except (_dp_check.JSONDecodeError, ValueError, TypeError) as _dp_err:
+                        print(f"[Task] ⚠️ Failed to parse direct payload from orchestrator output: {_dp_err}")
 
                 # Interceptar FIM DE INTERACAO
                 if "[FIM_DE_INTERACAO]" in output_text:

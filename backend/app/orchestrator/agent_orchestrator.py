@@ -263,6 +263,30 @@ Responda APENAS em JSON válido com este formato exato:
         from app.orchestrator.agent_factory import AgentFactory
         import json
         
+        # ── EARLY CHECK: Workflow Direct Triggers on Collaborator ──
+        # Before invoking the collaborator's LLM, check if any of its workflows
+        # have trigger_keywords matching the message. If return_direct_payload=True,
+        # bypass the entire LLM chain and return the automation result directly.
+        try:
+            from app.worker.tasks import _check_workflow_direct_triggers
+            wf_direct = await _check_workflow_direct_triggers(
+                self.db, str(agent.id), message, context_data
+            )
+            if wf_direct is not None:
+                if isinstance(wf_direct, dict) and wf_direct.get("__direct_payload"):
+                    # Direct payload mode: return the full payload dict as JSON string
+                    # with the __direct_payload marker preserved for upstream detection
+                    print(f"[Orchestrator] ⚡ Collaborator '{agent.name}' workflow triggered with direct payload bypass")
+                    return (agent.name, json.dumps(wf_direct, ensure_ascii=False))
+                elif isinstance(wf_direct, str):
+                    # Legacy mode: workflow result as string, collaborator still bypasses LLM
+                    print(f"[Orchestrator] ⚡ Collaborator '{agent.name}' workflow triggered (string result)")
+                    return (agent.name, wf_direct)
+        except Exception as wf_err:
+            import traceback
+            print(f"[Orchestrator] ⚠️ Error checking workflow triggers for collaborator '{agent.name}': {wf_err}")
+            traceback.print_exc()
+
         factory = AgentFactory(self.db)
         agent_config = await factory.get_agent_config(agent, context_data=context_data)
         
@@ -827,6 +851,19 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                         print(f"[Orchestrator] ⚠️ Error updating Thinker memory: {te}")
         
         if collaborator_responses:
+            # ── Check for __direct_payload bypass from collaborator workflows ──
+            import json as _json
+            for name, response in collaborator_responses.items():
+                try:
+                    if isinstance(response, str) and '"__direct_payload"' in response:
+                        parsed = _json.loads(response)
+                        if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                            # Return the direct payload with a special prefix for upstream detection
+                            print(f"[Orchestrator] ⚡ Direct payload detected from collaborator '{name}' — bypassing primary agent LLM")
+                            return "__DIRECT_PAYLOAD_BYPASS__" + response
+                except (_json.JSONDecodeError, ValueError, TypeError):
+                    pass
+            
             formatted = "\n\n".join([f"[{name}]: {response}" for name, response in collaborator_responses.items()])
             return formatted
         
