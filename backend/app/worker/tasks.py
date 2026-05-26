@@ -1077,15 +1077,22 @@ def _match_true_trigger_keyword(message: str, keyword: str, mode: str) -> bool:
     mode_norm = (mode or "word").strip().lower()
 
     if mode_norm == "contains":
-        return keyword_norm in message_norm
+        matched = keyword_norm in message_norm
+        print(f"[KeywordMatcher] 🔍 Mode 'contains': '{keyword_norm}' in '{message_norm}'? {matched}")
+        return matched
 
     if mode_norm == "phrase":
         msg_clean = " ".join(message_norm.split())
         kw_clean = " ".join(keyword_norm.split())
-        return kw_clean in msg_clean
+        matched = kw_clean in msg_clean
+        print(f"[KeywordMatcher] 🔍 Mode 'phrase': '{kw_clean}' in '{msg_clean}'? {matched}")
+        return matched
 
     escaped = re.escape(keyword_norm)
-    return re.search(rf"(?<!\w){escaped}(?!\w)", message_norm) is not None
+    pattern = rf"(?<!\w){escaped}(?!\w)"
+    matched = re.search(pattern, message_norm) is not None
+    print(f"[KeywordMatcher] 🔍 Mode 'word': search pattern '{pattern}' on '{message_norm}'? {matched}")
+    return matched
 
 
 class _ConsultarAgenteInput(BaseModel):
@@ -1887,16 +1894,18 @@ async def _check_collaborator_workflow_shortcuts(
         active_wfs = [w for w in collab_workflows if w.is_active and (getattr(w, "trigger_keywords", None) or [])]
 
         if active_wfs:
-            print(f"[ShortCircuit]   📋 Collaborator '{collab.name}': {len(active_wfs)} workflow(s) with keywords")
+            print(f"[ShortCircuit]   📋 Collaborator '{collab.name}': {len(active_wfs)} active workflow(s) with keywords")
 
         for wf in active_wfs:
             wf_kws = getattr(wf, "trigger_keywords", []) or []
             wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
             is_direct = getattr(wf, "return_direct_payload", False)
+            print(f"[ShortCircuit]     Evaluating workflow '{wf.name}' (collaborator '{collab.name}') with keywords {wf_kws} (mode: {wf_mode})")
 
             for kw in wf_kws:
                 all_keywords_checked.append(f"{collab.name}/{wf.name}: '{kw}' (mode={wf_mode})")
-                if _match_true_trigger_keyword(message, kw, wf_mode):
+                matched = _match_true_trigger_keyword(message, kw, wf_mode)
+                if matched:
                     candidate = {
                         "workflow": wf,
                         "collaborator": collab,
@@ -1905,9 +1914,10 @@ async def _check_collaborator_workflow_shortcuts(
                         "keyword_len": len((kw or "").strip()),
                         "is_direct_payload": is_direct,
                     }
+                    print(f"[ShortCircuit]       ✅ Match found for keyword '{kw}' (len: {candidate['keyword_len']})")
                     if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
                         best_match = candidate
-                        print(f"[ShortCircuit]   ✅ MATCH: '{kw}' on workflow '{wf.name}' (collaborator '{collab.name}', direct_payload={is_direct})")
+                        print(f"[ShortCircuit]       🏆 New best match: '{kw}' on workflow '{wf.name}'")
 
     if not best_match:
         if all_keywords_checked:
@@ -2026,6 +2036,7 @@ async def _check_workflow_direct_triggers(
         return None
 
     active_workflows = [w for w in agent_obj.workflows if w.is_active]
+    print(f"[WorkflowTrigger] 🔍 Scanning direct triggers for Agent '{agent_obj.name}'. Message: '{message}'. Found {len(active_workflows)} active workflows.")
     if not active_workflows:
         return None
 
@@ -2033,19 +2044,28 @@ async def _check_workflow_direct_triggers(
     for wf in active_workflows:
         wf_kws = getattr(wf, "trigger_keywords", []) or []
         wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
+        print(f"[WorkflowTrigger]   Evaluating workflow '{wf.name}' with keywords {wf_kws} (mode: {wf_mode})")
         
         for kw in wf_kws:
-            if _match_true_trigger_keyword(message, kw, wf_mode):
+            matched = _match_true_trigger_keyword(message, kw, wf_mode)
+            if matched:
                 candidate = {
                     "workflow": wf,
                     "keyword": kw,
                     "mode": wf_mode,
                     "keyword_len": len((kw or "").strip()),
                 }
-                # Priority to longest keyword match
-                if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
+                print(f"[WorkflowTrigger]     ✅ Match found for keyword '{kw}' (len: {candidate['keyword_len']})")
+                if best_match is None:
                     best_match = candidate
+                    print(f"[WorkflowTrigger]     🏆 New best match: '{kw}' on workflow '{wf.name}'")
+                elif candidate["keyword_len"] > best_match["keyword_len"]:
+                    print(f"[WorkflowTrigger]     🏆 Replacing best match '{best_match['keyword']}' (len: {best_match['keyword_len']}) with longer match '{kw}' (len: {candidate['keyword_len']})")
+                    best_match = candidate
+                else:
+                    print(f"[WorkflowTrigger]     ℹ️ Kept '{best_match['keyword']}' (len: {best_match['keyword_len']}) because it is longer or equal to '{kw}' (len: {candidate['keyword_len']})")
 
+    print(f"[WorkflowTrigger] Direct trigger scan complete for Agent '{agent_obj.name}'. Best match: {best_match['workflow'].name if best_match else 'None'}")
     if not best_match:
         return None
 
@@ -2132,8 +2152,12 @@ async def _check_global_workflow_shortcuts(
     factory = AgentFactory(db)
     accessible_agents = await factory.get_accessible_agents(user_access_level)
 
+    print(f"[WorkflowTrigger] 🔍 Starting global workflow shortcut scan. Message: '{message}', Access Level: '{user_access_level}'")
+    print(f"[WorkflowTrigger] Found {len(accessible_agents)} accessible agents for user.")
+
     seen_wf_ids = set()
     best_match = None
+    all_workflows_scanned = 0
 
     for agent_obj in accessible_agents:
         active_workflows = [w for w in getattr(agent_obj, "workflows", []) if w.is_active]
@@ -2141,12 +2165,15 @@ async def _check_global_workflow_shortcuts(
             if wf.id in seen_wf_ids:
                 continue
             seen_wf_ids.add(wf.id)
+            all_workflows_scanned += 1
 
             wf_kws = getattr(wf, "trigger_keywords", []) or []
             wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
+            print(f"[WorkflowTrigger]   Evaluating workflow '{wf.name}' (ID: {wf.id}) from agent '{agent_obj.name}' with keywords {wf_kws} (mode: {wf_mode})")
             
             for kw in wf_kws:
-                if _match_true_trigger_keyword(message, kw, wf_mode):
+                matched = _match_true_trigger_keyword(message, kw, wf_mode)
+                if matched:
                     candidate = {
                         "workflow": wf,
                         "keyword": kw,
@@ -2154,9 +2181,17 @@ async def _check_global_workflow_shortcuts(
                         "keyword_len": len((kw or "").strip()),
                         "agent_id": str(agent_obj.id)
                     }
-                    if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
+                    print(f"[WorkflowTrigger]     ✅ Match found for keyword '{kw}' (len: {candidate['keyword_len']})")
+                    if best_match is None:
                         best_match = candidate
+                        print(f"[WorkflowTrigger]     🏆 New best match: '{kw}' on workflow '{wf.name}'")
+                    elif candidate["keyword_len"] > best_match["keyword_len"]:
+                        print(f"[WorkflowTrigger]     🏆 Replacing best match '{best_match['keyword']}' (len: {best_match['keyword_len']}) with longer match '{kw}' (len: {candidate['keyword_len']})")
+                        best_match = candidate
+                    else:
+                        print(f"[WorkflowTrigger]     ℹ️ Kept '{best_match['keyword']}' (len: {best_match['keyword_len']}) because it is longer or equal to '{kw}' (len: {candidate['keyword_len']})")
 
+    print(f"[WorkflowTrigger] Global scan complete. Scanned {all_workflows_scanned} unique active workflows. Best match: {best_match['workflow'].name if best_match else 'None'}")
     if not best_match:
         return None
 
