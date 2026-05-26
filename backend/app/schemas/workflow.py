@@ -13,6 +13,7 @@ class WorkflowBase(BaseModel):
     definition: Dict[str, Any] = Field(default_factory=dict, description="Vue Flow JSON representing nodes and edges")
     trigger_keywords: Optional[List[str]] = Field(default_factory=list, description="Keywords that trigger this workflow")
     trigger_match_mode: str = Field(default="word", description="Matching mode: word, contains, phrase")
+    return_direct_payload: bool = Field(default=False, description="If true, workflow results bypass LLM and are merged directly into API response")
 
 class WorkflowCreate(WorkflowBase):
     pass
@@ -24,6 +25,7 @@ class WorkflowUpdate(BaseModel):
     definition: Optional[Dict[str, Any]] = None
     trigger_keywords: Optional[List[str]] = None
     trigger_match_mode: Optional[str] = None
+    return_direct_payload: Optional[bool] = None
 
 class WorkflowResponse(WorkflowBase):
     id: UUID

@@ -315,6 +315,17 @@
             density="compact"
             @update:model-value="markUnsaved"
           ></v-select>
+          <v-divider class="my-4"></v-divider>
+
+          <v-switch
+            v-model="workflow.return_direct_payload"
+            color="deep-purple"
+            label="Retornar Payload Direto"
+            hint="Se ativado, retorna o JSON final bruto da automação na API (bypass/keywords)"
+            persistent-hint
+            class="mb-2"
+            @update:model-value="markUnsaved"
+          ></v-switch>
         </v-card-text>
         <v-card-actions class="pa-4 bg-surface-variant">
           <v-spacer></v-spacer>
@@ -424,6 +435,17 @@ async function loadWorkflow() {
   try {
     const res = await axios.get(`/workflows/${workflowId}`)
     workflow.value = res.data.workflow || res.data
+    
+    // Ensure definition.settings is always initialized (fixes toggle reset on reload)
+    if (!workflow.value.definition) workflow.value.definition = {}
+    if (!workflow.value.definition.settings) {
+      workflow.value.definition.settings = { auto_run: false }
+    }
+    // Ensure return_direct_payload has a boolean value (DB column, not inside definition)
+    if (workflow.value.return_direct_payload === undefined || workflow.value.return_direct_payload === null) {
+      workflow.value.return_direct_payload = false
+    }
+    
     const def = workflow.value.definition || {}
     if (def.blocks && def.edges) {
       // v2 format
@@ -606,6 +628,7 @@ async function saveDefinition() {
       is_active: workflow.value.is_active,
       trigger_keywords: workflow.value.trigger_keywords || [],
       trigger_match_mode: workflow.value.trigger_match_mode || 'word',
+      return_direct_payload: workflow.value.return_direct_payload ?? false,
       definition
     })
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
