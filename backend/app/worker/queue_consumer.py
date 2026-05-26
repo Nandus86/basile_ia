@@ -366,13 +366,16 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     await monitor.stop()
                 
             # Set to completed
+            is_workflow = isinstance(response_data, dict) and "workflow_name" in response_data
             job_data = {
                 "job_id": job_id,
                 "status": "completed",
-                "result": final_result,
+                "result": "" if is_workflow else final_result,
                 "agent_used": agent_used,
                 "is_hitl_pause": is_hitl_pause
             }
+            if is_workflow and isinstance(final_result, dict):
+                job_data.update(final_result)
             if transition_data:
                 job_data["transition_data"] = transition_data
 
@@ -393,8 +396,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     if job_log:
                         job_log.status = "completed"
                         # Salvar payload completo (mesmo que vai para o callback)
-                        db_result = final_result
-                        if isinstance(final_result, dict) and "workflow_name" not in response_data:
+                        db_result = "" if is_workflow else final_result
+                        if isinstance(final_result, dict) and not is_workflow:
                             db_result = final_result.get("output", final_result.get("response", str(final_result)))
                         
                         full_response_data = {
@@ -404,6 +407,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "agent_used": agent_used,
                             "is_hitl_pause": is_hitl_pause
                         }
+                        if is_workflow and isinstance(final_result, dict):
+                            full_response_data.update(final_result)
                         if transition_data:
                             full_response_data["transition_data"] = transition_data
                         job_log.response_data = full_response_data
@@ -437,23 +442,25 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     await asyncio.sleep(lb_delay)
 
                     async with httpx.AsyncClient() as client:
-                        response_data = {
+                        cb_response_data = {
                             "status": "completed",
                             "job_id": job_id,
-                            "result": final_result,
+                            "result": "" if is_workflow else final_result,
                             "agent_used": agent_used,
                             "is_hitl_pause": is_hitl_pause
                         }
+                        if is_workflow and isinstance(final_result, dict):
+                            cb_response_data.update(final_result)
                         
                         # Retrieve admin contact configuration if HITL admin is required
                         if is_hitl_pause and agent and agent.resilience_config:
                             if agent.resilience_config.hitl_admin_approval_enabled:
-                                response_data["hitl_admin_contact"] = agent.resilience_config.hitl_admin_contact
+                                cb_response_data["hitl_admin_contact"] = agent.resilience_config.hitl_admin_contact
                         
                         if transition_data:
-                            response_data["transition_data"] = transition_data
+                            cb_response_data["transition_data"] = transition_data
                             
-                        await client.post(callback_url, json=response_data, timeout=10.0)
+                        await client.post(callback_url, json=cb_response_data, timeout=10.0)
                         logger.info(f"Callback sent to {callback_url}")
                 except Exception as cb_err:
                     logger.error(f"Failed to send callback to {callback_url}: {str(cb_err)}")
