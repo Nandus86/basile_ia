@@ -2434,7 +2434,13 @@ async def process_message_task(
                 # Workflow Keyword Trigger (Bypasses Agent)
                 # ═══════════════════════════════════════════════════════
                 if agent:
-                    wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
+                    wf_direct_response = None
+                    try:
+                        wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
+                    except Exception as wf_trigger_err:
+                        import traceback
+                        print(f"[Task] ⚠️ Error checking workflow direct triggers: {wf_trigger_err}")
+                        traceback.print_exc()
                     if wf_direct_response is not None:
                         # ── Direct Payload Mode (dict with __direct_payload) ──
                         if isinstance(wf_direct_response, dict) and wf_direct_response.get("__direct_payload"):
