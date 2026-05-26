@@ -1824,18 +1824,20 @@ async def _check_collaborator_workflow_shortcuts(
 ) -> Optional[Dict[str, Any]]:
     """
     SHORT-CIRCUIT for orchestrator agents:
-    Scans workflows of ALL collaborators looking for keyword match
-    + return_direct_payload=True.
+    Scans workflows of ALL collaborators looking for keyword match.
 
     If found, executes the automation DIRECTLY (no LLM involved)
     and returns a dict with __direct_payload=True.
+
+    The return_direct_payload flag on the workflow controls HOW the result
+    is formatted, not WHETHER the shortcut activates.
 
     This runs BEFORE _build_collaborator_tools and the orchestrator LLM,
     so the entire orchestrator chain is bypassed.
 
     Returns:
         - dict with __direct_payload=True if a matching workflow is found and executed
-        - None if no match or if no workflows have return_direct_payload=True
+        - None if no match
     """
     from app.models.agent import Agent as AgentModel, AgentCollaborator, CollaborationStatus
     from app.models.workflow import Workflow
@@ -1859,6 +1861,7 @@ async def _check_collaborator_workflow_shortcuts(
     )
     orchestrator_agent = result.scalar_one_or_none()
     if not orchestrator_agent or not orchestrator_agent.collaborator_settings:
+        print(f"[ShortCircuit] No orchestrator or no collaborator_settings for agent_id={agent_id}")
         return None
 
     # Collect all active collaborators (not blocked)
@@ -1868,19 +1871,31 @@ async def _check_collaborator_workflow_shortcuts(
             active_collabs.append(setting.collaborator)
 
     if not active_collabs:
+        print(f"[ShortCircuit] No active collaborators for orchestrator '{orchestrator_agent.name}'")
         return None
 
-    # Scan each collaborator's workflows for keyword match + return_direct_payload
+    print(f"[ShortCircuit] 🔍 Scanning {len(active_collabs)} collaborator(s) for keyword matches in message: '{message[:80]}...'")
+
+    # Scan each collaborator's workflows for keyword match
+    # Check ALL active workflows with trigger_keywords (not just return_direct_payload)
     best_match = None
+    all_keywords_checked = []
+
     for collab in active_collabs:
         collab_workflows = getattr(collab, "workflows", []) or []
-        active_wfs = [w for w in collab_workflows if w.is_active and getattr(w, "return_direct_payload", False)]
+        # Filter: active workflows that have trigger_keywords defined
+        active_wfs = [w for w in collab_workflows if w.is_active and (getattr(w, "trigger_keywords", None) or [])]
+
+        if active_wfs:
+            print(f"[ShortCircuit]   📋 Collaborator '{collab.name}': {len(active_wfs)} workflow(s) with keywords")
 
         for wf in active_wfs:
             wf_kws = getattr(wf, "trigger_keywords", []) or []
             wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
+            is_direct = getattr(wf, "return_direct_payload", False)
 
             for kw in wf_kws:
+                all_keywords_checked.append(f"{collab.name}/{wf.name}: '{kw}' (mode={wf_mode})")
                 if _match_true_trigger_keyword(message, kw, wf_mode):
                     candidate = {
                         "workflow": wf,
@@ -1888,19 +1903,26 @@ async def _check_collaborator_workflow_shortcuts(
                         "keyword": kw,
                         "mode": wf_mode,
                         "keyword_len": len((kw or "").strip()),
+                        "is_direct_payload": is_direct,
                     }
                     if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
                         best_match = candidate
+                        print(f"[ShortCircuit]   ✅ MATCH: '{kw}' on workflow '{wf.name}' (collaborator '{collab.name}', direct_payload={is_direct})")
 
     if not best_match:
+        if all_keywords_checked:
+            print(f"[ShortCircuit] ❌ No keyword match found. Keywords checked: {all_keywords_checked}")
+        else:
+            print(f"[ShortCircuit] ❌ No workflows with trigger_keywords found on any collaborator")
         return None
 
     wf = best_match["workflow"]
     collab = best_match["collaborator"]
+    is_direct_payload = best_match["is_direct_payload"]
     print(
         f"[ShortCircuit] ⚡ Orchestrator short-circuit! "
         f"Collaborator '{collab.name}' → Workflow '{wf.name}' "
-        f"triggered by keyword '{best_match['keyword']}' (return_direct_payload=True)"
+        f"triggered by keyword '{best_match['keyword']}' (return_direct_payload={is_direct_payload})"
     )
 
     try:
@@ -1934,17 +1956,28 @@ async def _check_collaborator_workflow_shortcuts(
             "collaborator_name": collab.name,
             "matched_keyword": best_match["keyword"],
         }
-        if isinstance(final_result, dict):
-            direct_payload.update(final_result)
-            if "response" not in direct_payload:
+
+        if is_direct_payload:
+            # Direct payload mode: merge all fields at root level
+            if isinstance(final_result, dict):
+                direct_payload.update(final_result)
+                if "response" not in direct_payload:
+                    direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+            elif isinstance(final_result, list):
                 direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
-        elif isinstance(final_result, list):
-            direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
-            direct_payload["data"] = final_result
-        elif final_result is not None:
-            direct_payload["response"] = str(final_result)
+                direct_payload["data"] = final_result
+            elif final_result is not None:
+                direct_payload["response"] = str(final_result)
+            else:
+                direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
         else:
-            direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
+            # Legacy mode: result as string in response field
+            if isinstance(final_result, (dict, list)):
+                direct_payload["response"] = json.dumps(final_result, ensure_ascii=False, indent=2)
+            elif final_result is not None:
+                direct_payload["response"] = str(final_result)
+            else:
+                direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
 
         print(f"[ShortCircuit] ✅ Direct payload returned with {len(direct_payload)} fields")
         return direct_payload
