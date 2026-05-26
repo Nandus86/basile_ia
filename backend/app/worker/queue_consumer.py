@@ -335,6 +335,9 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         if "output" in response_data:
                             # Structured using output
                             final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data"]}
+                        elif "workflow_name" in response_data:
+                            # Direct payload / Workflow automation mode: preserve all custom fields in a dict
+                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data", "is_hitl_pause", "workflow_name", "matched_keyword"]}
                         elif "response" in response_data:
                             # Standard text response
                             final_result = response_data["response"]
@@ -390,10 +393,14 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     if job_log:
                         job_log.status = "completed"
                         # Salvar payload completo (mesmo que vai para o callback)
+                        db_result = final_result
+                        if isinstance(final_result, dict) and "workflow_name" not in response_data:
+                            db_result = final_result.get("output", final_result.get("response", str(final_result)))
+                        
                         full_response_data = {
                             "status": "completed",
                             "job_id": job_id,
-                            "result": final_result if not isinstance(final_result, dict) else final_result.get("output", final_result.get("response", str(final_result))),
+                            "result": db_result,
                             "agent_used": agent_used,
                             "is_hitl_pause": is_hitl_pause
                         }

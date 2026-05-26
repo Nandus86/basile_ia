@@ -2114,6 +2114,116 @@ async def _check_workflow_direct_triggers(
         print(f"[WorkflowTrigger] ❌ Error executing workflow '{wf.name}': {e}")
         return None
 
+async def _check_global_workflow_shortcuts(
+    db,
+    message: str,
+    user_access_level: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Any]:
+    """
+    Check if ANY active workflow accessible to the user has trigger_keywords matching the message.
+    If a match is found, execute the workflow DIRECTLY and return its final result.
+    This bypasses all AI agents, orchestrators, and supervisors entirely.
+    """
+    from app.services.workflow_engine import WorkflowEngine
+    from app.orchestrator.agent_factory import AgentFactory
+    import json
+
+    factory = AgentFactory(db)
+    accessible_agents = await factory.get_accessible_agents(user_access_level)
+
+    seen_wf_ids = set()
+    best_match = None
+
+    for agent_obj in accessible_agents:
+        active_workflows = [w for w in getattr(agent_obj, "workflows", []) if w.is_active]
+        for wf in active_workflows:
+            if wf.id in seen_wf_ids:
+                continue
+            seen_wf_ids.add(wf.id)
+
+            wf_kws = getattr(wf, "trigger_keywords", []) or []
+            wf_mode = getattr(wf, "trigger_match_mode", "word") or "word"
+            
+            for kw in wf_kws:
+                if _match_true_trigger_keyword(message, kw, wf_mode):
+                    candidate = {
+                        "workflow": wf,
+                        "keyword": kw,
+                        "mode": wf_mode,
+                        "keyword_len": len((kw or "").strip()),
+                        "agent_id": str(agent_obj.id)
+                    }
+                    if best_match is None or candidate["keyword_len"] > best_match["keyword_len"]:
+                        best_match = candidate
+
+    if not best_match:
+        return None
+
+    wf = best_match["workflow"]
+    is_direct_payload = getattr(wf, "return_direct_payload", False)
+    print(f"[WorkflowTrigger] 🎯 GLOBAL Workflow '{wf.name}' triggered by keyword '{best_match['keyword']}' (return_direct_payload={is_direct_payload})")
+
+    try:
+        engine = WorkflowEngine(db)
+        trigger_data = (context_data or {}).copy()
+        trigger_data["message"] = message
+        trigger_data["matched_keyword"] = best_match["keyword"]
+
+        result_ctx = await engine.execute(
+            workflow_id=wf.id,
+            trigger_data=trigger_data,
+            trigger_type="keyword_trigger",
+        )
+
+        final_result = result_ctx.get('result')
+        if isinstance(final_result, dict):
+            if "result" in final_result:
+                final_result = final_result["result"]
+            elif "saida" in final_result:
+                saida_val = final_result["saida"]
+                if isinstance(saida_val, dict) and "result" in saida_val:
+                    final_result = saida_val["result"]
+                else:
+                    final_result = saida_val
+
+        # ── Direct Payload Mode ──
+        if is_direct_payload:
+            direct_payload = {
+                "__direct_payload": True,
+                "status": "completed",
+                "agent_used": f"Workflow Automation ({wf.name})",
+                "workflow_name": wf.name,
+                "matched_keyword": best_match["keyword"],
+            }
+            if isinstance(final_result, dict):
+                direct_payload.update(final_result)
+                if "response" not in direct_payload:
+                    direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+            elif isinstance(final_result, list):
+                direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+                direct_payload["data"] = final_result
+            elif final_result is not None:
+                direct_payload["response"] = str(final_result)
+            else:
+                direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
+            
+            print(f"[WorkflowTrigger] ⚡ GLOBAL Direct payload returned with {len(direct_payload)} fields")
+            return direct_payload
+
+        # ── Legacy Mode ──
+        if final_result is not None:
+            if isinstance(final_result, (dict, list)):
+                return json.dumps(final_result, ensure_ascii=False, indent=2)
+            return str(final_result)
+        return f"Automação '{wf.name}' executada com sucesso."
+
+    except Exception as e:
+        import traceback
+        print(f"[WorkflowTrigger] ❌ Error executing global workflow '{wf.name}': {e}")
+        traceback.print_exc()
+        return None
+
 
 # ─────────────────────────────────────────────────────────────
 # Trigger MCP Pre-execution — force MCP execution when keyword matches
@@ -2424,6 +2534,86 @@ async def process_message_task(
             except Exception as e:
                 import traceback
                 print(f"[Task] ❌ Error checking global trigger keywords: {e}")
+                traceback.print_exc()
+
+            # ═══════════════════════════════════════════════════════
+            # GLOBAL Workflow Keyword Trigger (Bypasses Everything)
+            # ═══════════════════════════════════════════════════════
+            print("[Task] 🔍 Checking ALL workflows for direct shortcut triggers...")
+            try:
+                from app.worker.tasks import _check_global_workflow_shortcuts
+                global_wf_response = await _check_global_workflow_shortcuts(db, message, user_access_level, context_data)
+                
+                if global_wf_response is not None:
+                    print(f"[Task] ⚡ Global Workflow direct trigger executed. Bypassing ALL agents.")
+                    
+                    # ── Direct Payload Mode ──
+                    if isinstance(global_wf_response, dict) and global_wf_response.get("__direct_payload"):
+                        response_text = global_wf_response.get("response", "")
+                        
+                        # Save to history
+                        await redis_client.add_message(
+                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        if response_text:
+                            await redis_client.add_message(
+                                session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
+                        # Save to MTM (using a dummy fallback agent_id if none provided)
+                        import uuid
+                        _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
+                        await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                        if response_text:
+                            await _save_mtm_message(db, _save_agent_id, session_id, "assistant", str(response_text))
+
+                        processing_time = (time.time() - start_time) * 1000
+                        response_data = {
+                            "status": "completed",
+                            "processing_time_ms": processing_time,
+                        }
+                        for k, v in global_wf_response.items():
+                            if k != "__direct_payload":
+                                response_data[k] = v
+                        
+                        response_transition_data = _merge_transition_data(transition_data, context_data)
+                        if response_transition_data:
+                            response_data["transition_data"] = response_transition_data
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
+                    
+                    # ── Legacy Mode (string result) ──
+                    elif isinstance(global_wf_response, str):
+                        await redis_client.add_message(
+                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant", content=global_wf_response, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        import uuid
+                        _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
+                        await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                        await _save_mtm_message(db, _save_agent_id, session_id, "assistant", global_wf_response)
+
+                        processing_time = (time.time() - start_time) * 1000
+                        response_data = {
+                            "status": "completed",
+                            "response": global_wf_response,
+                            "agent_used": "Global Workflow Automation",
+                            "processing_time_ms": processing_time,
+                        }
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
+            except Exception as e:
+                import traceback
+                print(f"[Task] ❌ Error checking global workflow shortcuts: {e}")
                 traceback.print_exc()
 
             factory = AgentFactory(db)
