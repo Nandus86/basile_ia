@@ -729,6 +729,8 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                     messages=messages,
                     rag_context=None,
                     context_data=context_data, # Let factory handle it
+                )
+            
             print(f"[Orchestrator] ✅ Collaborator '{agent.name}' responded")
             
             if context_data and "__direct_payload__" in context_data:
