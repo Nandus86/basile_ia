@@ -344,7 +344,7 @@
           </div>
           <v-select v-model="op.op" :items="['set','merge','extract','map','flatten','join','stringify','parse_json']" label="Tipo" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-select>
           <v-text-field v-model="op.key" label="Chave destino" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
-          <v-text-field v-model="op.value" label="Valor / Template" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
+          <v-textarea v-model="op.value" label="Valor / Template" variant="outlined" density="compact" class="mb-2" hide-details auto-grow rows="2" @update:model-value="emitUpdate"></v-textarea>
           <v-text-field v-if="['extract','map','flatten'].includes(op.op)" v-model="op.source" label="Source" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
           <v-text-field v-if="op.op === 'extract'" v-model="op.path" label="Path" variant="outlined" density="compact" hide-details @update:model-value="emitUpdate"></v-text-field>
           <v-text-field v-if="op.op === 'map'" v-model="op.field" label="Campo" variant="outlined" density="compact" hide-details @update:model-value="emitUpdate"></v-text-field>
