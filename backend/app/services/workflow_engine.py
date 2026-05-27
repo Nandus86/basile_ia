@@ -172,12 +172,27 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
             for item in val:
                 if format_template:
                     if isinstance(item, dict):
+                        flat_item = {}
+                        def _flatten(d, parent_key=''):
+                            for k, v in d.items():
+                                new_key = f"{parent_key}.{k}" if parent_key else k
+                                flat_item[new_key] = v
+                                if isinstance(v, dict):
+                                    _flatten(v, new_key)
+                        _flatten(item)
+
                         class SafeDict(dict):
                             def __missing__(self, key):
                                 return ''
                         try:
-                            safe_item = SafeDict({k: (str(v) if v is not None else '') for k, v in item.items()})
-                            formatted_items.append(format_template.format_map(safe_item))
+                            safe_item = SafeDict({k: (str(v) if v is not None else '') for k, v in flat_item.items()})
+                            import re
+                            res_str = format_template
+                            placeholders = re.findall(r'\{([^}]+)\}', res_str)
+                            for ph in placeholders:
+                                val_str = safe_item[ph]
+                                res_str = res_str.replace(f'{{{ph}}}', val_str)
+                            formatted_items.append(res_str)
                         except Exception:
                             formatted_items.append(str(item))
                     else:
