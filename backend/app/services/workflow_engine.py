@@ -842,8 +842,9 @@ class WorkflowEngine:
                     # Fallback to string wrapper if it's not valid JSON
                     payload = {"text": payload}
         else:
-            # Pass all clean keys from context (remove $ prefix)
-            payload = {k.lstrip('$'): v for k, v in context.items() if not k.startswith('$workflow')}
+            # Pass the parent's trigger payload directly so the sub-workflow
+            # gets the exact same $trigger.payload structure.
+            payload = context.get('$trigger', {}).get('payload', {})
 
         logger.info(f"[WorkflowEngine] 🔀 Running sub-workflow: {workflow_id} (depth: {recursion_depth + 1})")
         
