@@ -145,6 +145,55 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
         except:
             return ''
 
+    # Handle $list(path, "format")
+    if path.startswith('list('):
+        args_str = path[5:-1]
+        if ',' in args_str:
+            var_path, format_str_raw = args_str.split(',', 1)
+            var_path = var_path.strip().lstrip('$')
+            format_str_raw = format_str_raw.strip()
+            if (format_str_raw.startswith('"') and format_str_raw.endswith('"')) or (format_str_raw.startswith("'") and format_str_raw.endswith("'")):
+                format_template = format_str_raw[1:-1]
+            else:
+                format_template = format_str_raw
+        else:
+            var_path = args_str.strip().lstrip('$')
+            format_template = None
+
+        parts = var_path.split('.', 1)
+        root_key = parts[0]
+        rest = parts[1] if len(parts) > 1 else None
+
+        root_val = context.get(f'${root_key}') or context.get(root_key)
+        val = _resolve_path(root_val, rest) if (root_val is not None and rest) else root_val
+
+        formatted_items = []
+        if isinstance(val, list):
+            for item in val:
+                if format_template:
+                    if isinstance(item, dict):
+                        class SafeDict(dict):
+                            def __missing__(self, key):
+                                return ''
+                        try:
+                            safe_item = SafeDict({k: (str(v) if v is not None else '') for k, v in item.items()})
+                            formatted_items.append(format_template.format_map(safe_item))
+                        except Exception:
+                            formatted_items.append(str(item))
+                    else:
+                        if '{item}' in format_template:
+                            formatted_items.append(format_template.replace('{item}', str(item)))
+                        else:
+                            formatted_items.append(str(item))
+                else:
+                    if isinstance(item, dict):
+                        pairs = [f"{k}: {v}" for k, v in item.items() if v is not None and str(v).strip() != '']
+                        formatted_items.append(", ".join(pairs))
+                    else:
+                        formatted_items.append(str(item))
+            return "\n".join(formatted_items)
+        return str(val) if val is not None else ''
+
     # $env.VAR_NAME → environment variable
     if path.startswith('env.'):
         import os
