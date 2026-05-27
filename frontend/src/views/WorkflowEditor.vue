@@ -363,6 +363,8 @@ const { project } = useVueFlow()
 const vueFlowInstance = ref(null)
 
 const workflow = ref({})
+const nodes = ref([])
+const edges = ref([])
 const agentsList = ref([])
 const webhooksList = ref([])
 const workflowsList = ref([])
