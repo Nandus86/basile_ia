@@ -377,6 +377,13 @@ class WorkflowEngine:
             while current_block_id:
                 block = blocks.get(current_block_id)
                 if not block:
+                    # Fallback lookup: check if any block has output_key matching current_block_id
+                    for b in blocks.values():
+                        if b.get('config', {}).get('output_key') == current_block_id:
+                            block = b
+                            current_block_id = b['id']
+                            break
+                if not block:
                     logger.warning(f"[WorkflowEngine] Block '{current_block_id}' not found, stopping")
                     break
 
