@@ -53,6 +53,7 @@ const BLOCK_META = {
   agent:        { icon: 'mdi-robot',             color: '#10B981', label: 'Agente' },
   transform:    { icon: 'mdi-swap-horizontal',   color: '#F97316', label: 'Transform' },
   delay:        { icon: 'mdi-timer-sand',        color: '#6B7280', label: 'Delay' },
+  sub_workflow: { icon: 'mdi-sitemap-outline',    color: '#EC4899', label: 'Sub-workflow' },
 }
 
 const meta = computed(() => BLOCK_META[props.data.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Bloco' })
@@ -66,6 +67,8 @@ const subtitle = computed(() => {
       return cfg.method ? `${cfg.method} ${(cfg.url || '').substring(0, 40)}...` : ''
     case 'agent':
       return cfg.agent_id ? 'Agente vinculado' : 'Sem agente'
+    case 'sub_workflow':
+      return cfg.workflow_id ? 'Workflow vinculado' : 'Sem workflow'
     case 'if':
       return cfg.operator ? `${cfg.operator}` : 'Condição'
     case 'delay':
@@ -135,6 +138,7 @@ const statusColor = computed(() => {
 .node-agent         { border-color: #10B98140; }
 .node-transform     { border-color: #F9731640; }
 .node-delay         { border-color: #6B728040; }
+.node-sub_workflow  { border-color: #EC489940; }
 
 /* Handles */
 .handle-in, .handle-out {

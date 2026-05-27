@@ -252,8 +252,12 @@ class WorkflowEngine:
         workflow_id: UUID,
         trigger_data: Dict[str, Any],
         trigger_type: str = "manual",
+        recursion_depth: int = 0,
     ) -> Dict[str, Any]:
         """Execute a workflow from start to finish and return the final context."""
+        if recursion_depth > 5:
+            raise ValueError("Profundidade máxima de recursão de sub-workflows atingida (limite: 5)")
+
         t0 = time.time()
 
         # Load workflow
@@ -323,7 +327,7 @@ class WorkflowEngine:
                 block_error = None
 
                 try:
-                    block_result = await self._execute_block(block, context)
+                    block_result = await self._execute_block(block, context, recursion_depth)
                 except Exception as e:
                     block_status = "failed"
                     block_error = str(e)
@@ -422,7 +426,7 @@ class WorkflowEngine:
 
     # ── Block executors ────────────────────────────────────────
 
-    async def _execute_block(self, block: Dict[str, Any], context: Dict[str, Any]) -> Any:
+    async def _execute_block(self, block: Dict[str, Any], context: Dict[str, Any], recursion_depth: int = 0) -> Any:
         """Dispatch block execution by type."""
         block_type = block.get('type', '')
         config = block.get('config', {})
@@ -444,6 +448,8 @@ class WorkflowEngine:
                 return await self._exec_transform(config, context)
             case 'delay':
                 return await self._exec_delay(config, context)
+            case 'sub_workflow':
+                return await self._exec_sub_workflow(config, context, recursion_depth)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -758,6 +764,50 @@ class WorkflowEngine:
             'delayed_ms': delay_ms,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
+
+    async def _exec_sub_workflow(self, config: Dict[str, Any], context: Dict[str, Any], recursion_depth: int) -> Any:
+        """Execute a sub-workflow as a nested block."""
+        workflow_id_str = config.get('workflow_id')
+        if not workflow_id_str:
+            raise ValueError("Sub-workflow block: Nenhum workflow selecionado")
+
+        try:
+            workflow_id = UUID(resolve_template(workflow_id_str, context))
+        except ValueError:
+            # Try parsing dynamic ID from variable if stored as raw UUID or string
+            resolved_id = resolve_template(workflow_id_str, context)
+            try:
+                workflow_id = UUID(resolved_id)
+            except Exception:
+                raise ValueError(f"Sub-workflow block: ID do workflow inválido: '{resolved_id}'")
+
+        payload_mode = config.get('payload_mode', 'full')
+        if payload_mode == 'custom':
+            raw_payload = config.get('payload_template', '{}')
+            # Resolve templates inside payload
+            payload = resolve_template(raw_payload, context)
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    # Fallback to string wrapper if it's not valid JSON
+                    payload = {"text": payload}
+        else:
+            # Pass all clean keys from context (remove $ prefix)
+            payload = {k.lstrip('$'): v for k, v in context.items() if not k.startswith('$workflow')}
+
+        logger.info(f"[WorkflowEngine] 🔀 Running sub-workflow: {workflow_id} (depth: {recursion_depth + 1})")
+        
+        # Run sub-workflow using the same DB session
+        sub_engine = WorkflowEngine(self.db)
+        sub_result = await sub_engine.execute(
+            workflow_id=workflow_id,
+            trigger_data=payload,
+            trigger_type="sub_workflow",
+            recursion_depth=recursion_depth + 1
+        )
+        
+        return sub_result.get('result')
 
     # ── Navigation helpers ─────────────────────────────────────
 

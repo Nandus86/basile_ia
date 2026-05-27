@@ -413,6 +413,73 @@
         ></v-text-field>
       </template>
 
+      <!-- ═══ SUB-WORKFLOW ═══ -->
+      <template v-if="block.type === 'sub_workflow'">
+        <v-select
+          v-model="config.workflow_id"
+          :items="workflows.filter(w => w.id !== currentWorkflowId)"
+          item-title="name"
+          item-value="id"
+          label="Selecionar Workflow"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-select
+          v-model="config.payload_mode"
+          :items="[
+            { title: 'Enviar Contexto Completo', value: 'full' },
+            { title: 'Personalizar Payload (JSON)', value: 'custom' }
+          ]"
+          label="Dados de Entrada (Payload)"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-textarea
+          v-if="config.payload_mode === 'custom'"
+          v-model="payloadTemplateJson"
+          label="Payload Customizado (JSON)"
+          placeholder='{"key": "{{ $trigger.payload.val }}"}'
+          variant="outlined"
+          density="compact"
+          rows="4"
+          class="mb-3 monospace-field"
+          hide-details
+          @update:model-value="onPayloadTemplateChange"
+        ></v-textarea>
+
+        <v-select
+          v-model="config.error_handling"
+          :items="[{title:'Parar execução', value:'stop'}, {title:'Continuar mesmo com erro', value:'continue'}]"
+          label="Em caso de erro"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-text-field
+          v-model.number="config.retry_count"
+          label="Tentativas (retries)"
+          type="number"
+          variant="outlined"
+          density="compact"
+          min="0"
+          max="5"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+      </template>
+
       <!-- Context variables available -->
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
@@ -455,6 +522,8 @@ const props = defineProps({
   webhookConfigs: { type: Array, default: () => [] },
   contextKeys: { type: Array, default: () => [] },
   hideClose: { type: Boolean, default: false },
+  workflows: { type: Array, default: () => [] },
+  currentWorkflowId: { type: String, default: null },
 })
 const emit = defineEmits(['update', 'close', 'delete', 'duplicate'])
 
@@ -467,6 +536,7 @@ const BLOCK_META = {
   agent:        { icon: 'mdi-robot',             color: '#10B981', label: 'Configurar Agente' },
   transform:    { icon: 'mdi-swap-horizontal',   color: '#F97316', label: 'Configurar Transform' },
   delay:        { icon: 'mdi-timer-sand',        color: '#6B7280', label: 'Configurar Delay' },
+  sub_workflow: { icon: 'mdi-sitemap-outline',    color: '#EC4899', label: 'Configurar Sub-workflow' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
@@ -497,6 +567,7 @@ const queryJson = ref(JSON.stringify(config.value.query_params || {}, null, 2))
 const bodyJson = ref(typeof config.value.body === 'object' ? JSON.stringify(config.value.body, null, 2) : (config.value.body || ''))
 const contextMappingJson = ref(JSON.stringify(config.value.context_mapping || {}, null, 2))
 const responseMappingJson = ref(JSON.stringify(config.value.response_mapping || {}, null, 2))
+const payloadTemplateJson = ref(typeof config.value.payload_template === 'object' ? JSON.stringify(config.value.payload_template, null, 2) : (config.value.payload_template || ''))
 
 watch(() => props.block.id, () => {
   headersJson.value = JSON.stringify(config.value.headers || {}, null, 2)
@@ -504,6 +575,7 @@ watch(() => props.block.id, () => {
   bodyJson.value = typeof config.value.body === 'object' ? JSON.stringify(config.value.body, null, 2) : (config.value.body || '')
   contextMappingJson.value = JSON.stringify(config.value.context_mapping || {}, null, 2)
   responseMappingJson.value = JSON.stringify(config.value.response_mapping || {}, null, 2)
+  payloadTemplateJson.value = typeof config.value.payload_template === 'object' ? JSON.stringify(config.value.payload_template, null, 2) : (config.value.payload_template || '')
 })
 
 function onHeadersChange(val) {
@@ -524,6 +596,10 @@ function onContextMappingChange(val) {
 }
 function onResponseMappingChange(val) {
   try { config.value.response_mapping = JSON.parse(val) } catch {}
+  emitUpdate()
+}
+function onPayloadTemplateChange(val) {
+  try { config.value.payload_template = JSON.parse(val) } catch { config.value.payload_template = val }
   emitUpdate()
 }
 
