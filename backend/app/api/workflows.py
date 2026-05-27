@@ -101,6 +101,51 @@ async def delete_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_db))
     await db.commit()
     return None
 
+@router.post("/{workflow_id}/duplicate", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
+async def duplicate_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Duplicate a workflow including its agent access relations"""
+    result = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
+    workflow = result.scalar_one_or_none()
+
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Create duplicated workflow
+    new_workflow = Workflow(
+        name=f"{workflow.name} (Cópia)",
+        description=workflow.description,
+        is_active=workflow.is_active,
+        definition=workflow.definition,
+        trigger_keywords=workflow.trigger_keywords,
+        trigger_match_mode=workflow.trigger_match_mode,
+        return_direct_payload=workflow.return_direct_payload,
+    )
+
+    db.add(new_workflow)
+    await db.commit()
+    await db.refresh(new_workflow)
+
+    # Copy agent associations
+    try:
+        from app.models.agent import agent_workflow_access
+        stmt = select(agent_workflow_access.c.agent_id).where(agent_workflow_access.c.workflow_id == workflow_id)
+        agents_res = await db.execute(stmt)
+        agent_ids = agents_res.scalars().all()
+
+        for agent_id in agent_ids:
+            await db.execute(
+                agent_workflow_access.insert().values(
+                    agent_id=agent_id,
+                    workflow_id=new_workflow.id
+                )
+            )
+        await db.commit()
+    except Exception as e:
+        logger.error(f"Failed to copy agent associations for duplicated workflow: {e}")
+        # Non-blocking: we still have the new workflow created
+
+    return new_workflow
+
 
 # ─────────────────────────────────────────────────────────────
 # Execution — Run workflows

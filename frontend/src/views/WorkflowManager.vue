@@ -71,6 +71,10 @@
               <v-icon size="20">mdi-vector-polyline-edit</v-icon>
               <v-tooltip activator="parent" location="top">Editor Visual</v-tooltip>
             </v-btn>
+            <v-btn icon variant="text" size="small" color="info" @click="duplicateWorkflow(item)" :loading="item._duplicating">
+              <v-icon size="20">mdi-content-copy</v-icon>
+              <v-tooltip activator="parent" location="top">Duplicar</v-tooltip>
+            </v-btn>
             <v-btn icon variant="text" size="small" color="success" @click="quickRun(item)" :loading="item._running">
               <v-icon size="20">mdi-play</v-icon>
               <v-tooltip activator="parent" location="top">Executar</v-tooltip>
@@ -153,7 +157,7 @@ const newWorkflowData = ref({
 const headers = [
   { title: 'Workflow', key: 'name', sortable: true },
   { title: 'Status', key: 'is_active', sortable: true },
-  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '160px' }
+  { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '200px' }
 ]
 
 function getBlockCount(wf) {
@@ -169,6 +173,16 @@ async function quickRun(wf) {
   } catch (e) {
     alert('Erro: ' + (e.response?.data?.detail || e.message))
   } finally { wf._running = false }
+}
+
+async function duplicateWorkflow(wf) {
+  wf._duplicating = true
+  try {
+    await axios.post(`/workflows/${wf.id}/duplicate`)
+    await fetchWorkflows()
+  } catch (e) {
+    alert('Erro ao duplicar workflow: ' + (e.response?.data?.detail || e.message))
+  } finally { wf._duplicating = false }
 }
 
 const filteredWorkflows = computed(() => {
