@@ -1063,16 +1063,66 @@ Se não houver fatos relevantes, responda EXATAMENTE: NENHUM"""
 # ─────────────────────────────────────────────────────────────
 
 def _match_true_trigger_keyword(message: str, keyword: str, mode: str) -> bool:
-    """Deterministic matcher for true trigger keywords."""
+    """Deterministic matcher for true trigger keywords, with JSON field routing support."""
     import re
+    import json
+    from typing import Any
 
     if not message or not keyword:
         return False
 
-    message_norm = str(message).lower()
     keyword_norm = str(keyword).strip().lower()
     if not keyword_norm:
         return False
+
+    # 1. Verificar se a palavra-chave é um roteamento de campo (campo|valor)
+    if "|" in keyword:
+        parts = keyword.split("|", 1)
+        target_field = parts[0].strip().lower()
+        target_value = parts[1].strip().lower()
+
+        # Tentar decodificar a mensagem como JSON
+        try:
+            msg_data = json.loads(message)
+            
+            # Função auxiliar para busca recursiva
+            def find_values_recursively(data: Any, key_to_find: str) -> list:
+                vals = []
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if k.lower() == key_to_find:
+                            vals.append(v)
+                        if isinstance(v, (dict, list)):
+                            vals.extend(find_values_recursively(v, key_to_find))
+                elif isinstance(data, list):
+                    for item in data:
+                        vals.extend(find_values_recursively(item, key_to_find))
+                return vals
+
+            found_values = find_values_recursively(msg_data, target_field)
+            for f_val in found_values:
+                if str(f_val).strip().lower() == target_value:
+                    print(f"[KeywordMatcher] 🎯 JSON Match: field '{target_field}' equals '{target_value}'")
+                    return True
+        except Exception:
+            pass
+        return False
+
+    # 2. Palavra-chave de texto normal (sem |)
+    message_norm = str(message).lower()
+    
+    # Se a mensagem for JSON, limpamos para evitar falso positivo nas citações (quotedMessage/contextInfo)
+    try:
+        msg_data = json.loads(message)
+        # Extrai apenas campos de texto no nível raiz
+        texts_to_check = []
+        for k in ["title", "message", "text", "body", "description"]:
+            if k in msg_data and isinstance(msg_data[k], str):
+                texts_to_check.append(msg_data[k])
+        message_norm = " ".join(texts_to_check).lower()
+    except Exception:
+        # Se não for JSON, mantém o message_norm como o texto completo original
+        pass
 
     mode_norm = (mode or "word").strip().lower()
 
