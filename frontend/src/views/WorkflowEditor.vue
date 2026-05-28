@@ -381,6 +381,7 @@ const toolboxItems = [
   { type: 'trigger', label: 'Webhook', icon: 'mdi-lightning-bolt', color: '#F59E0B', category: 'trigger' },
   { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
   { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
+  { type: 'wait_input', label: 'Aguardar Resposta', icon: 'mdi-account-question', color: '#EC4899', category: 'action' },
   { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
   { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },
   { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },

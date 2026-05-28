@@ -413,6 +413,25 @@
         ></v-text-field>
       </template>
 
+      <!-- ═══ WAIT INPUT ═══ -->
+      <template v-if="block.type === 'wait_input'">
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          Este bloco pausa a execução do workflow e aguarda uma resposta do usuário.
+          O resultado da resposta será armazenado na chave de saída configurada.
+        </v-alert>
+        <v-text-field
+          v-model.number="config.timeout_seconds"
+          label="Tempo Limite de Espera (segundos)"
+          type="number"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="Padrão: 7200 (2 horas)"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+      </template>
+
       <!-- Context variables available -->
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
@@ -467,6 +486,8 @@ const BLOCK_META = {
   agent:        { icon: 'mdi-robot',             color: '#10B981', label: 'Configurar Agente' },
   transform:    { icon: 'mdi-swap-horizontal',   color: '#F97316', label: 'Configurar Transform' },
   delay:        { icon: 'mdi-timer-sand',        color: '#6B7280', label: 'Configurar Delay' },
+  sub_workflow: { icon: 'mdi-sitemap-outline',    color: '#EC4899', label: 'Configurar Sub-workflow' },
+  wait_input:   { icon: 'mdi-account-question',  color: '#EC4899', label: 'Configurar Aguardar Resposta' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })

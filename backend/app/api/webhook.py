@@ -228,6 +228,29 @@ async def process_message_structured(
     
     start_time = time.time()
     
+    # ═══════════════════════════════════════════════════════
+    # ACTIVE WORKFLOW RUN CHECK (Human-in-the-loop Resume)
+    # ═══════════════════════════════════════════════════════
+    if request.session_id:
+        active_wf_run = await redis.get(f"active_workflow_run:{request.session_id}")
+        if active_wf_run:
+            from app.worker.tasks import process_message_task
+            task_result = await process_message_task(
+                ctx={},
+                message=request.message,
+                session_id=request.session_id,
+                agent_id=request.agent_id,
+                user_access_level=request.user_access_level,
+                context_data=request.context_data,
+                transition_data=request.transition_data,
+                callback_url=None
+            )
+            return {
+                "output": task_result.get("response", ""),
+                "agent_used": task_result.get("agent_used"),
+                "processing_time_ms": (time.time() - start_time) * 1000
+            }
+    
     # Set request context for deep services (MCP tools)
     from app.context import set_request_context
     full_payload = {**request.model_dump(), **(request.model_extra or {})}

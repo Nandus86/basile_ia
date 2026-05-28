@@ -2608,6 +2608,95 @@ async def process_message_task(
 
     try:
         async with AsyncSessionLocal() as db:
+            # ═══════════════════════════════════════════════════════
+            # ACTIVE WORKFLOW RUN CHECK (Human-in-the-loop Resume)
+            # ═══════════════════════════════════════════════════════
+            if session_id:
+                active_wf_run = await redis_client.get(f"active_workflow_run:{session_id}")
+                if active_wf_run:
+                    print(f"[Task] ⚡ Found active paused workflow execution {active_wf_run} for session {session_id}. Resuming...")
+                    try:
+                        from app.services.workflow_engine import WorkflowEngine
+                        from uuid import UUID
+                        
+                        input_data = {
+                            "message": message,
+                            **(context_data or {})
+                        }
+                        
+                        engine = WorkflowEngine(db)
+                        res_ctx = await engine.resume(UUID(active_wf_run), input_data)
+                        
+                        # Add user message to history
+                        await redis_client.add_message(
+                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        
+                        final_status = res_ctx.get("status")
+                        if final_status == "paused":
+                            print(f"[Task] Workflow paused again at block {res_ctx.get('current_block_id')}")
+                            processing_time = (time.time() - start_time) * 1000
+                            response_data = {
+                                "status": "paused",
+                                "execution_id": str(res_ctx.get("execution_id")),
+                                "processing_time_ms": processing_time,
+                                "response": ""
+                            }
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                            return response_data
+                        
+                        # Completed or Failed
+                        final_result = res_ctx.get("result")
+                        response_text = ""
+                        if final_result:
+                            if isinstance(final_result, dict):
+                                response_text = final_result.get("response", final_result.get("output", json.dumps(final_result, ensure_ascii=False)))
+                            elif isinstance(final_result, list):
+                                response_text = json.dumps(final_result, ensure_ascii=False)
+                            else:
+                                response_text = str(final_result)
+                        
+                        if response_text:
+                            await redis_client.add_message(
+                                session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
+                        
+                        # Save to MTM
+                        import uuid as _uuid
+                        _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
+                        await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                        if response_text:
+                            await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+                            
+                        processing_time = (time.time() - start_time) * 1000
+                        response_data = {
+                            "status": "completed",
+                            "processing_time_ms": processing_time,
+                        }
+                        if isinstance(final_result, dict):
+                            response_data.update(final_result)
+                        else:
+                            response_data["response"] = response_text
+                        
+                        response_transition_data = _merge_transition_data(transition_data, context_data)
+                        if response_transition_data:
+                            response_data["transition_data"] = response_transition_data
+                            
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
+                        
+                    except Exception as e:
+                        print(f"[Task] ❌ Error resuming active workflow {active_wf_run}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Fall through to normal execution if resume fails
+
             from app.orchestrator.agent_factory import AgentFactory
             from langchain_core.messages import HumanMessage, AIMessage
 

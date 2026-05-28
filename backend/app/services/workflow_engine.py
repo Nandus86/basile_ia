@@ -229,6 +229,17 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────
+# Pausing and Resuming Execution Exception
+# ─────────────────────────────────────────────────────────────
+
+class WorkflowPauseException(Exception):
+    """Exception raised when a workflow execution needs to be paused for human input."""
+    def __init__(self, block_id: str):
+        self.block_id = block_id
+        super().__init__(f"Workflow paused at block {block_id}")
+
+
+# ─────────────────────────────────────────────────────────────
 # Main Engine
 # ─────────────────────────────────────────────────────────────
 
@@ -254,8 +265,6 @@ class WorkflowEngine:
         trigger_type: str = "manual",
     ) -> Dict[str, Any]:
         """Execute a workflow from start to finish and return the final context."""
-        t0 = time.time()
-
         # Load workflow
         result = await self.db.execute(select(Workflow).where(Workflow.id == workflow_id))
         workflow = result.scalar_one_or_none()
@@ -296,7 +305,6 @@ class WorkflowEngine:
             },
         }
         blocks_log: List[Dict[str, Any]] = []
-        last_output_key: Optional[str] = None
 
         try:
             # Find trigger block (entry point)
@@ -306,8 +314,130 @@ class WorkflowEngine:
 
             current_block_id = trigger_block['id']
 
+            return await self._run_execution_loop(
+                execution=execution,
+                context=context,
+                current_block_id=current_block_id,
+                blocks=blocks,
+                edges=edges,
+                blocks_log=blocks_log,
+            )
+        except Exception as e:
+            execution.status = "failed"
+            execution.error_message = f"{type(e).__name__}: {str(e)}"
+            execution.blocks_executed = blocks_log
+            execution.context = {k.lstrip('$'): v for k, v in context.items()}
+            execution.completed_at = datetime.now(timezone.utc)
+            execution.duration_ms = 0
+            await self.db.commit()
+
+            logger.error(f"[WorkflowEngine] ❌ Workflow '{workflow.name}' failed: {e}")
+            traceback.print_exc()
+            raise
+
+    async def resume(
+        self,
+        execution_id: UUID,
+        input_data: Any,
+    ) -> Dict[str, Any]:
+        """Resume a paused workflow execution with the provided input data."""
+        # Load execution
+        result = await self.db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))
+        execution = result.scalar_one_or_none()
+        if not execution:
+            raise ValueError(f"Workflow execution {execution_id} not found")
+        if execution.status != "paused":
+            raise ValueError(f"Workflow execution {execution_id} is not paused (status: {execution.status})")
+
+        # Load workflow
+        wf_result = await self.db.execute(select(Workflow).where(Workflow.id == execution.workflow_id))
+        workflow = wf_result.scalar_one_or_none()
+        if not workflow:
+            raise ValueError(f"Workflow {execution.workflow_id} not found")
+
+        definition = workflow.definition or {}
+        blocks = {b['id']: b for b in definition.get('blocks', [])}
+        edges = definition.get('edges', [])
+
+        # Restore context and prefix $ keys
+        context: Dict[str, Any] = {}
+        for k, v in execution.context.items():
+            if k.startswith('$'):
+                context[k] = v
+            else:
+                context[f'${k}'] = v
+
+        # Set execution status to running
+        execution.status = "running"
+        await self.db.commit()
+
+        paused_block_id = execution.current_block_id
+        block = blocks.get(paused_block_id)
+        if not block:
+            raise ValueError(f"Paused block {paused_block_id} not found in workflow definition")
+
+        output_key = block.get('config', {}).get('output_key', block['id'])
+        
+        # Save user response as the result of the paused block
+        context[f'${output_key}'] = input_data
+        
+        blocks_log = execution.blocks_executed or []
+        # Update or append the block log for the paused block
+        block_log = {
+            'block_id': paused_block_id,
+            'block_type': block.get('type', 'wait_input'),
+            'label': block.get('label', ''),
+            'status': 'success',
+            'output_key': output_key,
+            'duration_ms': 0,
+            'error': None,
+        }
+        blocks_log.append(block_log)
+
+        # Resolve next block ID
+        next_block_id = self._resolve_next(block, input_data, context, edges)
+        
+        logger.info(f"[WorkflowEngine] ▶️ Resuming workflow execution {execution_id} at block {next_block_id}")
+        
+        # Run execution loop starting from the next block
+        return await self._run_execution_loop(
+            execution=execution,
+            context=context,
+            current_block_id=next_block_id,
+            blocks=blocks,
+            edges=edges,
+            blocks_log=blocks_log,
+        )
+
+    async def _run_execution_loop(
+        self,
+        execution: WorkflowExecution,
+        context: Dict[str, Any],
+        current_block_id: Optional[str],
+        blocks: Dict[str, Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        blocks_log: List[Dict[str, Any]],
+        recursion_depth: int = 0,
+    ) -> Dict[str, Any]:
+        t0 = time.time()
+        last_output_key = None
+        # Try to find the last output key from existing context/blocks_log if resuming
+        if blocks_log:
+            for log in reversed(blocks_log):
+                if log.get('status') == 'success' and log.get('output_key'):
+                    last_output_key = log.get('output_key')
+                    break
+
+        try:
             while current_block_id:
                 block = blocks.get(current_block_id)
+                if not block:
+                    # Fallback lookup
+                    for b in blocks.values():
+                        if b.get('config', {}).get('output_key') == current_block_id:
+                            block = b
+                            current_block_id = b['id']
+                            break
                 if not block:
                     logger.warning(f"[WorkflowEngine] Block '{current_block_id}' not found, stopping")
                     break
@@ -324,6 +454,30 @@ class WorkflowEngine:
 
                 try:
                     block_result = await self._execute_block(block, context)
+                except WorkflowPauseException as pe:
+                    total_duration = int((time.time() - t0) * 1000)
+                    clean_context = {k.lstrip('$'): v for k, v in context.items()}
+                    
+                    execution.status = "paused"
+                    execution.current_block_id = pe.block_id
+                    execution.context = clean_context
+                    execution.blocks_executed = blocks_log
+                    await self.db.commit()
+                    
+                    session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+                    if session_id:
+                        from app.redis_client import redis_client
+                        timeout_seconds = int(block.get('config', {}).get('timeout_seconds', 7200))
+                        await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
+                        logger.info(f"[WorkflowEngine] Mapped active_workflow_run:{session_id} to execution {execution.id} for {timeout_seconds}s")
+                    
+                    logger.info(f"[WorkflowEngine] ⏸️ Workflow execution {execution.id} paused at block {pe.block_id}")
+                    return {
+                        'status': 'paused',
+                        'execution_id': execution.id,
+                        'current_block_id': pe.block_id,
+                        'context': clean_context,
+                    }
                 except Exception as e:
                     block_status = "failed"
                     block_error = str(e)
@@ -367,14 +521,11 @@ class WorkflowEngine:
 
             # Success
             total_duration = int((time.time() - t0) * 1000)
-            # Remove internal $ keys for cleaner context log
             clean_context = {k.lstrip('$'): v for k, v in context.items()}
 
-            # Final result = only the last block's output (what matters for agents/production)
             final_result = None
             if last_output_key:
                 final_result = context.get(f'${last_output_key}') or clean_context.get(last_output_key)
-                # For HTTP blocks, strip headers from the final result for cleaner output
                 if isinstance(final_result, dict) and 'headers' in final_result and 'data' in final_result:
                     final_result = {k: v for k, v in final_result.items() if k != 'headers'}
 
@@ -384,17 +535,23 @@ class WorkflowEngine:
             execution.result = final_result
             execution.current_block_id = None
             execution.completed_at = datetime.now(timezone.utc)
-            execution.duration_ms = total_duration
+            execution.duration_ms = (execution.duration_ms or 0) + total_duration
             await self.db.commit()
 
+            # Clean active session mapping if completed
+            session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+            if session_id:
+                from app.redis_client import redis_client
+                await redis_client.delete(f"active_workflow_run:{session_id}")
+
             logger.info(
-                f"[WorkflowEngine] 🏁 Workflow '{workflow.name}' completed "
-                f"({len(blocks_log)} blocks, {total_duration}ms) "
-                f"[last_block={last_output_key}]"
+                f"[WorkflowEngine] 🏁 Workflow execution {execution.id} completed "
+                f"({len(blocks_log)} blocks, {execution.duration_ms}ms)"
             )
             return {
                 'result': final_result,
                 'context': clean_context,
+                'status': 'completed',
                 'last_block': last_output_key,
             }
 
@@ -405,12 +562,19 @@ class WorkflowEngine:
             execution.blocks_executed = blocks_log
             execution.context = {k.lstrip('$'): v for k, v in context.items()}
             execution.completed_at = datetime.now(timezone.utc)
-            execution.duration_ms = total_duration
+            execution.duration_ms = (execution.duration_ms or 0) + total_duration
             await self.db.commit()
 
-            logger.error(f"[WorkflowEngine] ❌ Workflow '{workflow.name}' failed: {e}")
+            # Clean active session mapping if failed
+            session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+            if session_id:
+                from app.redis_client import redis_client
+                await redis_client.delete(f"active_workflow_run:{session_id}")
+
+            logger.error(f"[WorkflowEngine] ❌ Workflow execution {execution.id} failed: {e}")
             traceback.print_exc()
             raise
+
 
     async def execute_single_block(
         self,
@@ -444,6 +608,8 @@ class WorkflowEngine:
                 return await self._exec_transform(config, context)
             case 'delay':
                 return await self._exec_delay(config, context)
+            case 'wait_input':
+                raise WorkflowPauseException(block['id'])
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
