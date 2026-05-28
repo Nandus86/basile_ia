@@ -120,6 +120,8 @@
                 :block="prevBlock"
                 :agents="agentsList"
                 :webhook-configs="webhooksList"
+                :workflows="workflowsList"
+                :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
                 @update="onBlockUpdate"
@@ -136,6 +138,8 @@
                 :block="selectedBlock"
                 :agents="agentsList"
                 :webhook-configs="webhooksList"
+                :workflows="workflowsList"
+                :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
                 @update="onBlockUpdate"
@@ -154,6 +158,8 @@
                 :block="nextBlock"
                 :agents="agentsList"
                 :webhook-configs="webhooksList"
+                :workflows="workflowsList"
+                :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
                 @update="onBlockUpdate"
@@ -361,6 +367,7 @@ const nodes = ref([])
 const edges = ref([])
 const agentsList = ref([])
 const webhooksList = ref([])
+const workflowsList = ref([])
 const saving = ref(false)
 const selectedBlock = ref(null)
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
@@ -382,6 +389,7 @@ const toolboxItems = [
   { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
   { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
   { type: 'wait_input', label: 'Aguardar Resposta', icon: 'mdi-account-question', color: '#EC4899', category: 'action' },
+  { type: 'sub_workflow', label: 'Sub-workflow', icon: 'mdi-sitemap-outline', color: '#EC4899', category: 'action' },
   { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
   { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },
   { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },
@@ -422,7 +430,7 @@ const drawerWidth = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([fetchAgents(), fetchWebhooks(), loadWorkflow()])
+  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), loadWorkflow()])
 })
 
 async function fetchAgents() {
@@ -430,6 +438,9 @@ async function fetchAgents() {
 }
 async function fetchWebhooks() {
   try { webhooksList.value = (await axios.get('/webhooks-config')).data.webhook_configs || [] } catch {}
+}
+async function fetchWorkflows() {
+  try { workflowsList.value = (await axios.get('/workflows')).data.workflows || [] } catch {}
 }
 
 async function loadWorkflow() {

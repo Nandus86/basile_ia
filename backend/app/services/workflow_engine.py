@@ -145,6 +145,70 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
         except:
             return ''
 
+    # Handle $list(path, "format")
+    if path.startswith('list('):
+        args_str = path[5:-1]
+        if ',' in args_str:
+            var_path, format_str_raw = args_str.split(',', 1)
+            var_path = var_path.strip().lstrip('$')
+            format_str_raw = format_str_raw.strip()
+            if (format_str_raw.startswith('"') and format_str_raw.endswith('"')) or (format_str_raw.startswith("'") and format_str_raw.endswith("'")):
+                format_template = format_str_raw[1:-1]
+            else:
+                format_template = format_str_raw
+        else:
+            var_path = args_str.strip().lstrip('$')
+            format_template = None
+
+        parts = var_path.split('.', 1)
+        root_key = parts[0]
+        rest = parts[1] if len(parts) > 1 else None
+
+        root_val = context.get(f'${root_key}') or context.get(root_key)
+        val = _resolve_path(root_val, rest) if (root_val is not None and rest) else root_val
+
+        formatted_items = []
+        if isinstance(val, list):
+            for item in val:
+                if format_template:
+                    if isinstance(item, dict):
+                        flat_item = {}
+                        def _flatten(d, parent_key=''):
+                            for k, v in d.items():
+                                new_key = f"{parent_key}.{k}" if parent_key else k
+                                flat_item[new_key] = v
+                                if isinstance(v, dict):
+                                    _flatten(v, new_key)
+                        _flatten(item)
+
+                        class SafeDict(dict):
+                            def __missing__(self, key):
+                                return ''
+                        try:
+                            safe_item = SafeDict({k: (str(v) if v is not None else '') for k, v in flat_item.items()})
+                            import re
+                            res_str = format_template
+                            placeholders = re.findall(r'\{([^}]+)\}', res_str)
+                            for ph in placeholders:
+                                val_str = safe_item[ph]
+                                res_str = res_str.replace(f'{{{ph}}}', val_str)
+                            formatted_items.append(res_str)
+                        except Exception:
+                            formatted_items.append(str(item))
+                    else:
+                        if '{item}' in format_template:
+                            formatted_items.append(format_template.replace('{item}', str(item)))
+                        else:
+                            formatted_items.append(str(item))
+                else:
+                    if isinstance(item, dict):
+                        pairs = [f"{k}: {v}" for k, v in item.items() if v is not None and str(v).strip() != '']
+                        formatted_items.append(", ".join(pairs))
+                    else:
+                        formatted_items.append(str(item))
+            return "\n".join(formatted_items)
+        return str(val) if val is not None else ''
+
     # $env.VAR_NAME → environment variable
     if path.startswith('env.'):
         import os
@@ -263,8 +327,13 @@ class WorkflowEngine:
         workflow_id: UUID,
         trigger_data: Dict[str, Any],
         trigger_type: str = "manual",
+        recursion_depth: int = 0,
     ) -> Dict[str, Any]:
         """Execute a workflow from start to finish and return the final context."""
+        if recursion_depth > 5:
+            raise ValueError("Profundidade máxima de recursão de sub-workflows atingida (limite: 5)")
+
+        t0 = time.time()
         # Load workflow
         result = await self.db.execute(select(Workflow).where(Workflow.id == workflow_id))
         workflow = result.scalar_one_or_none()
@@ -432,7 +501,7 @@ class WorkflowEngine:
             while current_block_id:
                 block = blocks.get(current_block_id)
                 if not block:
-                    # Fallback lookup
+                    # Fallback lookup: check if any block has output_key matching current_block_id
                     for b in blocks.values():
                         if b.get('config', {}).get('output_key') == current_block_id:
                             block = b
@@ -453,7 +522,7 @@ class WorkflowEngine:
                 block_error = None
 
                 try:
-                    block_result = await self._execute_block(block, context)
+                    block_result = await self._execute_block(block, context, recursion_depth)
                 except WorkflowPauseException as pe:
                     total_duration = int((time.time() - t0) * 1000)
                     clean_context = {k.lstrip('$'): v for k, v in context.items()}
@@ -586,7 +655,7 @@ class WorkflowEngine:
 
     # ── Block executors ────────────────────────────────────────
 
-    async def _execute_block(self, block: Dict[str, Any], context: Dict[str, Any]) -> Any:
+    async def _execute_block(self, block: Dict[str, Any], context: Dict[str, Any], recursion_depth: int = 0) -> Any:
         """Dispatch block execution by type."""
         block_type = block.get('type', '')
         config = block.get('config', {})
@@ -610,6 +679,8 @@ class WorkflowEngine:
                 return await self._exec_delay(config, context)
             case 'wait_input':
                 raise WorkflowPauseException(block['id'])
+            case 'sub_workflow':
+                return await self._exec_sub_workflow(config, context, recursion_depth)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -924,6 +995,51 @@ class WorkflowEngine:
             'delayed_ms': delay_ms,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
+
+    async def _exec_sub_workflow(self, config: Dict[str, Any], context: Dict[str, Any], recursion_depth: int) -> Any:
+        """Execute a sub-workflow as a nested block."""
+        workflow_id_str = config.get('workflow_id')
+        if not workflow_id_str:
+            raise ValueError("Sub-workflow block: Nenhum workflow selecionado")
+
+        try:
+            workflow_id = UUID(resolve_template(workflow_id_str, context))
+        except ValueError:
+            # Try parsing dynamic ID from variable if stored as raw UUID or string
+            resolved_id = resolve_template(workflow_id_str, context)
+            try:
+                workflow_id = UUID(resolved_id)
+            except Exception:
+                raise ValueError(f"Sub-workflow block: ID do workflow inválido: '{resolved_id}'")
+
+        payload_mode = config.get('payload_mode', 'full')
+        if payload_mode == 'custom':
+            raw_payload = config.get('payload_template', '{}')
+            # Resolve templates inside payload
+            payload = resolve_template(raw_payload, context)
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    # Fallback to string wrapper if it's not valid JSON
+                    payload = {"text": payload}
+        else:
+            # Pass the parent's trigger payload directly so the sub-workflow
+            # gets the exact same $trigger.payload structure.
+            payload = context.get('$trigger', {}).get('payload', {})
+
+        logger.info(f"[WorkflowEngine] 🔀 Running sub-workflow: {workflow_id} (depth: {recursion_depth + 1})")
+        
+        # Run sub-workflow using the same DB session
+        sub_engine = WorkflowEngine(self.db)
+        sub_result = await sub_engine.execute(
+            workflow_id=workflow_id,
+            trigger_data=payload,
+            trigger_type="sub_workflow",
+            recursion_depth=recursion_depth + 1
+        )
+        
+        return sub_result.get('result')
 
     # ── Navigation helpers ─────────────────────────────────────
 
