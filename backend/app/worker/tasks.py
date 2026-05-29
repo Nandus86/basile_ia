@@ -2601,6 +2601,7 @@ async def process_message_task(
       - If is_orchestrator, pre-consult collaborators
       - Supervisor (run_orchestrator_v2) only used as fallback when no agent_id
     """
+    import json
     start_time = time.time()
     
     # Set request context for deep services (MCP tools)
