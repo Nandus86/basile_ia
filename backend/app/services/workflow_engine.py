@@ -492,6 +492,19 @@ class WorkflowEngine:
             else:
                 context[f'${k}'] = v
 
+        # Merge new input_data into trigger payload so subsequent blocks and MCP tools can access it
+        if '$trigger' in context and isinstance(context['$trigger'], dict):
+            payload = context['$trigger'].get('payload')
+            if not isinstance(payload, dict):
+                payload = {}
+                context['$trigger']['payload'] = payload
+
+            if isinstance(input_data, dict):
+                payload.update(input_data)
+            else:
+                payload['message'] = input_data
+
+
         # Set execution status to running
         execution.status = "running"
         await self.db.commit()
