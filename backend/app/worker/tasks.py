@@ -2675,7 +2675,9 @@ async def process_message_task(
                                 "status": "paused",
                                 "execution_id": str(res_ctx.get("execution_id")),
                                 "processing_time_ms": processing_time,
-                                "response": response_text
+                                "response": response_text,
+                                "is_hitl_pause": True,
+                                "workflow_name": workflow.name,
                             }
                             if callback_url:
                                 from app.worker.tasks import _send_callback
@@ -2708,8 +2710,10 @@ async def process_message_task(
                             
                         processing_time = (time.time() - start_time) * 1000
                         response_data = {
-                            "status": "completed",
+                            "status": res_ctx.get("status", "completed"),
                             "processing_time_ms": processing_time,
+                            "workflow_name": workflow.name,
+                            "is_hitl_pause": False,
                         }
                         if isinstance(final_result, dict):
                             response_data.update(final_result)

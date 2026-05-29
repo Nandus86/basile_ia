@@ -501,8 +501,29 @@ class WorkflowEngine:
 
             if isinstance(input_data, dict):
                 payload.update(input_data)
+                
+                # Try to parse 'message' as JSON and merge its fields if it is a dictionary
+                msg_val = input_data.get('message')
+                if isinstance(msg_val, str) and msg_val.strip():
+                    try:
+                        import json
+                        parsed_msg = json.loads(msg_val)
+                        if isinstance(parsed_msg, dict):
+                            payload.update(parsed_msg)
+                            payload['parsed_message'] = parsed_msg
+                    except Exception:
+                        pass
             else:
                 payload['message'] = input_data
+                if isinstance(input_data, str) and input_data.strip():
+                    try:
+                        import json
+                        parsed_msg = json.loads(input_data)
+                        if isinstance(parsed_msg, dict):
+                            payload.update(parsed_msg)
+                            payload['parsed_message'] = parsed_msg
+                    except Exception:
+                        pass
 
 
         # Set execution status to running
