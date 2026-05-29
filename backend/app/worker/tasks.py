@@ -2635,6 +2635,7 @@ async def process_message_task(
                         
                         engine = WorkflowEngine(db)
                         res_ctx = await engine.resume(UUID(active_wf_run), input_data)
+                        wf_name = res_ctx.get("context", {}).get("workflow", {}).get("name", "Unknown Workflow")
                         
                         # Add user message to history
                         await redis_client.add_message(
@@ -2677,7 +2678,7 @@ async def process_message_task(
                                 "processing_time_ms": processing_time,
                                 "response": response_text,
                                 "is_hitl_pause": True,
-                                "workflow_name": workflow.name,
+                                "workflow_name": wf_name,
                             }
                             if callback_url:
                                 from app.worker.tasks import _send_callback
@@ -2712,7 +2713,7 @@ async def process_message_task(
                         response_data = {
                             "status": res_ctx.get("status", "completed"),
                             "processing_time_ms": processing_time,
-                            "workflow_name": workflow.name,
+                            "workflow_name": wf_name,
                             "is_hitl_pause": False,
                         }
                         if isinstance(final_result, dict):
