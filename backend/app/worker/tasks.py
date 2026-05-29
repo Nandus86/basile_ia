@@ -623,7 +623,7 @@ async def _enrich_agent_prompt(
         # If found, execute the automation directly and skip the entire orchestrator chain.
         try:
             shortcut_result = await _check_collaborator_workflow_shortcuts(
-                db, str(agent_model.id), message, context_data
+                db, str(agent_model.id), message, session_id, context_data
             )
             if shortcut_result:
                 agent_config["__direct_payload_result"] = shortcut_result
@@ -1877,6 +1877,7 @@ async def _check_collaborator_workflow_shortcuts(
     db,
     agent_id: str,
     message: str,
+    session_id: str,
     context_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -1990,6 +1991,7 @@ async def _check_collaborator_workflow_shortcuts(
         trigger_data = (context_data or {}).copy()
         trigger_data["message"] = message
         trigger_data["matched_keyword"] = best_match["keyword"]
+        trigger_data["session_id"] = session_id
 
         result_ctx = await engine.execute(
             workflow_id=wf.id,
@@ -2189,6 +2191,7 @@ async def _check_workflow_direct_triggers(
 async def _check_global_workflow_shortcuts(
     db,
     message: str,
+    session_id: str,
     user_access_level: str,
     context_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[Any]:
@@ -2256,6 +2259,7 @@ async def _check_global_workflow_shortcuts(
         trigger_data = (context_data or {}).copy()
         trigger_data["message"] = message
         trigger_data["matched_keyword"] = best_match["keyword"]
+        trigger_data["session_id"] = session_id
 
         result_ctx = await engine.execute(
             workflow_id=wf.id,
@@ -2278,11 +2282,13 @@ async def _check_global_workflow_shortcuts(
         if is_direct_payload:
             direct_payload = {
                 "__direct_payload": True,
-                "status": "completed",
+                "status": result_ctx.get("status", "completed"),
                 "agent_used": f"Workflow Automation ({wf.name})",
                 "workflow_name": wf.name,
                 "matched_keyword": best_match["keyword"],
             }
+            if result_ctx.get("status") == "paused":
+                direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
             if isinstance(final_result, dict):
                 direct_payload.update(final_result)
                 if "response" not in direct_payload:
@@ -2743,7 +2749,7 @@ async def process_message_task(
             print("[Task] 🔍 Checking ALL workflows for direct shortcut triggers...")
             try:
                 from app.worker.tasks import _check_global_workflow_shortcuts
-                global_wf_response = await _check_global_workflow_shortcuts(db, message, user_access_level, context_data)
+                global_wf_response = await _check_global_workflow_shortcuts(db, message, session_id, user_access_level, context_data)
                 
                 if global_wf_response is not None:
                     print(f"[Task] ⚡ Global Workflow direct trigger executed. Bypassing ALL agents.")
@@ -2771,11 +2777,11 @@ async def process_message_task(
 
                         processing_time = (time.time() - start_time) * 1000
                         response_data = {
-                            "status": "completed",
+                            "status": global_wf_response.get("status", "completed"),
                             "processing_time_ms": processing_time,
                         }
                         for k, v in global_wf_response.items():
-                            if k != "__direct_payload":
+                            if k not in ("__direct_payload", "status"):
                                 response_data[k] = v
                         
                         response_transition_data = _merge_transition_data(transition_data, context_data)
@@ -3486,6 +3492,7 @@ async def process_message_task(
                                 engine = WorkflowEngine(db)
                                 trigger_data = (context_data or {}).copy()
                                 trigger_data["message"] = message
+                                trigger_data["session_id"] = session_id
                                 
                                 result_ctx = await engine.execute(
                                     workflow_id=wf.id,
