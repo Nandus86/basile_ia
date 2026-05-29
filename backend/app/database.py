@@ -6,6 +6,23 @@ from sqlalchemy.orm import declarative_base
 
 from app.config import settings
 
+import json
+from uuid import UUID
+from datetime import datetime
+
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, UUID):
+            return str(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, set):
+            return list(obj)
+        return super().default(obj)
+
+def custom_serializer(obj):
+    return json.dumps(obj, cls=CustomJSONEncoder, ensure_ascii=False)
+
 # Create async engine with connection pooling for scalability
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -16,6 +33,7 @@ engine = create_async_engine(
     pool_pre_ping=True,    # Verify connections before use (handles stale connections)
     pool_recycle=1800,     # Recycle connections every 30 minutes
     pool_timeout=30,       # Wait up to 30s for a connection from pool
+    json_serializer=custom_serializer,
 )
 
 # Session factory

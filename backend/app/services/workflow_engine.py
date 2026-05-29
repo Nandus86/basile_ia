@@ -36,6 +36,62 @@ from app.models.workflow_execution import WorkflowExecution
 logger = logging.getLogger(__name__)
 
 
+def make_json_safe(obj: Any, seen: Optional[set] = None) -> Any:
+    """
+    Recursively sanitize any Python object to make it completely JSON-safe,
+    resolving circular references and converting non-serializable objects (UUIDs, datetimes, sets)
+    to strings/primitives to prevent database flush errors.
+    """
+    if seen is None:
+        seen = set()
+
+    if obj is None:
+        return None
+
+    # Check for circular reference using object identity
+    obj_id = id(obj)
+    if obj_id in seen:
+        return "[Circular Reference]"
+
+    # Primitive types that are native to JSON
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    if isinstance(obj, UUID):
+        return str(obj)
+
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+
+    if isinstance(obj, dict):
+        seen.add(obj_id)
+        # Avoid mutating the original dictionary
+        safe_dict = {}
+        for k, v in obj.items():
+            safe_dict[str(k)] = make_json_safe(v, seen)
+        seen.remove(obj_id)
+        return safe_dict
+
+    if isinstance(obj, (list, tuple, set)):
+        seen.add(obj_id)
+        safe_list = [make_json_safe(item, seen) for item in obj]
+        seen.remove(obj_id)
+        return safe_list
+
+    if hasattr(obj, 'to_dict') and callable(getattr(obj, 'to_dict')):
+        try:
+            seen.add(obj_id)
+            res = make_json_safe(obj.to_dict(), seen)
+            seen.remove(obj_id)
+            return res
+        except Exception:
+            return str(obj)
+
+    # Fallback to string representation of the object
+    return str(obj)
+
+
+
 # ─────────────────────────────────────────────────────────────
 # Template resolution
 # ─────────────────────────────────────────────────────────────
@@ -354,7 +410,7 @@ class WorkflowEngine:
             workflow_id=workflow_id,
             status="running",
             trigger_type=trigger_type,
-            trigger_data=trigger_data,
+            trigger_data=make_json_safe(trigger_data),
             context={},
             blocks_executed=[],
             blocks_total=len(blocks),
@@ -394,8 +450,8 @@ class WorkflowEngine:
         except Exception as e:
             execution.status = "failed"
             execution.error_message = f"{type(e).__name__}: {str(e)}"
-            execution.blocks_executed = blocks_log
-            execution.context = {k.lstrip('$'): v for k, v in context.items()}
+            execution.blocks_executed = make_json_safe(blocks_log)
+            execution.context = make_json_safe({k.lstrip('$'): v for k, v in context.items()})
             execution.completed_at = datetime.now(timezone.utc)
             execution.duration_ms = 0
             await self.db.commit()
@@ -535,9 +591,9 @@ class WorkflowEngine:
 
                     execution.status = "paused"
                     execution.current_block_id = pe.block_id
-                    execution.context = clean_context
-                    execution.blocks_executed = blocks_log
-                    execution.result = current_result
+                    execution.context = make_json_safe(clean_context)
+                    execution.blocks_executed = make_json_safe(blocks_log)
+                    execution.result = make_json_safe(current_result)
                     await self.db.commit()
                     
                     session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
@@ -607,9 +663,9 @@ class WorkflowEngine:
                     final_result = {k: v for k, v in final_result.items() if k != 'headers'}
 
             execution.status = "completed"
-            execution.context = clean_context
-            execution.blocks_executed = blocks_log
-            execution.result = final_result
+            execution.context = make_json_safe(clean_context)
+            execution.blocks_executed = make_json_safe(blocks_log)
+            execution.result = make_json_safe(final_result)
             execution.current_block_id = None
             execution.completed_at = datetime.now(timezone.utc)
             execution.duration_ms = (execution.duration_ms or 0) + total_duration
@@ -636,8 +692,8 @@ class WorkflowEngine:
             total_duration = int((time.time() - t0) * 1000)
             execution.status = "failed"
             execution.error_message = f"{type(e).__name__}: {str(e)}"
-            execution.blocks_executed = blocks_log
-            execution.context = {k.lstrip('$'): v for k, v in context.items()}
+            execution.blocks_executed = make_json_safe(blocks_log)
+            execution.context = make_json_safe({k.lstrip('$'): v for k, v in context.items()})
             execution.completed_at = datetime.now(timezone.utc)
             execution.duration_ms = (execution.duration_ms or 0) + total_duration
             await self.db.commit()
