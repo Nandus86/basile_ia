@@ -522,15 +522,22 @@ class WorkflowEngine:
                 block_error = None
 
                 try:
-                    block_result = await self._execute_block(block, context, recursion_depth)
+                    block_result = await self._execute_block(block, context, recursion_depth, last_output_key)
                 except WorkflowPauseException as pe:
                     total_duration = int((time.time() - t0) * 1000)
                     clean_context = {k.lstrip('$'): v for k, v in context.items()}
                     
+                    current_result = None
+                    if last_output_key:
+                        current_result = context.get(f'${last_output_key}') or clean_context.get(last_output_key)
+                        if isinstance(current_result, dict) and 'headers' in current_result and 'data' in current_result:
+                            current_result = {k: v for k, v in current_result.items() if k != 'headers'}
+
                     execution.status = "paused"
                     execution.current_block_id = pe.block_id
                     execution.context = clean_context
                     execution.blocks_executed = blocks_log
+                    execution.result = current_result
                     await self.db.commit()
                     
                     session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
@@ -546,6 +553,7 @@ class WorkflowEngine:
                         'execution_id': execution.id,
                         'current_block_id': pe.block_id,
                         'context': clean_context,
+                        'result': current_result,
                     }
                 except Exception as e:
                     block_status = "failed"
@@ -655,7 +663,13 @@ class WorkflowEngine:
 
     # ── Block executors ────────────────────────────────────────
 
-    async def _execute_block(self, block: Dict[str, Any], context: Dict[str, Any], recursion_depth: int = 0) -> Any:
+    async def _execute_block(
+        self,
+        block: Dict[str, Any],
+        context: Dict[str, Any],
+        recursion_depth: int = 0,
+        last_output_key: Optional[str] = None,
+    ) -> Any:
         """Dispatch block execution by type."""
         block_type = block.get('type', '')
         config = block.get('config', {})
@@ -681,8 +695,24 @@ class WorkflowEngine:
                 raise WorkflowPauseException(block['id'])
             case 'sub_workflow':
                 return await self._exec_sub_workflow(config, context, recursion_depth)
+            case 'response':
+                return await self._exec_response(config, context, last_output_key)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
+
+    async def _exec_response(
+        self,
+        config: Dict[str, Any],
+        context: Dict[str, Any],
+        last_output_key: Optional[str],
+    ) -> Any:
+        """Execute a response block, returning the last executed block's output."""
+        if not last_output_key:
+            return context.get('$trigger', {}).get('payload', {})
+        val = context.get(f'${last_output_key}')
+        if val is None:
+            val = context.get(last_output_key)
+        return val
 
     async def _exec_http(self, config: Dict[str, Any], context: Dict[str, Any]) -> Any:
         """Execute an HTTP request block."""

@@ -2010,12 +2010,14 @@ async def _check_collaborator_workflow_shortcuts(
 
         direct_payload = {
             "__direct_payload": True,
-            "status": "completed",
+            "status": result_ctx.get("status", "completed"),
             "agent_used": f"Workflow Automation ({wf.name} via {collab.name})",
             "workflow_name": wf.name,
             "collaborator_name": collab.name,
             "matched_keyword": best_match["keyword"],
         }
+        if result_ctx.get("status") == "paused":
+            direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
 
         if is_direct_payload:
             # Direct payload mode: merge all fields at root level
@@ -2637,11 +2639,36 @@ async def process_message_task(
                         if final_status == "paused":
                             print(f"[Task] Workflow paused again at block {res_ctx.get('current_block_id')}")
                             processing_time = (time.time() - start_time) * 1000
+                            
+                            # Extract response payload from the paused result
+                            final_result = res_ctx.get("result")
+                            response_text = ""
+                            if final_result:
+                                if isinstance(final_result, dict):
+                                    response_text = final_result.get("response", final_result.get("output", json.dumps(final_result, ensure_ascii=False)))
+                                elif isinstance(final_result, list):
+                                    response_text = json.dumps(final_result, ensure_ascii=False)
+                                else:
+                                    response_text = str(final_result)
+                            
+                            if response_text:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                                # Save to MTM
+                                import uuid as _uuid
+                                _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
+                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+
+                             # Save user message to MTM too
+                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+
                             response_data = {
                                 "status": "paused",
                                 "execution_id": str(res_ctx.get("execution_id")),
                                 "processing_time_ms": processing_time,
-                                "response": ""
+                                "response": response_text
                             }
                             if callback_url:
                                 from app.worker.tasks import _send_callback
@@ -3414,12 +3441,12 @@ async def process_message_task(
                 processing_time = (time.time() - start_time) * 1000
                 # Build response_data: merge ALL automation fields at root level
                 response_data = {
-                    "status": "completed",
+                    "status": direct_data.get("status", "completed"),
                     "processing_time_ms": processing_time,
                 }
                 # Merge automation fields (except internal markers)
                 for k, v in direct_data.items():
-                    if k != "__direct_payload":
+                    if k not in ("__direct_payload", "status"):
                         response_data[k] = v
                 
                 response_transition_data = _merge_transition_data(transition_data, context_data)
@@ -3507,11 +3534,15 @@ async def process_message_task(
                         await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
 
                 processing_time = (time.time() - start_time) * 1000
+                wf_status = "completed"
+                if 'result_ctx' in locals() and isinstance(result_ctx, dict):
+                    wf_status = result_ctx.get("status", "completed")
+                    
                 response_data = {
-                    "status": "completed",
+                    "status": wf_status,
                     "agent_used": agent_used,
                     "processing_time_ms": processing_time,
-                    "is_hitl_pause": False,
+                    "is_hitl_pause": wf_status == "paused",
                 }
                 if isinstance(final_result, dict):
                     response_data.update(final_result)

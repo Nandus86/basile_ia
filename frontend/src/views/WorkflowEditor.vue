@@ -389,6 +389,7 @@ const toolboxItems = [
   { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
   { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
   { type: 'wait_input', label: 'Aguardar Resposta', icon: 'mdi-account-question', color: '#EC4899', category: 'action' },
+  { type: 'response', label: 'Saída', icon: 'mdi-logout', color: '#EC4899', category: 'action' },
   { type: 'sub_workflow', label: 'Sub-workflow', icon: 'mdi-sitemap-outline', color: '#EC4899', category: 'action' },
   { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
   { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },

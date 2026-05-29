@@ -432,6 +432,13 @@
         ></v-text-field>
       </template>
 
+      <!-- ═══ RESPONSE / SAÍDA ═══ -->
+      <template v-if="block.type === 'response'">
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          Este bloco define a resposta a ser enviada no payload de saída, retornando o resultado do bloco anterior.
+        </v-alert>
+      </template>
+
       <!-- ═══ SUB-WORKFLOW ═══ -->
       <template v-if="block.type === 'sub_workflow'">
         <v-select
@@ -557,6 +564,7 @@ const BLOCK_META = {
   delay:        { icon: 'mdi-timer-sand',        color: '#6B7280', label: 'Configurar Delay' },
   sub_workflow: { icon: 'mdi-sitemap-outline',    color: '#EC4899', label: 'Configurar Sub-workflow' },
   wait_input:   { icon: 'mdi-account-question',  color: '#EC4899', label: 'Configurar Aguardar Resposta' },
+  response:     { icon: 'mdi-logout',            color: '#EC4899', label: 'Configurar Saída' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
