@@ -2680,6 +2680,8 @@ async def process_message_task(
                                 "is_hitl_pause": True,
                                 "workflow_name": wf_name,
                             }
+                            if isinstance(final_result, dict):
+                                response_data.update(final_result)
                             if callback_url:
                                 from app.worker.tasks import _send_callback
                                 await _send_callback(callback_url, response_data)
