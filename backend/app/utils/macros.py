@@ -6,7 +6,7 @@ Ex: {{ $now(yyyy-MM-dd) }} -> 2024-05-20
 """
 import re
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def get_user_timezone(context_data: Optional[Dict[str, Any]] = None) -> str:
@@ -60,8 +60,7 @@ def _convert_format_to_strftime(fmt: str) -> str:
 
 def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = None) -> str:
     """
-    Substitui todas as ocorrências de macros globais de sistema (ex: {{ $now }} ou {{ $now(yyyy-MM-dd) }}) no texto.
-    Se a string {{ $now }} estiver presente, calcula a hora atual com o timezone correto e aplica formatação se solicitada.
+    Substitui todas as ocorrências de macros globais de sistema (ex: {{ $now }}, {{ $now(yyyy-MM-dd) }}, {{ $now+1D }}, {{ $now(yyyy-MM-dd)-3D }}) no texto.
     """
     if not text or not isinstance(text, str):
         return text
@@ -83,19 +82,41 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
     except ZoneInfoNotFoundError:
         user_tz = ZoneInfo('America/Sao_Paulo')
 
-    now = datetime.now(user_tz)
+    base_now = datetime.now(user_tz)
 
     def replacer(match):
-        fmt = match.group(1)
+        fmt = match.group(1)       # O formato (ex: DD/MM/YYYY)
+        math_op = match.group(2)   # O operador e quantidade (ex: +1 ou -3)
+        math_unit = match.group(3) # A unidade (ex: D, H, M, S)
+        
+        # 1. Aplicar cálculos matemáticos se houver
+        target_now = base_now
+        if math_op and math_unit:
+            try:
+                val = int(math_op.replace(" ", ""))
+                unit = math_unit.upper()
+                if unit == 'D':
+                    target_now += timedelta(days=val)
+                elif unit == 'H':
+                    target_now += timedelta(hours=val)
+                elif unit == 'M':
+                    target_now += timedelta(minutes=val)
+                elif unit == 'S':
+                    target_now += timedelta(seconds=val)
+            except Exception:
+                pass
+
+        # 2. Formatar o resultado
         if fmt:
             fmt = fmt.strip()
             fmt_py = _convert_format_to_strftime(fmt)
             try:
-                return now.strftime(fmt_py)
+                return target_now.strftime(fmt_py)
             except Exception:
-                return now.isoformat()
+                return target_now.isoformat()
         else:
-            return now.isoformat()
+            return target_now.isoformat()
 
-    # Busca {{ $now }} ou {{ $now(formato) }}
-    return re.sub(r'\{\{\s*\$now(?:\((.*?)\))?\s*\}\}', replacer, text)
+    # Regex que captura {{ $now }}, {{ $now(formato) }}, {{ $now+1D }} ou {{ $now(formato)-3D }}
+    pattern = r'\{\{\s*\$now(?:\((.*?)\))?\s*(?:([+-]\s*\d+)\s*([DdHhMmSs]))?\s*\}\}'
+    return re.sub(pattern, replacer, text)
