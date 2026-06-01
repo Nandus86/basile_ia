@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, desc, String
+from sqlalchemy import func, desc
 from typing import List, Optional
 import json
 import asyncio
@@ -38,7 +38,8 @@ async def get_tracking_logs(
     agent_response: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get paginated list of system webhook/job logs (lightweight list view)."""
+    """Get paginated list of system webhook/job logs (lightweight list view).
+    Uses denormalized indexed columns for fast filtering instead of JSON casting."""
     query = select(JobLog)
 
     if status:
@@ -50,21 +51,19 @@ async def get_tracking_logs(
             conditions = [JobLog.webhook_path.ilike(f"%{p}%") for p in paths]
             query = query.where(or_(*conditions))
     if session_id:
-        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"session_id\":%{session_id}%"))
+        # Use indexed column — exact match or partial match
+        if len(session_id) < 36:
+            query = query.where(JobLog.session_id.ilike(f"%{session_id}%"))
+        else:
+            query = query.where(JobLog.session_id == session_id)
     if church_name:
-        query = query.where(JobLog.request_data.cast(String).ilike(f"%\"church_name\":%{church_name}%"))
+        query = query.where(JobLog.church_name.ilike(f"%{church_name}%"))
     if member_name:
-        from sqlalchemy import or_
-        query = query.where(
-            or_(
-                JobLog.request_data.cast(String).ilike(f"%\"fullname\":%{member_name}%"),
-                JobLog.request_data.cast(String).ilike(f"%\"name\":%{member_name}%")
-            )
-        )
+        query = query.where(JobLog.member_name.ilike(f"%{member_name}%"))
     if user_message:
-        query = query.where(JobLog.request_data.cast(String).ilike(f"%{user_message}%"))
+        query = query.where(JobLog.user_message.ilike(f"%{user_message}%"))
     if agent_response:
-        query = query.where(JobLog.response_data.cast(String).ilike(f"%{agent_response}%"))
+        query = query.where(JobLog.agent_response.ilike(f"%{agent_response}%"))
 
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)
@@ -77,24 +76,40 @@ async def get_tracking_logs(
     items = []
     for log in logs:
         item = JobLogSchema.model_validate(log)
-        request_data = log.request_data
-        if isinstance(request_data, dict):
-            if not item.session_id:
-                item.session_id = request_data.get("session_id")
-            church = request_data.get("church") or {}
-            member = request_data.get("member") or {}
-            context_data = request_data.get("context_data") or {}
-            item.church_name = church.get("church_name")
-            item.member_fullname = member.get("fullname") or context_data.get("name") or request_data.get("name")
-            item.user_message = request_data.get("message")
-            
-        response_data = log.response_data
-        if isinstance(response_data, dict):
-            item.agent_response = response_data.get("result") or response_data.get("response") or response_data.get("output") or response_data.get("resposta")
-            
-            # Algumas vezes a resposta é um dict (ex: OpenRouter output)
-            if isinstance(item.agent_response, dict):
-                item.agent_response = item.agent_response.get("result") or item.agent_response.get("output") or item.agent_response.get("response") or str(item.agent_response)
+        # Use denormalized columns directly (already populated at write time)
+        if not item.session_id:
+            item.session_id = log.session_id
+        if not item.church_name:
+            item.church_name = log.church_name
+        if not item.member_fullname:
+            item.member_fullname = log.member_name
+        if not item.user_message:
+            item.user_message = log.user_message
+        if not item.agent_response:
+            item.agent_response = log.agent_response
+
+        # Fallback: extract from JSON only if denormalized columns are empty
+        if not item.church_name or not item.member_fullname or not item.user_message:
+            request_data = log.request_data
+            if isinstance(request_data, dict):
+                if not item.session_id:
+                    item.session_id = request_data.get("session_id")
+                if not item.church_name:
+                    church = request_data.get("church") or {}
+                    item.church_name = church.get("church_name")
+                if not item.member_fullname:
+                    member = request_data.get("member") or {}
+                    context_data = request_data.get("context_data") or {}
+                    item.member_fullname = member.get("fullname") or context_data.get("name") or request_data.get("name")
+                if not item.user_message:
+                    item.user_message = request_data.get("message")
+
+        if not item.agent_response:
+            response_data = log.response_data
+            if isinstance(response_data, dict):
+                item.agent_response = response_data.get("result") or response_data.get("response") or response_data.get("output") or response_data.get("resposta")
+                if isinstance(item.agent_response, dict):
+                    item.agent_response = item.agent_response.get("result") or item.agent_response.get("output") or item.agent_response.get("response") or str(item.agent_response)
 
         # Keep list payload small for stable pagination with high limits.
         item.request_data = None
@@ -108,6 +123,7 @@ async def get_tracking_logs(
         "skip": skip,
         "limit": limit
     }
+
 
 
 @router.get("/jobs/{job_id}")

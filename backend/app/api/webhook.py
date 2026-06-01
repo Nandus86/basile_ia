@@ -29,6 +29,38 @@ from app.config import settings
 
 router = APIRouter()
 
+def _extract_search_fields(payload: dict) -> dict:
+    """Extract denormalized search fields from a request payload for indexed queries."""
+    if not isinstance(payload, dict):
+        return {}
+    church = payload.get("church") or {}
+    member = payload.get("member") or {}
+    context_data = payload.get("context_data") or {}
+    return {
+        "session_id": payload.get("session_id"),
+        "church_name": church.get("church_name"),
+        "member_name": (
+            member.get("fullname")
+            or context_data.get("name")
+            or payload.get("name")
+        ),
+        "user_message": payload.get("message"),
+    }
+
+def _extract_agent_response(response_data: dict) -> str:
+    """Extract agent response text from response_data dict."""
+    if not isinstance(response_data, dict):
+        return None
+    resp = (
+        response_data.get("result")
+        or response_data.get("response")
+        or response_data.get("output")
+        or response_data.get("resposta")
+    )
+    if isinstance(resp, dict):
+        resp = resp.get("result") or resp.get("output") or resp.get("response") or str(resp)
+    return resp if isinstance(resp, str) else None
+
 @router.post("/trigger/personalizado/{path:path}")
 async def proxy_disparador_trigger(path: str, request: Request):
     try:
@@ -126,12 +158,14 @@ async def process_message(
         from app.models.job_log import JobLog
         
         # Log to DB
+        _payload = request.model_dump()
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
             webhook_path="/process",
             status="in_progress",
-            request_data=request.model_dump(),
-            callback_url=request.callback_url
+            request_data=_payload,
+            callback_url=request.callback_url,
+            **_extract_search_fields(_payload)
         )
         db.add(job_log)
         await db.commit()
@@ -170,6 +204,7 @@ async def process_message(
         if transition_data:
             full_response_data["transition_data"] = transition_data
         job_log.response_data = full_response_data
+        job_log.agent_response = _extract_agent_response(full_response_data)
         job_log.duration_ms = int(processing_time)
         
         try:
@@ -297,11 +332,13 @@ async def process_message_structured(
                 ttl_seconds=stm_ttl_seconds
             )
         
+        _payload_s = request.model_dump()
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
             webhook_path="/process/structured",
             status="in_progress",
-            request_data=request.model_dump()
+            request_data=_payload_s,
+            **_extract_search_fields(_payload_s)
         )
         db.add(job_log)
         await db.commit()
@@ -414,7 +451,9 @@ async def process_message_structured(
         processing_time = (time.time() - start_time) * 1000
         
         job_log.status = "completed"
-        job_log.response_data = {**result, "agent_used": agent_config["name"]}
+        _resp_s = {**result, "agent_used": agent_config["name"]}
+        job_log.response_data = _resp_s
+        job_log.agent_response = _extract_agent_response(_resp_s)
         job_log.duration_ms = int(processing_time)
         from datetime import datetime, timezone
         job_log.completed_at = datetime.now(timezone.utc)
@@ -484,11 +523,13 @@ async def process_message_async(
             request.context_data = c_data
         
         async with async_session_maker() as db_session:
+            _payload_a = request.model_dump()
             job_log = JobLog(
                 job_id=job_id,
                 webhook_path="/process/async",
                 status="queued",
-                request_data=request.model_dump()
+                request_data=_payload_a,
+                **_extract_search_fields(_payload_a)
             )
             db_session.add(job_log)
             await db_session.commit()
@@ -541,11 +582,13 @@ async def process_message_structured_async(
         if c_data:
             request.context_data = c_data
         async with async_session_maker() as db_session:
+            _payload_sa = request.model_dump()
             job_log = JobLog(
                 job_id=job_id,
                 webhook_path="/process/structured/async",
                 status="queued",
-                request_data=request.model_dump()
+                request_data=_payload_sa,
+                **_extract_search_fields(_payload_sa)
             )
             db_session.add(job_log)
             await db_session.commit()
@@ -855,11 +898,13 @@ async def process_dynamic_webhook(
             request.context_data = c_data
             
         start_time = time.time()
+        _payload_dyn = request.model_dump()
         job_log = JobLog(
             job_id=f"sync_{uuid.uuid4().hex}",
             webhook_path=path,
             status="in_progress",
-            request_data=request.model_dump()
+            request_data=_payload_dyn,
+            **_extract_search_fields(_payload_dyn)
         )
         db.add(job_log)
         await db.commit()
@@ -884,6 +929,7 @@ async def process_dynamic_webhook(
             processing_time = (time.time() - start_time) * 1000
             job_log.status = "completed"
             job_log.response_data = result
+            job_log.agent_response = _extract_agent_response(result)
             job_log.duration_ms = int(processing_time)
             
             from datetime import datetime, timezone
@@ -943,7 +989,8 @@ async def process_dynamic_webhook(
             webhook_path=path,
             status="queued",
             request_data=payload,
-            callback_url=request.callback_url
+            callback_url=request.callback_url,
+            **_extract_search_fields(payload)
         )
         db.add(job_log)
         await db.commit()

@@ -1012,6 +1012,16 @@ const apexchart = VueApexCharts
 
 const activeTab = ref('webhooks')
 
+// Debounce utility for search inputs
+let _debounceTimer = null
+function debouncedFetchLogs(delay = 400) {
+  clearTimeout(_debounceTimer)
+  _debounceTimer = setTimeout(() => {
+    page.value = 1
+    fetchLogs()
+  }, delay)
+}
+
 // Workflows / Automações state
 const workflowsList = ref([])
 const selectedWorkflowId = ref(null)
@@ -1274,6 +1284,13 @@ const searchMessage = ref('')
 const searchResponse = ref('')
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
+
+// Auto-search on typing with debounce (no need to press Enter)
+watch(searchSessionId, () => debouncedFetchLogs())
+watch(searchChurchName, () => debouncedFetchLogs())
+watch(searchMemberName, () => debouncedFetchLogs())
+watch(searchMessage, () => debouncedFetchLogs())
+watch(searchResponse, () => debouncedFetchLogs())
 
 const headers = [
   { title: 'Data/Hora', key: 'created_at', sortable: false, width: '110px' },

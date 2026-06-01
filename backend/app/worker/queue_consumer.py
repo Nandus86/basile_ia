@@ -412,6 +412,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         if transition_data:
                             full_response_data["transition_data"] = transition_data
                         job_log.response_data = full_response_data
+                        # Populate denormalized agent_response for fast indexed search
+                        job_log.agent_response = (
+                            full_response_data.get("result")
+                            or full_response_data.get("response")
+                            or full_response_data.get("output")
+                            or full_response_data.get("resposta")
+                        )
+                        if isinstance(job_log.agent_response, dict):
+                            job_log.agent_response = job_log.agent_response.get("result") or str(job_log.agent_response)
                         job_log.completed_at = datetime.now(timezone.utc)
                         if job_log.created_at:
                             job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
@@ -633,12 +642,25 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                 try:
                                     from app.models.job_log import JobLog
                                     async with async_session_maker() as db_session:
+                                        # Extract search fields from payload
+                                        _sf = {}
+                                        if isinstance(new_payload, dict):
+                                            _church = new_payload.get("church") or {}
+                                            _member = new_payload.get("member") or {}
+                                            _ctx = new_payload.get("context_data") or {}
+                                            _sf = {
+                                                "session_id": new_payload.get("session_id"),
+                                                "church_name": _church.get("church_name"),
+                                                "member_name": _member.get("fullname") or _ctx.get("name") or new_payload.get("name"),
+                                                "user_message": new_payload.get("message"),
+                                            }
                                         drained_job_log = JobLog(
                                             job_id=new_job_id,
                                             webhook_path="buffer_drain",
                                             status="queued",
                                             request_data=new_payload,
                                             callback_url=new_callback_url,
+                                            **_sf
                                         )
                                         db_session.add(drained_job_log)
                                         await db_session.commit()

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, String, Integer, DateTime, JSON, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime, timezone
 import uuid
@@ -20,6 +20,13 @@ class JobLog(Base):
     error_message = Column(String, nullable=True) # Contains stack trace or error if failed
     callback_url = Column(String, nullable=True) # URL to send the result to when processing finishes
     
+    # Denormalized searchable fields (extracted from JSON at write time for fast indexed queries)
+    session_id = Column(String(255), nullable=True, index=True)
+    church_name = Column(String(255), nullable=True, index=True)
+    member_name = Column(String(500), nullable=True, index=True)
+    user_message = Column(String, nullable=True)       # GIN trigram index via migration
+    agent_response = Column(String, nullable=True)      # GIN trigram index via migration
+
     # Timing
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime(timezone=True), nullable=True)
