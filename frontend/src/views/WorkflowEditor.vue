@@ -186,30 +186,94 @@
             class="monospace-field"></v-textarea>
 
           <!-- Status Banner -->
-          <v-alert v-if="testResult" :type="testResult.status === 'completed' ? 'success' : 'error'" variant="tonal" class="mt-3">
-            <div class="font-weight-bold mb-1">{{ testResult.status === 'completed' ? '✅ Sucesso' : '❌ Falha' }}</div>
-            <div class="text-caption">{{ testResult.blocks_count }} blocos executados em {{ testResult.duration_ms }}ms</div>
+          <v-alert v-if="testResult" :type="testResult.status === 'completed' ? 'success' : testResult.status === 'paused' ? 'warning' : 'error'" variant="tonal" class="mt-3">
+            <div class="font-weight-bold mb-1">
+              {{ testResult.status === 'completed' ? '✅ Sucesso' : testResult.status === 'paused' ? '⏸️ Workflow Pausado (Aguardando Resposta)' : '❌ Falha' }}
+            </div>
+            <div class="text-caption">
+              {{ testResult.status === 'paused' 
+                ? `Pausado no bloco: ${testResult.current_block_id}` 
+                : `${testResult.blocks_count} blocos executados em ${testResult.duration_ms}ms` }}
+            </div>
             <div v-if="testResult.error" class="text-caption mt-1" style="color: #EF4444">{{ testResult.error }}</div>
           </v-alert>
 
+          <!-- Interactive Resume Panel when workflow is paused -->
+          <v-card v-if="testResult && testResult.status === 'paused'" variant="outlined" class="mt-4 pa-4" style="border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.02)">
+            <div class="text-subtitle-1 font-weight-bold mb-2">
+              <v-icon color="warning" class="mr-1" size="20">mdi-account-question</v-icon>
+              {{ choicePrompt }}
+            </div>
+
+            <!-- Pre-pause result display -->
+            <v-alert v-if="testResult.result" variant="tonal" color="info" density="compact" class="mb-3 text-caption">
+              <div class="font-weight-bold mb-1">Última Saída (Antes de Pausar):</div>
+              <pre style="white-space: pre-wrap; font-family: monospace; font-size: 11px; max-height: 100px; overflow: auto; margin: 0; color: #A5F3FC;">{{ typeof testResult.result === 'object' ? JSON.stringify(testResult.result, null, 2) : testResult.result }}</pre>
+            </v-alert>
+
+            <!-- Render choices if available -->
+            <div v-if="hasChoices" class="d-flex flex-wrap gap-2 mb-3 mt-2">
+              <v-btn
+                v-for="(choice, idx) in choicesList"
+                :key="idx"
+                color="primary"
+                variant="flat"
+                class="mr-2 mb-2"
+                @click="submitSimulatedResponse(choice.value)"
+                :loading="resuming"
+              >
+                {{ choice.label }}
+              </v-btn>
+            </div>
+
+            <!-- Custom / text input response -->
+            <div class="d-flex flex-column mt-2">
+              <div v-if="hasChoices" class="text-caption text-medium-emphasis mb-2">Ou envie uma resposta personalizada:</div>
+              <div class="d-flex align-center">
+                <v-text-field
+                  v-model="simulatedInputText"
+                  label="Resposta Simulada"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  placeholder="Digite sua resposta aqui..."
+                  @keydown.enter="submitSimulatedResponse(simulatedInputText)"
+                  class="flex-grow-1"
+                ></v-text-field>
+                <v-btn
+                  color="warning"
+                  @click="submitSimulatedResponse(simulatedInputText)"
+                  :loading="resuming"
+                  prepend-icon="mdi-send"
+                  height="40"
+                  class="ml-3"
+                >
+                  Enviar
+                </v-btn>
+              </div>
+            </div>
+          </v-card>
+
           <!-- Tabs: Resultado Final vs Log Completo -->
-          <v-tabs v-if="testResult && testResult.status === 'completed'" v-model="testResultTab" class="mt-4" color="primary" density="compact">
+          <v-tabs v-if="testResult && (testResult.status === 'completed' || testResult.status === 'paused')" v-model="testResultTab" class="mt-4" color="primary" density="compact">
             <v-tab value="final">
               <v-icon start size="16">mdi-target</v-icon>
-              Resultado Final
+              {{ testResult.status === 'completed' ? 'Resultado Final' : 'Resultado Atual (Pausa)' }}
             </v-tab>
             <v-tab value="log">
               <v-icon start size="16">mdi-format-list-bulleted</v-icon>
-              Log Completo
+              Log da Execução
             </v-tab>
           </v-tabs>
 
-          <v-window v-if="testResult && testResult.status === 'completed'" v-model="testResultTab" class="mt-3">
+          <v-window v-if="testResult && (testResult.status === 'completed' || testResult.status === 'paused')" v-model="testResultTab" class="mt-3">
             <!-- Tab: Resultado Final (last block output only) -->
             <v-window-item value="final">
               <v-alert type="info" variant="tonal" density="compact" class="mb-3">
                 <v-icon start size="14">mdi-information</v-icon>
-                Este é o resultado que o agente/produção receberá — apenas a saída do último bloco executado.
+                {{ testResult.status === 'completed' 
+                  ? 'Este é o resultado final da execução (saída do último bloco).' 
+                  : 'Este é o resultado gerado até a pausa (saída do bloco anterior ao Aguardar Resposta).' }}
               </v-alert>
               <div v-if="testResult.result" class="result-box pa-3 rounded">
                 <pre class="text-body-2" style="white-space: pre-wrap; overflow: auto; max-height: 400px; margin: 0;">{{ JSON.stringify(testResult.result, null, 2) }}</pre>
@@ -379,6 +443,30 @@ const testResult = ref(null)
 const testing = ref(false)
 const testResultTab = ref('final')
 const showAdjacentBlocks = ref(false)
+
+// Paused workflow test resumption variables
+const resuming = ref(false)
+const simulatedInputText = ref('')
+
+const hasChoices = computed(() => {
+  const result = testResult.value?.result
+  return result && typeof result === 'object' && Array.isArray(result.choices)
+})
+
+const choicesList = computed(() => {
+  if (!hasChoices.value) return []
+  return testResult.value.result.choices.map(c => {
+    if (typeof c === 'string' && c.includes('|')) {
+      const parts = c.split('|')
+      return { label: parts[0], value: parts[1], raw: c }
+    }
+    return { label: String(c), value: String(c), raw: c }
+  })
+})
+
+const choicePrompt = computed(() => {
+  return testResult.value?.result?.response || 'O workflow está aguardando uma resposta:'
+})
 
 let idCounter = 1
 
@@ -652,7 +740,7 @@ async function saveDefinition() {
 }
 
 async function runTest() {
-  testing.value = true; testResult.value = null; testResultTab.value = 'final'
+  testing.value = true; testResult.value = null; testResultTab.value = 'final'; simulatedInputText.value = ''
   try {
     await saveDefinition()
     let payload = {}
@@ -665,10 +753,45 @@ async function runTest() {
       blocks: exec.blocks_executed || [], error: exec.error_message,
       result: exec.result,
       context: exec.context || {},
+      execution_id: exec.id,
+      current_block_id: exec.current_block_id,
     }
   } catch (e) {
     testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0 }
   } finally { testing.value = false }
+}
+
+async function submitSimulatedResponse(responseVal) {
+  if (!responseVal || !testResult.value || !testResult.value.execution_id) return
+  resuming.value = true
+  try {
+    const execId = testResult.value.execution_id
+    const payload = {
+      trigger_data: {
+        message: responseVal
+      }
+    }
+    const res = await axios.post(`/workflows/executions/${execId}/resume`, payload)
+    const exec = res.data
+    testResult.value = {
+      status: exec.status, duration_ms: exec.duration_ms,
+      blocks_count: (exec.blocks_executed || []).length,
+      blocks: exec.blocks_executed || [], error: exec.error_message,
+      result: exec.result,
+      context: exec.context || {},
+      execution_id: exec.id,
+      current_block_id: exec.current_block_id,
+    }
+    simulatedInputText.value = ''
+  } catch (e) {
+    testResult.value = {
+      ...testResult.value,
+      status: 'failed',
+      error: e.response?.data?.detail || e.message
+    }
+  } finally {
+    resuming.value = false
+  }
 }
 
 function goBack() { router.push('/workflows') }

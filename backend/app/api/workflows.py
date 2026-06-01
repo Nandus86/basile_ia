@@ -366,3 +366,45 @@ async def test_single_block(
             error=str(e),
             duration_ms=duration_ms,
         )
+
+
+@router.post("/executions/{execution_id}/resume", response_model=WorkflowExecutionResponse)
+async def resume_workflow_execution(
+    execution_id: UUID,
+    request: WorkflowExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Resume a paused workflow execution synchronously.
+    Returns the next state of the execution.
+    """
+    from app.services.workflow_engine import WorkflowEngine
+
+    engine = WorkflowEngine(db)
+
+    try:
+        result_context = await engine.resume(
+            execution_id=execution_id,
+            input_data=request.trigger_data,
+        )
+
+        # Fetch the updated execution record
+        result = await db.execute(
+            select(WorkflowExecution).where(WorkflowExecution.id == execution_id)
+        )
+        execution = result.scalar_one_or_none()
+        if execution:
+            return execution
+
+        # Fallback
+        return WorkflowExecutionResponse(
+            id=execution_id,
+            workflow_id=execution_id,
+            status=result_context.get("status", "completed"),
+            context=result_context.get("context", {}),
+        )
+
+    except Exception as e:
+        logger.error(f"[Workflows API] Resume failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Workflow resume failed: {str(e)}")
+
