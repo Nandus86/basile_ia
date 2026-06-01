@@ -61,6 +61,9 @@ async def run():
         gin_indexes = [
             ("ix_job_logs_user_message_trgm", "user_message"),
             ("ix_job_logs_agent_response_trgm", "agent_response"),
+            ("ix_job_logs_session_id_trgm", "session_id"),
+            ("ix_job_logs_church_name_trgm", "church_name"),
+            ("ix_job_logs_member_name_trgm", "member_name"),
         ]
         for idx_name, col_name in gin_indexes:
             await conn.execute(
@@ -85,22 +88,22 @@ async def run():
         result = await conn.execute(
             __import__("sqlalchemy").text("""
                 UPDATE job_logs SET
-                    session_id = COALESCE(session_id, request_data->>'session_id'),
-                    church_name = COALESCE(church_name, request_data->'church'->>'church_name'),
+                    session_id = COALESCE(session_id, (request_data#>>'{}')::jsonb->>'session_id'),
+                    church_name = COALESCE(church_name, (request_data#>>'{}')::jsonb->'church'->>'church_name'),
                     member_name = COALESCE(member_name,
                         COALESCE(
-                            request_data->'member'->>'fullname',
-                            request_data->'context_data'->>'name',
-                            request_data->>'name'
+                            (request_data#>>'{}')::jsonb->'member'->>'fullname',
+                            (request_data#>>'{}')::jsonb->'context_data'->>'name',
+                            (request_data#>>'{}')::jsonb->>'name'
                         )
                     ),
-                    user_message = COALESCE(user_message, request_data->>'message'),
+                    user_message = COALESCE(user_message, (request_data#>>'{}')::jsonb->>'message'),
                     agent_response = COALESCE(agent_response,
                         COALESCE(
-                            response_data->>'result',
-                            response_data->>'response',
-                            response_data->>'output',
-                            response_data->>'resposta'
+                            (response_data#>>'{}')::jsonb->>'result',
+                            (response_data#>>'{}')::jsonb->>'response',
+                            (response_data#>>'{}')::jsonb->>'output',
+                            (response_data#>>'{}')::jsonb->>'resposta'
                         )
                     )
                 WHERE session_id IS NULL

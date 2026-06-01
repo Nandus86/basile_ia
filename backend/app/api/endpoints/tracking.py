@@ -51,11 +51,7 @@ async def get_tracking_logs(
             conditions = [JobLog.webhook_path.ilike(f"%{p}%") for p in paths]
             query = query.where(or_(*conditions))
     if session_id:
-        # Use indexed column — exact match or partial match
-        if len(session_id) < 36:
-            query = query.where(JobLog.session_id.ilike(f"%{session_id}%"))
-        else:
-            query = query.where(JobLog.session_id == session_id)
+        query = query.where(JobLog.session_id.ilike(f"%{session_id}%"))
     if church_name:
         query = query.where(JobLog.church_name.ilike(f"%{church_name}%"))
     if member_name:
