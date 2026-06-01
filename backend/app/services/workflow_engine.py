@@ -180,6 +180,119 @@ def resolve_template(template: Any, context: Dict[str, Any]) -> Any:
     return _TEMPLATE_RE.sub(_replace, template)
 
 
+def _resolve_list_macro(args_str: str, context: Dict[str, Any]) -> Optional[List[str]]:
+    """Helper to parse list macro arguments and format list items."""
+    if ',' in args_str:
+        var_path, format_str_raw = args_str.split(',', 1)
+        var_path = var_path.strip().lstrip('$')
+        format_str_raw = format_str_raw.strip()
+        temp = format_str_raw
+        while (temp.startswith('"') and temp.endswith('"')) or (temp.startswith("'") and temp.endswith("'")):
+            if len(temp) < 2:
+                break
+            temp = temp[1:-1]
+        format_template = temp
+    else:
+        var_path = args_str.strip().lstrip('$')
+        format_template = None
+
+    parts = var_path.split('.', 1)
+    root_key = parts[0]
+    rest = parts[1] if len(parts) > 1 else None
+
+    root_val = context.get(f'${root_key}') or context.get(root_key)
+    val = _resolve_path(root_val, rest) if (root_val is not None and rest) else root_val
+
+    if not isinstance(val, list):
+        return None
+
+    formatted_items = []
+    for item in val:
+        if format_template:
+            if isinstance(item, dict):
+                flat_item = {}
+                def _flatten(d, parent_key=''):
+                    for k, v in d.items():
+                        new_key = f"{parent_key}.{k}" if parent_key else k
+                        flat_item[new_key] = v
+                        if isinstance(v, dict):
+                            _flatten(v, new_key)
+                _flatten(item)
+
+                class SafeDict(dict):
+                    def __missing__(self, key):
+                        return ''
+                try:
+                    safe_item = SafeDict({k: (str(v) if v is not None else '') for k, v in flat_item.items()})
+                    import re
+                    res_str = format_template
+                    placeholders = re.findall(r'\{([^}]+)\}', res_str)
+                    for ph in placeholders:
+                        val_str = safe_item[ph]
+                        res_str = res_str.replace(f'{{{ph}}}', val_str)
+                    formatted_items.append(res_str)
+                except Exception:
+                    formatted_items.append(str(item))
+            else:
+                if '{item}' in format_template:
+                    formatted_items.append(format_template.replace('{item}', str(item)))
+                else:
+                    formatted_items.append(str(item))
+        else:
+            if isinstance(item, dict):
+                pairs = [f"{k}: {v}" for k, v in item.items() if v is not None and str(v).strip() != '']
+                formatted_items.append(", ".join(pairs))
+            else:
+                formatted_items.append(str(item))
+    return formatted_items
+
+
+def parse_typed_value(val_str: str) -> Any:
+    """Tenta converter uma string para seu tipo correspondente (int, float, bool, list, dict).
+    Se estiver entre aspas, remove as aspas e retorna como string pura."""
+    val_str = val_str.strip()
+    if not val_str:
+        return val_str
+
+    # 1. Tentar parsear diretamente com json.loads (booleans, numbers, arrays, dicts com aspas duplas, null)
+    try:
+        return json.loads(val_str)
+    except Exception:
+        pass
+
+    # 2. Tentar avaliar como literal Python (suporta strings de aspas simples, tuplas e estruturas similares)
+    import ast
+    try:
+        evaluated = ast.literal_eval(val_str)
+        # Converter tuplas em listas para padronização JSON
+        if isinstance(evaluated, tuple):
+            return list(evaluated)
+        return evaluated
+    except Exception:
+        pass
+
+    # 3. Se falhar, tentar envolver em colchetes para verificar se é uma lista delimitada por vírgulas (ex: "item1", "item2")
+    try:
+        return json.loads(f"[{val_str}]")
+    except Exception:
+        pass
+
+    try:
+        evaluated = ast.literal_eval(f"[{val_str}]")
+        if isinstance(evaluated, tuple):
+            return list(evaluated)
+        return evaluated
+    except Exception:
+        pass
+
+    # 4. Caso o valor esteja com aspas e falhou nas análises estruturadas (ex: string manual com aspas), remover aspas externas
+    if (val_str.startswith('"') and val_str.endswith('"')) or (val_str.startswith("'") and val_str.endswith("'")):
+        if len(val_str) >= 2:
+            return val_str[1:-1]
+
+    return val_str
+
+
 def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
     """Resolve a single template expression (without {{ }})."""
     if not expr.startswith('$'):
@@ -204,65 +317,31 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
     # Handle $list(path, "format")
     if path.startswith('list('):
         args_str = path[5:-1]
-        if ',' in args_str:
-            var_path, format_str_raw = args_str.split(',', 1)
-            var_path = var_path.strip().lstrip('$')
-            format_str_raw = format_str_raw.strip()
-            if (format_str_raw.startswith('"') and format_str_raw.endswith('"')) or (format_str_raw.startswith("'") and format_str_raw.endswith("'")):
-                format_template = format_str_raw[1:-1]
-            else:
-                format_template = format_str_raw
-        else:
-            var_path = args_str.strip().lstrip('$')
-            format_template = None
-
+        items = _resolve_list_macro(args_str, context)
+        if items is not None:
+            return "\n".join(items)
+        # Fallback se não for uma lista
+        var_path = args_str.split(',', 1)[0].strip().lstrip('$') if ',' in args_str else args_str.strip().lstrip('$')
         parts = var_path.split('.', 1)
         root_key = parts[0]
         rest = parts[1] if len(parts) > 1 else None
-
         root_val = context.get(f'${root_key}') or context.get(root_key)
         val = _resolve_path(root_val, rest) if (root_val is not None and rest) else root_val
+        return str(val) if val is not None else ''
 
-        formatted_items = []
-        if isinstance(val, list):
-            for item in val:
-                if format_template:
-                    if isinstance(item, dict):
-                        flat_item = {}
-                        def _flatten(d, parent_key=''):
-                            for k, v in d.items():
-                                new_key = f"{parent_key}.{k}" if parent_key else k
-                                flat_item[new_key] = v
-                                if isinstance(v, dict):
-                                    _flatten(v, new_key)
-                        _flatten(item)
-
-                        class SafeDict(dict):
-                            def __missing__(self, key):
-                                return ''
-                        try:
-                            safe_item = SafeDict({k: (str(v) if v is not None else '') for k, v in flat_item.items()})
-                            import re
-                            res_str = format_template
-                            placeholders = re.findall(r'\{([^}]+)\}', res_str)
-                            for ph in placeholders:
-                                val_str = safe_item[ph]
-                                res_str = res_str.replace(f'{{{ph}}}', val_str)
-                            formatted_items.append(res_str)
-                        except Exception:
-                            formatted_items.append(str(item))
-                    else:
-                        if '{item}' in format_template:
-                            formatted_items.append(format_template.replace('{item}', str(item)))
-                        else:
-                            formatted_items.append(str(item))
-                else:
-                    if isinstance(item, dict):
-                        pairs = [f"{k}: {v}" for k, v in item.items() if v is not None and str(v).strip() != '']
-                        formatted_items.append(", ".join(pairs))
-                    else:
-                        formatted_items.append(str(item))
-            return "\n".join(formatted_items)
+    # Handle $join(path, "format")
+    if path.startswith('join('):
+        args_str = path[5:-1]
+        items = _resolve_list_macro(args_str, context)
+        if items is not None:
+            return ",".join(json.dumps(item, ensure_ascii=False) for item in items)
+        # Fallback se não for uma lista
+        var_path = args_str.split(',', 1)[0].strip().lstrip('$') if ',' in args_str else args_str.strip().lstrip('$')
+        parts = var_path.split('.', 1)
+        root_key = parts[0]
+        rest = parts[1] if len(parts) > 1 else None
+        root_val = context.get(f'${root_key}') or context.get(root_key)
+        val = _resolve_path(root_val, rest) if (root_val is not None and rest) else root_val
         return str(val) if val is not None else ''
 
     # $env.VAR_NAME → environment variable
@@ -1029,6 +1108,8 @@ class WorkflowEngine:
             op = op_def.get('op', 'set')
             key = op_def.get('key', '')
             value = resolve_template(op_def.get('value'), context)
+            if isinstance(value, str):
+                value = parse_typed_value(value)
 
             if op == 'set':
                 result[key] = value
