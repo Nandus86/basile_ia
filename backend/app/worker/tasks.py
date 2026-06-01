@@ -3127,28 +3127,32 @@ async def process_message_task(
             # GUARD: Anti-Bot Detection
             # ═══════════════════════════════════════════════════════
             if session_id:
-                # Fast path: check if already blocked
-                if await redis_client.is_antibot_blocked(session_id):
-                    print(f"[AntiBot] 🚫 Session {session_id} is BLOCKED (bot). Returning silence.")
-                    processing_time = (time.time() - start_time) * 1000
-                    return {
-                        "status": "completed",
-                        "response": "",
-                        "agent_used": "AntiBot Guard",
-                        "processing_time_ms": processing_time,
-                    }
+                is_wf = (context_data or {}).get("_workflow_execution", False)
+                active_wf = await redis_client.get(f"active_workflow_run:{session_id}")
+                
+                if not is_wf and not active_wf:
+                    # Fast path: check if already blocked
+                    if await redis_client.is_antibot_blocked(session_id):
+                        print(f"[AntiBot] 🚫 Session {session_id} is BLOCKED (bot). Returning silence.")
+                        processing_time = (time.time() - start_time) * 1000
+                        return {
+                            "status": "completed",
+                            "response": "",
+                            "agent_used": "AntiBot Guard",
+                            "processing_time_ms": processing_time,
+                        }
 
-                # Periodic check every 5 messages
-                is_bot = await _check_anti_bot_guard(session_id, history)
-                if is_bot:
-                    print(f"[AntiBot] 🚫 Session {session_id} just got BLOCKED. Returning silence.")
-                    processing_time = (time.time() - start_time) * 1000
-                    return {
-                        "status": "completed",
-                        "response": "",
-                        "agent_used": "AntiBot Guard",
-                        "processing_time_ms": processing_time,
-                    }
+                    # Periodic check every 5 messages
+                    is_bot = await _check_anti_bot_guard(session_id, history)
+                    if is_bot:
+                        print(f"[AntiBot] 🚫 Session {session_id} just got BLOCKED. Returning silence.")
+                        processing_time = (time.time() - start_time) * 1000
+                        return {
+                            "status": "completed",
+                            "response": "",
+                            "agent_used": "AntiBot Guard",
+                            "processing_time_ms": processing_time,
+                        }
 
             # Build LangChain messages
             user_tz_name = _resolve_tz_name(transition_data)
