@@ -54,6 +54,8 @@ const BLOCK_META = {
   transform:    { icon: 'mdi-swap-horizontal',   color: '#F97316', label: 'Transform' },
   delay:        { icon: 'mdi-timer-sand',        color: '#6B7280', label: 'Delay' },
   sub_workflow: { icon: 'mdi-sitemap-outline',    color: '#EC4899', label: 'Sub-workflow' },
+  python:       { icon: 'mdi-language-python',   color: '#3B82F6', label: 'Python' },
+  mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'MCP' },
 }
 
 const meta = computed(() => BLOCK_META[props.data.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Bloco' })
@@ -75,6 +77,10 @@ const subtitle = computed(() => {
       return cfg.delay_ms ? `${cfg.delay_ms}ms` : ''
     case 'trigger':
       return cfg.trigger_type || 'webhook'
+    case 'python':
+      return cfg.code ? cfg.code.split('\n')[0].substring(0, 40) + '...' : 'Sem código'
+    case 'mcp':
+      return cfg.mcp_name || (cfg.mcp_id ? 'MCP vinculado' : 'Sem MCP')
     default:
       return ''
   }
@@ -139,6 +145,8 @@ const statusColor = computed(() => {
 .node-transform     { border-color: #F9731640; }
 .node-delay         { border-color: #6B728040; }
 .node-sub_workflow  { border-color: #EC489940; }
+.node-python        { border-color: #3B82F640; }
+.node-mcp           { border-color: #14B8A640; }
 
 /* Handles */
 .handle-in, .handle-out {

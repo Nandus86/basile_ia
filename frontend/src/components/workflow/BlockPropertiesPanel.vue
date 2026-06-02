@@ -506,7 +506,105 @@
         ></v-text-field>
       </template>
 
-      <!-- Context variables available -->
+      <!-- ═══ PYTHON ═══ -->
+      <template v-if="block.type === 'python'">
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          Escreva código Python. Atribua o resultado à variável <code>result</code>.
+          Use <code>ctx</code> ou <code>context</code> para acessar o contexto do workflow.
+        </v-alert>
+        <v-textarea
+          v-model="config.code"
+          label="Código Python"
+          placeholder="members = ctx['$members']['data']\nresult = {'count': len(members)}"
+          variant="outlined"
+          density="compact"
+          rows="14"
+          class="mb-3 monospace-field"
+          hide-details
+          no-resize
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+        <v-alert type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
+          ⚠️ Não use import, open(), requests, subprocess ou qualquer acesso ao sistema.
+          Funções disponíveis: len, range, sorted, json, re, datetime.
+        </v-alert>
+      </template>
+
+      <!-- ═══ MCP ═══ -->
+      <template v-if="block.type === 'mcp'">
+        <v-select
+          v-model="config.mcp_id"
+          :items="mcps"
+          item-title="name"
+          item-value="id"
+          label="Selecionar MCP"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          clearable
+          hide-details
+          @update:model-value="onMcpSelected"
+        ></v-select>
+
+        <!-- Show MCP details when selected -->
+        <template v-if="selectedMcpDetails">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            <strong>{{ selectedMcpDetails.name }}</strong><br/>
+            <span v-if="selectedMcpDetails.description">{{ selectedMcpDetails.description }}<br/></span>
+            <span>Protocolo: <code>{{ selectedMcpDetails.protocol }}</code> · Método: <code>{{ selectedMcpDetails.method }}</code></span>
+          </v-alert>
+
+          <!-- $fromAI params from body_template -->
+          <div v-if="mcpFromAiFields.length" class="mb-3">
+            <p class="text-caption text-medium-emphasis mb-2">
+              <v-icon size="14" class="mr-1">mdi-robot</v-icon>
+              Parâmetros do MCP (<code>$fromAI</code>)
+            </p>
+            <div v-for="field in mcpFromAiFields" :key="field.key" class="mb-2">
+              <v-text-field
+                :model-value="getMcpParam(field.key)"
+                :label="field.key"
+                :placeholder="field.desc || `{{ $trigger.payload.${field.key} }}`"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="val => setMcpParam(field.key, val)"
+              ></v-text-field>
+            </div>
+          </div>
+
+          <!-- $request variables from endpoint/body -->
+          <div v-if="mcpRequestFields.length" class="mb-3">
+            <p class="text-caption text-medium-emphasis mb-2">
+              <v-icon size="14" class="mr-1">mdi-variable</v-icon>
+              Variáveis de Contexto (<code>$request</code>)
+            </p>
+            <div v-for="field in mcpRequestFields" :key="field" class="mb-2">
+              <v-text-field
+                :model-value="getMcpVariable(field)"
+                :label="field"
+                :placeholder="`{{ $trigger.payload.${field.split('.').pop()} }}`"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="val => setMcpVariable(field, val)"
+              ></v-text-field>
+            </div>
+          </div>
+        </template>
+
+        <v-select
+          v-model="config.error_handling"
+          :items="[{title:'Parar execução', value:'stop'}, {title:'Continuar mesmo com erro', value:'continue'}]"
+          label="Em caso de erro"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+      </template>
+
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
           <v-expansion-panel-title class="text-caption">
@@ -549,6 +647,7 @@ const props = defineProps({
   contextKeys: { type: Array, default: () => [] },
   hideClose: { type: Boolean, default: false },
   workflows: { type: Array, default: () => [] },
+  mcps: { type: Array, default: () => [] },
   currentWorkflowId: { type: String, default: null },
 })
 const emit = defineEmits(['update', 'close', 'delete', 'duplicate'])
@@ -565,6 +664,8 @@ const BLOCK_META = {
   sub_workflow: { icon: 'mdi-sitemap-outline',    color: '#EC4899', label: 'Configurar Sub-workflow' },
   wait_input:   { icon: 'mdi-account-question',  color: '#EC4899', label: 'Configurar Aguardar Resposta' },
   response:     { icon: 'mdi-logout',            color: '#EC4899', label: 'Configurar Saída' },
+  python:       { icon: 'mdi-language-python',   color: '#3B82F6', label: 'Configurar Python' },
+  mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'Configurar MCP' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
@@ -573,6 +674,77 @@ const config = computed(() => {
   if (!props.block.config) props.block.config = {}
   return props.block.config
 })
+
+// ── MCP block helpers ─────────────────────────────────────────────────────
+const selectedMcpDetails = computed(() => {
+  if (props.block.type !== 'mcp' || !config.value.mcp_id) return null
+  return props.mcps.find(m => m.id === config.value.mcp_id) || null
+})
+
+/** Extract {{ $fromAI('key', 'desc') }} occurrences from body_template + query_template */
+const mcpFromAiFields = computed(() => {
+  if (!selectedMcpDetails.value) return []
+  const mcp = selectedMcpDetails.value
+  const src = JSON.stringify({ ...mcp.body_template, ...mcp.query_template })
+  const re = /\$fromAI\(\s*'([^']+)'\s*(?:,\s*'([^']*)')?/g
+  const fields = []
+  const seen = new Set()
+  let m
+  while ((m = re.exec(src)) !== null) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1])
+      fields.push({ key: m[1], desc: m[2] || '' })
+    }
+  }
+  return fields
+})
+
+/** Extract {{ $request.xxx }} dot-path keys from endpoint + body + headers + query */
+const mcpRequestFields = computed(() => {
+  if (!selectedMcpDetails.value) return []
+  const mcp = selectedMcpDetails.value
+  const src = JSON.stringify([
+    mcp.endpoint, mcp.body_template, mcp.headers, mcp.query_template
+  ])
+  const re = /\$request\.([\w.]+)/g
+  const fields = []
+  const seen = new Set()
+  let m
+  while ((m = re.exec(src)) !== null) {
+    if (!seen.has(m[1])) {
+      seen.add(m[1])
+      fields.push(m[1])
+    }
+  }
+  return fields
+})
+
+function getMcpParam(key) {
+  return (config.value.params || {})[key] || ''
+}
+function setMcpParam(key, val) {
+  if (!config.value.params) config.value.params = {}
+  config.value.params[key] = val
+  emitUpdate()
+}
+function getMcpVariable(key) {
+  return (config.value.variables || {})[key] || ''
+}
+function setMcpVariable(key, val) {
+  if (!config.value.variables) config.value.variables = {}
+  config.value.variables[key] = val
+  emitUpdate()
+}
+function onMcpSelected(id) {
+  const mcp = props.mcps.find(m => m.id === id)
+  if (mcp) {
+    config.value.mcp_name = mcp.name
+    // Reset params/variables when MCP changes
+    config.value.params = {}
+    config.value.variables = {}
+  }
+  emitUpdate()
+}
 
 const operators = [
   { title: 'Igual a', value: 'equals' },

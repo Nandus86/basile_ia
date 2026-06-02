@@ -121,6 +121,7 @@
                 :agents="agentsList"
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
+                :mcps="mcpsList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
@@ -139,6 +140,7 @@
                 :agents="agentsList"
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
+                :mcps="mcpsList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
@@ -159,6 +161,7 @@
                 :agents="agentsList"
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
+                :mcps="mcpsList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
@@ -432,6 +435,7 @@ const edges = ref([])
 const agentsList = ref([])
 const webhooksList = ref([])
 const workflowsList = ref([])
+const mcpsList = ref([])
 const saving = ref(false)
 const selectedBlock = ref(null)
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
@@ -476,6 +480,8 @@ const toolboxItems = [
   { type: 'trigger', label: 'Webhook', icon: 'mdi-lightning-bolt', color: '#F59E0B', category: 'trigger' },
   { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
   { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
+  { type: 'mcp', label: 'MCP', icon: 'mdi-connection', color: '#14B8A6', category: 'action' },
+  { type: 'python', label: 'Python', icon: 'mdi-language-python', color: '#3B82F6', category: 'action' },
   { type: 'wait_input', label: 'Aguardar Resposta', icon: 'mdi-account-question', color: '#EC4899', category: 'action' },
   { type: 'response', label: 'Saída', icon: 'mdi-logout', color: '#EC4899', category: 'action' },
   { type: 'sub_workflow', label: 'Sub-workflow', icon: 'mdi-sitemap-outline', color: '#EC4899', category: 'action' },
@@ -519,7 +525,7 @@ const drawerWidth = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), loadWorkflow()])
+  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), loadWorkflow()])
 })
 
 async function fetchAgents() {
@@ -530,6 +536,9 @@ async function fetchWebhooks() {
 }
 async function fetchWorkflows() {
   try { workflowsList.value = (await axios.get('/workflows')).data.workflows || [] } catch {}
+}
+async function fetchMcps() {
+  try { mcpsList.value = (await axios.get('/mcps')).data.mcps || [] } catch {}
 }
 
 async function loadWorkflow() {

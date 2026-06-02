@@ -14,6 +14,8 @@ Supported block types:
   - agent         : Invoke a Basile AI agent
   - transform     : Data manipulation (set, merge, extract)
   - delay         : Pause execution for N milliseconds
+  - python        : Execute arbitrary Python code with context access
+  - mcp           : Call an MCP integration directly (HTTP/SSE/MCP protocol)
 """
 
 import asyncio
@@ -866,6 +868,10 @@ class WorkflowEngine:
                 return await self._exec_sub_workflow(config, context, recursion_depth)
             case 'response':
                 return await self._exec_response(config, context, last_output_key)
+            case 'python':
+                return await self._exec_python(config, context)
+            case 'mcp':
+                return await self._exec_mcp(config, context)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -1196,6 +1202,188 @@ class WorkflowEngine:
             'delayed_ms': delay_ms,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
+
+    async def _exec_python(self, config: Dict[str, Any], context: Dict[str, Any]) -> Any:
+        """
+        Execute Python code block.
+
+        The code has access to:
+          - ``context``: the full workflow context dict (read-only recommended)
+          - ``ctx``:     alias for context
+          - standard builtins (no network/filesystem access by default)
+
+        The code must assign the output to the variable ``result``.
+        Example::
+
+            members = ctx['$membros']['data']
+            result = {'count': len(members), 'names': [m['name'] for m in members]}
+        """
+        code = config.get('code', '')
+        if not code or not code.strip():
+            return {'output': None, 'error': 'Nenhum código fornecido'}
+
+        # Resolve templates inside the code (allows {{ $var }} interpolation)
+        resolved_code = resolve_template(code, context)
+        if not isinstance(resolved_code, str):
+            resolved_code = code  # fallback if resolve changed type
+
+        # Safe-ish sandbox: expose context, json, re, datetime utilities
+        sandbox_globals = {
+            '__builtins__': {
+                # safe built-ins only
+                'len': len, 'range': range, 'enumerate': enumerate,
+                'zip': zip, 'map': map, 'filter': filter, 'sorted': sorted,
+                'reversed': reversed, 'list': list, 'dict': dict, 'set': set,
+                'tuple': tuple, 'str': str, 'int': int, 'float': float,
+                'bool': bool, 'type': type, 'isinstance': isinstance,
+                'hasattr': hasattr, 'getattr': getattr, 'setattr': setattr,
+                'print': print, 'repr': repr, 'abs': abs, 'round': round,
+                'min': min, 'max': max, 'sum': sum, 'any': any, 'all': all,
+                'None': None, 'True': True, 'False': False,
+            },
+            'json': json,
+            're': re,
+            'datetime': datetime,
+            'context': context,
+            'ctx': context,
+        }
+        local_vars: Dict[str, Any] = {}
+
+        try:
+            exec(resolved_code, sandbox_globals, local_vars)  # noqa: S102
+        except Exception as exc:
+            tb = traceback.format_exc()
+            logger.warning(f"[WorkflowEngine] Python block error: {exc}\n{tb}")
+            return {'output': None, 'error': str(exc), 'traceback': tb}
+
+        # The code should assign to `result`
+        output = local_vars.get('result', local_vars)
+        return make_json_safe(output)
+
+    async def _exec_mcp(self, config: Dict[str, Any], context: Dict[str, Any]) -> Any:
+        """
+        Execute an MCP integration block.
+
+        Config keys:
+          - mcp_id       : UUID of the MCP to execute
+          - params       : dict with $fromAI values (manually filled)
+          - variables    : dict with $request.xxx context values (dot-path keys)
+        """
+        from uuid import UUID
+        from sqlalchemy import select as sa_select
+        from app.models.mcp import MCP
+        from app.api.mcp import execute_http, execute_sse
+        from app.services.mcp_tools import _inject_from_ai_params, _inject_request_params
+        import urllib.parse
+
+        mcp_id_str = config.get('mcp_id')
+        if not mcp_id_str:
+            raise ValueError("MCP block: 'mcp_id' é obrigatório")
+
+        # Support template in mcp_id
+        mcp_id_str = resolve_template(mcp_id_str, context)
+
+        try:
+            mcp_id = UUID(str(mcp_id_str))
+        except Exception:
+            raise ValueError(f"MCP block: mcp_id inválido: '{mcp_id_str}'")
+
+        # Load MCP from DB
+        result = await self.db.execute(sa_select(MCP).where(MCP.id == mcp_id))
+        mcp = result.scalar_one_or_none()
+        if not mcp:
+            raise ValueError(f"MCP block: MCP '{mcp_id_str}' não encontrado")
+        if not mcp.is_active:
+            raise ValueError(f"MCP block: MCP '{mcp.name}' está inativo")
+
+        # Build params — resolve templates in the param values
+        raw_params = config.get('params', {})
+        params: Dict[str, Any] = {}
+        for k, v in raw_params.items():
+            resolved_v = resolve_template(v, context)
+            params[k] = resolved_v
+
+        # Build variables (dot-path keys for $request.xxx)
+        raw_variables = config.get('variables', {})
+        variables: Dict[str, Any] = {}
+        for k, v in raw_variables.items():
+            resolved_v = resolve_template(v, context)
+            variables[k] = resolved_v
+
+        timeout = float(mcp.timeout_seconds or 30)
+        protocol = (mcp.protocol or 'http').lower()
+
+        logger.info(
+            f"[WorkflowEngine] 🔌 MCP block: '{mcp.name}' protocol={protocol} "
+            f"params={list(params.keys())} vars={list(variables.keys())}"
+        )
+
+        try:
+            if protocol == 'http':
+                result_data = await execute_http(mcp, params, timeout, variables=variables)
+            elif protocol == 'sse':
+                sse_result = await execute_sse(mcp, params, timeout, variables=variables)
+                result_data = sse_result.get('result')
+            elif protocol == 'mcp':
+                from app.services.mcp_client import execute_mcp_protocol
+                import json
+                # Build body injecting params
+                body_str = json.dumps(mcp.body_template or {})
+                headers_str = json.dumps(mcp.headers or {})
+                endpoint_str = urllib.parse.unquote(mcp.endpoint or '')
+                query_str = json.dumps(getattr(mcp, 'query_template', {}) or {})
+
+                if variables:
+                    def _unflatten(flat: dict) -> dict:
+                        res = {}
+                        for fk, fv in flat.items():
+                            parts = fk.split('.')
+                            d = res
+                            for p in parts[:-1]:
+                                d = d.setdefault(p, {})
+                            d[parts[-1]] = fv
+                        return res
+                    test_ctx = _unflatten(variables)
+                    endpoint_str = _inject_request_params(endpoint_str, test_ctx)
+                    body_str = _inject_request_params(body_str, test_ctx)
+                    headers_str = _inject_request_params(headers_str, test_ctx)
+                    query_str = _inject_request_params(query_str, test_ctx)
+
+                body_str, _ = _inject_from_ai_params(body_str, params)
+                headers_str, _ = _inject_from_ai_params(headers_str, params)
+                endpoint_str, _ = _inject_from_ai_params(endpoint_str, params)
+                query_str, _ = _inject_from_ai_params(query_str, params)
+
+                body = json.loads(body_str)
+                query_params_mcp = json.loads(query_str)
+                for key in ['user_id', 'session_id']:
+                    if key in body:
+                        query_params_mcp[key] = body.pop(key)
+
+                action = params.get('_action', 'call_tool')
+                tool_name = params.get('_tool_name')
+                tool_args = {k: v for k, v in params.items() if not k.startswith('_')}
+
+                mcp_result = await execute_mcp_protocol(
+                    endpoint=endpoint_str,
+                    headers=json.loads(headers_str),
+                    query_params=query_params_mcp,
+                    action=action,
+                    tool_name=tool_name,
+                    tool_args=tool_args or None,
+                    timeout=timeout,
+                )
+                if not mcp_result.get('success'):
+                    raise Exception(mcp_result.get('error', 'MCP execution failed'))
+                result_data = mcp_result.get('result')
+            else:
+                raise ValueError(f"MCP block: protocolo '{protocol}' não suportado")
+
+            return make_json_safe(result_data)
+
+        except Exception as exc:
+            logger.error(f"[WorkflowEngine] MCP block '{mcp.name}' error: {exc}")
+            raise
 
     async def _exec_sub_workflow(self, config: Dict[str, Any], context: Dict[str, Any], recursion_depth: int) -> Any:
         """Execute a sub-workflow as a nested block."""
