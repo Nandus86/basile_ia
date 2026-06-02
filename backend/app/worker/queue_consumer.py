@@ -133,6 +133,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
         session_id = None
         job_id = None
         body = None
+        ignore_pause = False
 
         try:
             body = json.loads(message.body.decode())
@@ -150,11 +151,12 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             context_data = payload.get("context_data")
             transition_data = payload.get("transition_data")
             callback_url = payload.get("callback_url")
+            ignore_pause = bool(payload.get("ignore_pause", False))
 
             # ═══════════════════════════════════════════════════════
             # GUARD 1: Agent Pause Check
             # ═══════════════════════════════════════════════════════
-            if session_id and await redis_client.is_agent_paused(session_id):
+            if session_id and not ignore_pause and await redis_client.is_agent_paused(session_id):
                 logger.info(f"[Guard] Agent is PAUSED for session {session_id}. Saving to MTM and skipping job {job_id}.")
 
                 # Save the user's message to MTM so it's not lost
@@ -578,7 +580,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             if lock_acquired and session_id:
                 try:
                     # Check if agent was paused DURING processing (human took over)
-                    if await redis_client.is_agent_paused(session_id):
+                    if not ignore_pause and await redis_client.is_agent_paused(session_id):
                         logger.info(f"[Guard] Agent was paused during processing of {job_id}. Releasing lock without draining buffer.")
                         await redis_client.release_user_lock(session_id)
                     else:

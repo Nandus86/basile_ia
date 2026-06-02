@@ -206,6 +206,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "context_data": enriched_context,
         "transition_data": effective_transition_data,
         "recreated": is_recreated,
+        "ignore_pause": True,
     })
 
     # ── Outbound Mode Routing ──────────────────────────────────────────────
