@@ -538,7 +538,7 @@ async function fetchWorkflows() {
   try { workflowsList.value = (await axios.get('/workflows')).data.workflows || [] } catch {}
 }
 async function fetchMcps() {
-  try { mcpsList.value = (await axios.get('/mcps')).data.mcps || [] } catch {}
+  try { mcpsList.value = (await axios.get('/mcp')).data.mcps || [] } catch {}
 }
 
 async function loadWorkflow() {

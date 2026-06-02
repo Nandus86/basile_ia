@@ -214,7 +214,7 @@ const fetchCounts = async () => {
   try {
     const [agentsRes, mcpsRes, skillsRes] = await Promise.allSettled([
       axios.get('/agents'),
-      axios.get('/mcps'),
+      axios.get('/mcp'),
       axios.get('/skills/')
     ])
     if (agentsRes.status === 'fulfilled') agentCount.value = agentsRes.value.data.agents?.length || 0
