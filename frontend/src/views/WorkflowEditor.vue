@@ -414,7 +414,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, markRaw } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import axios from '@/plugins/axios'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
@@ -430,7 +430,7 @@ const router = useRouter()
 const route = useRoute()
 const workflowId = route.params.id
 
-const { project } = useVueFlow()
+const { project, getSelectedNodes } = useVueFlow()
 const vueFlowInstance = ref(null)
 
 const workflow = ref({})
@@ -528,9 +528,76 @@ const drawerWidth = computed(() => {
   return w
 })
 
+const clipboard = ref([])
+
+const handleKeyDown = (event) => {
+  const activeEl = document.activeElement
+  if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable)) {
+    return
+  }
+  const isCtrl = event.ctrlKey || event.metaKey
+  if (isCtrl && event.key === 'c') {
+    event.preventDefault()
+    copySelectedNodes()
+  } else if (isCtrl && event.key === 'v') {
+    event.preventDefault()
+    pasteCopiedNodes()
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', handleKeyDown)
   await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), loadWorkflow()])
 })
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown)
+})
+
+function copySelectedNodes() {
+  const selected = getSelectedNodes.value
+  if (!selected.length) return
+  clipboard.value = selected.map(node => ({
+    type: node.type,
+    label: node.label,
+    position: { ...node.position },
+    data: JSON.parse(JSON.stringify(node.data))
+  }))
+}
+
+function pasteCopiedNodes() {
+  if (!clipboard.value.length) return
+  const newNodes = []
+  nodes.value.forEach(n => {
+    n.selected = false
+  })
+  clipboard.value.forEach(item => {
+    const newId = `block_${idCounter++}`
+    const newNode = {
+      id: newId,
+      type: item.type,
+      position: {
+        x: item.position.x + 40,
+        y: item.position.y + 40
+      },
+      label: `${item.label || item.data?.label || 'Bloco'} (cópia)`,
+      selected: true,
+      data: {
+        type: item.data.type,
+        label: `${item.data.label || item.label || 'Bloco'} (cópia)`,
+        config: JSON.parse(JSON.stringify({ ...item.data.config, output_key: newId }))
+      }
+    }
+    newNodes.push(newNode)
+  })
+  nodes.value = [...nodes.value, ...newNodes]
+  if (newNodes.length === 1) {
+    selectedBlock.value = { id: newNodes[0].id, ...newNodes[0].data }
+  } else {
+    selectedBlock.value = null
+  }
+  markUnsaved()
+}
 
 async function fetchAgents() {
   try { agentsList.value = (await axios.get('/agents')).data.agents || [] } catch {}
