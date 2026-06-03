@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     DISPATCH_RETRY_DELAYS: list = [5, 10, 30, 60, 120]  # seconds between retries (cycles through)
 
     # Backend API (for workflow execution)
-    BACKEND_API_URL: str = "http://basile-backend:8000/api"
+    BACKEND_API_URL: str = "http://basile-backend:8000"
     WORKFLOW_TIMEOUT: int = 120  # seconds — timeout for workflow execution calls
 
     class Config:
