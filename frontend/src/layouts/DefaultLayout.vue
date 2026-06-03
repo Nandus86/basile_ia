@@ -91,7 +91,7 @@
 
     <!-- Main Content -->
     <v-main class="app-main">
-      <div class="main-content-wrapper">
+      <div class="main-content-wrapper" :class="{ 'max-width-none': isWorkflowEditor }">
         <!-- Top Header Bar -->
         <header class="dashboard-header d-flex align-center justify-space-between px-8 py-5">
           <!-- Mobile menu button -->
@@ -150,7 +150,7 @@
         </header>
 
         <!-- Router View -->
-        <div class="dashboard-content-wrapper px-8 pb-8 flex-grow-1">
+        <div class="dashboard-content-wrapper pb-8 flex-grow-1" :class="{ 'px-8': !isWorkflowEditor }">
           <router-view v-slot="{ Component }">
             <transition name="page-fade" mode="out-in">
               <component :is="Component" />
@@ -169,6 +169,7 @@ import { useTheme, useDisplay } from 'vuetify'
 
 const route = useRoute()
 const theme = useTheme()
+const isWorkflowEditor = computed(() => route.path.startsWith('/workflows/'))
 const { mobile } = useDisplay()
 const drawer = ref(true)
 const rail = ref(false)
@@ -316,6 +317,11 @@ const toggleTheme = () => {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  
+  &.max-width-none {
+    max-width: 100% !important;
+    margin: 0 !important;
+  }
 }
 
 .dashboard-header {

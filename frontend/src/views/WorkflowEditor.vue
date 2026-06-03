@@ -87,6 +87,9 @@
           @edges-change="onEdgesChange"
           :delete-key-code="['Backspace', 'Delete']"
           :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#6366F1', strokeWidth: 2 } }"
+          :pan-on-drag="[1]"
+          :selection-on-drag="true"
+          :pan-activation-key="'Space'"
         >
           <Background pattern-color="#333" :gap="20" />
           <Controls />
@@ -808,7 +811,8 @@ function goBack() { router.push('/workflows') }
 
 <style scoped>
 .workflow-editor-page { background-color: #0F0F17; }
-.dndnode { border: 1px solid rgba(255,255,255,0.15); transition: all 0.2s ease; user-select: none; }
+.dndnode { border: 1px solid rgba(255,255,255,0.15); transition: all 0.2s ease; user-select: none; color: #ffffff !important; }
+.dndnode .text-subtitle-2 { color: #ffffff !important; }
 .dndnode:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.4); transform: translateY(-2px); }
 .properties-drawer { border-left: 1px solid rgba(255,255,255,0.1); }
 .monospace-field :deep(textarea) { font-family: 'JetBrains Mono', monospace !important; font-size: 12px !important; }
