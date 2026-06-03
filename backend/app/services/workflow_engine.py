@@ -573,6 +573,58 @@ class WorkflowEngine:
             else:
                 context[f'${k}'] = v
 
+        # Check for cancel signal ("sair")
+        is_cancel = False
+        if isinstance(input_data, str) and input_data.strip().lower() == 'sair':
+            is_cancel = True
+        elif isinstance(input_data, dict):
+            # Check system.button_response
+            sys_data = input_data.get('system')
+            if isinstance(sys_data, dict):
+                btn_resp = sys_data.get('button_response')
+                if isinstance(btn_resp, str) and btn_resp.strip().lower() == 'sair':
+                    is_cancel = True
+            
+            # Fallback checks (e.g. global.button_response or direct message/button response)
+            if not is_cancel:
+                glob_data = input_data.get('global')
+                if isinstance(glob_data, dict):
+                    btn_resp = glob_data.get('button_response')
+                    if isinstance(btn_resp, str) and btn_resp.strip().lower() == 'sair':
+                        is_cancel = True
+                
+            if not is_cancel:
+                msg_val = input_data.get('message')
+                if isinstance(msg_val, str) and msg_val.strip().lower() == 'sair':
+                    is_cancel = True
+
+        if is_cancel:
+            logger.info(f"[WorkflowEngine] 🛑 Workflow execution {execution_id} cancelled by user input ('sair')")
+            execution.status = "cancelled"
+            execution.error_message = "Execution cancelled by user ('sair')"
+            execution.completed_at = datetime.now(timezone.utc)
+            
+            # Clean active session mapping in redis if applicable
+            session_id = None
+            if '$trigger' in context and isinstance(context['$trigger'], dict):
+                session_id = context['$trigger'].get('payload', {}).get('session_id')
+            if not session_id and isinstance(input_data, dict):
+                session_id = input_data.get('session_id')
+                
+            if session_id:
+                from app.redis_client import redis_client
+                await redis_client.delete(f"active_workflow_run:{session_id}")
+                
+            await self.db.commit()
+            
+            clean_context = {k.lstrip('$'): v for k, v in context.items()}
+            return {
+                'status': 'cancelled',
+                'execution_id': execution.id,
+                'context': clean_context,
+                'result': None,
+            }
+
         # Merge new input_data into trigger payload so subsequent blocks and MCP tools can access it
         if '$trigger' in context and isinstance(context['$trigger'], dict):
             payload = context['$trigger'].get('payload')
