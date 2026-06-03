@@ -66,14 +66,19 @@ async def receive_webhook(
     job_id = normalized["job_id"]
 
     # ── Build worker-compatible payload ──
-    worker_payload = {
-        "message": normalized.get("message", ""),
-        "session_id": normalized.get("session_id", ""),
-    }
-    for key in ("agent_id", "user_access_level", "context_data", "transition_data"):
-        val = normalized.get(key)
-        if val is not None:
-            worker_payload[key] = val
+    # If no mappings are defined, do a pass-through of all fields from normalized (which has the original payload)
+    mappings = (pipeline.input_schema or {}).get("mappings", {})
+    if not mappings:
+        worker_payload = dict(normalized)
+    else:
+        worker_payload = {
+            "message": normalized.get("message", ""),
+            "session_id": normalized.get("session_id", ""),
+        }
+        for key in ("agent_id", "user_access_level", "context_data", "transition_data"):
+            val = normalized.get(key)
+            if val is not None:
+                worker_payload[key] = val
             
     # Resolve callback
     callback_url = normalized.get("callback_url") or pipeline.default_callback_url
@@ -129,10 +134,14 @@ async def receive_webhook(
             message="Webhook received and forwarded successfully"
         )
 
+    # Ensure job_id is present in worker_payload before queuing
+    if "job_id" not in worker_payload:
+        worker_payload["job_id"] = job_id
+
     # ── Worker is down — queue for retry ──
     await enqueue_for_retry(
         pipeline_id=str(pipeline.id),
-        normalized=normalized,
+        normalized=worker_payload,
         forward_url=output_url,
         forward_method=output_method,
     )

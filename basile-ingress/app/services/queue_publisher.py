@@ -29,22 +29,15 @@ async def enqueue_for_retry(
     queue_key = get_queue_key(pipeline_id)
     job_id = normalized.get("job_id")
 
-    queue_data = {
-        # Worker payload fields
-        "job_id": job_id,
+    # Start with all fields from normalized to support dynamic custom payloads
+    queue_data = {k: v for k, v in normalized.items() if not k.startswith("_")}
+    # Overlay metadata and specific fields
+    queue_data.update({
         "pipeline_id": pipeline_id,
-        "message": normalized.get("message"),
-        "session_id": normalized.get("session_id"),
-        "agent_id": normalized.get("agent_id"),
-        "user_access_level": normalized.get("user_access_level", "normal"),
-        "context_data": normalized.get("context_data"),
-        "transition_data": normalized.get("transition_data"),
-        "callback_url": normalized.get("callback_url"),
-        # Dispatcher metadata (prefixed with _ to distinguish)
         "_forward_url": forward_url,
         "_forward_method": forward_method,
         "_retry_count": 0,
-    }
+    })
 
     await redis_client.push_to_queue(
         queue_key,

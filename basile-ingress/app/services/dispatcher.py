@@ -109,19 +109,8 @@ class Dispatcher:
 
     @staticmethod
     def _extract_worker_payload(job_data: dict) -> dict:
-        """Build payload compatible with /webhook/process"""
-        payload = {
-            "message": job_data.get("message", ""),
-            "session_id": job_data.get("session_id", ""),
-        }
-        for key in (
-            "agent_id", "user_access_level", "context_data",
-            "transition_data", "callback_url",
-        ):
-            val = job_data.get(key)
-            if val is not None:
-                payload[key] = val
-        return payload
+        """Build payload compatible with forwarder"""
+        return {k: v for k, v in job_data.items() if not k.startswith("_") and k != "pipeline_id"}
 
     async def _set_status(
         self, job_id: str, status: str, attempts: int = 0, error: str = None

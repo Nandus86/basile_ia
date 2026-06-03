@@ -106,6 +106,12 @@ def normalize_webhook_payload(
     if transition_data:
         normalized["transition_data"] = transition_data
     
+    # If no mappings are defined, we copy all other fields from the original payload
+    if not mappings:
+        for k, v in payload.items():
+            if k not in normalized:
+                normalized[k] = v
+    
     return normalized
 
 
