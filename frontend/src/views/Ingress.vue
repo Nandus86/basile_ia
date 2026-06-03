@@ -12,6 +12,10 @@ const isDeleting = ref(false)
 const pipelineToDelete = ref(null)
 const serviceOnline = ref(null)
 
+// Workflow
+const availableWorkflows = ref([])
+const loadingWorkflows = ref(false)
+
 const INGRESS_BASE = '/ingress-api'
 
 const ingressAxios = axios.create({
@@ -39,7 +43,9 @@ const defaultItem = {
   output_headers: null,
   default_callback_url: '',
   egress_pipeline_path: '',
-  retry_config: { maxRetries: 3, delays: [5000, 15000, 60000] }
+  retry_config: { maxRetries: 3, delays: [5000, 15000, 60000] },
+  workflow_enabled: false,
+  workflow_id: null
 }
 
 const editedItem = ref(JSON.parse(JSON.stringify(defaultItem)))
@@ -197,17 +203,33 @@ const removeMapping = (index) => {
   syncMappingsToItem()
 }
 
+// Workflow helpers
+const fetchWorkflows = async () => {
+  loadingWorkflows.value = true
+  try {
+    const res = await ingressAxios.get('/pipelines/workflows/available')
+    availableWorkflows.value = res.data.workflows || []
+  } catch (err) {
+    console.warn('Could not load workflows:', err)
+    availableWorkflows.value = []
+  } finally {
+    loadingWorkflows.value = false
+  }
+}
+
 // Watch dialog open to sync
 const openCreate = () => {
   editedItem.value = JSON.parse(JSON.stringify(defaultItem))
   isEditing.value = false
   mappingEntries.value = []
+  fetchWorkflows()
   dialog.value = true
 }
 
 const openEdit = (item) => {
   editPipeline(item)
   syncMappingsFromItem()
+  fetchWorkflows()
 }
 
 onMounted(() => {
@@ -462,6 +484,65 @@ onMounted(() => {
               <div v-if="mappingEntries.length === 0" class="text-caption text-medium-emphasis">
                 Nenhum mapeamento configurado.
               </div>
+            </div>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Workflow / Automação -->
+            <div class="text-subtitle-1 font-weight-bold mb-3 d-flex align-center">
+              <v-icon class="mr-2" color="deep-purple" size="20">mdi-lightning-bolt</v-icon>
+              Automação (Workflow)
+            </div>
+            <div class="bg-surface-variant pa-4 rounded-lg mb-2">
+              <v-row align="center">
+                <v-col cols="12" md="4">
+                  <v-switch
+                    v-model="editedItem.workflow_enabled"
+                    color="deep-purple"
+                    label="Ativar Workflow"
+                    hint="Se ativo, executa a automação antes de enviar ao destino"
+                    persistent-hint
+                    hide-details="auto"
+                  ></v-switch>
+                </v-col>
+                <v-col cols="12" md="8" v-if="editedItem.workflow_enabled">
+                  <v-select
+                    v-model="editedItem.workflow_id"
+                    :items="availableWorkflows"
+                    item-title="name"
+                    item-value="id"
+                    label="Selecionar Automação"
+                    variant="outlined"
+                    :loading="loadingWorkflows"
+                    :disabled="loadingWorkflows"
+                    clearable
+                    hint="Workflow que será executado antes do envio para a URL de destino"
+                    persistent-hint
+                    no-data-text="Nenhuma automação disponível"
+                  >
+                    <template v-slot:item="{ item, props }">
+                      <v-list-item v-bind="props">
+                        <template v-slot:subtitle>
+                          {{ item.raw.description || 'Sem descrição' }}
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                </v-col>
+              </v-row>
+              <v-alert
+                v-if="editedItem.workflow_enabled"
+                type="info"
+                variant="tonal"
+                density="compact"
+                class="mt-3"
+                icon="mdi-information-outline"
+              >
+                <span class="text-caption">
+                  <strong>Fluxo:</strong> Payload chega → Normaliza → Executa automação selecionada →
+                  Usa resultado da automação como payload → Envia para URL de destino.
+                </span>
+              </v-alert>
             </div>
 
             <v-divider class="my-4"></v-divider>

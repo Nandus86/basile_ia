@@ -46,6 +46,8 @@ async def list_pipelines(skip: int = 0, limit: int = 20, db: AsyncSession = Depe
                 default_callback_url=p.default_callback_url,
                 egress_pipeline_path=p.egress_pipeline_path,
                 retry_config=p.retry_config,
+                workflow_enabled=p.workflow_enabled or False,
+                workflow_id=p.workflow_id,
                 created_at=p.created_at,
                 updated_at=p.updated_at,
                 has_auth_token=bool(p.auth_token),
@@ -84,6 +86,8 @@ async def create_pipeline(
         default_callback_url=pipeline.default_callback_url,
         egress_pipeline_path=pipeline.egress_pipeline_path,
         retry_config=pipeline.retry_config,
+        workflow_enabled=pipeline.workflow_enabled,
+        workflow_id=pipeline.workflow_id,
     )
     db.add(db_pipeline)
     await db.commit()
@@ -104,6 +108,8 @@ async def create_pipeline(
         default_callback_url=db_pipeline.default_callback_url,
         egress_pipeline_path=db_pipeline.egress_pipeline_path,
         retry_config=db_pipeline.retry_config,
+        workflow_enabled=db_pipeline.workflow_enabled or False,
+        workflow_id=db_pipeline.workflow_id,
         created_at=db_pipeline.created_at,
         updated_at=db_pipeline.updated_at,
         has_auth_token=bool(db_pipeline.auth_token),
@@ -134,6 +140,8 @@ async def get_pipeline(pipeline_id: UUID, db: AsyncSession = Depends(get_db)):
         default_callback_url=pipeline.default_callback_url,
         egress_pipeline_path=pipeline.egress_pipeline_path,
         retry_config=pipeline.retry_config,
+        workflow_enabled=pipeline.workflow_enabled or False,
+        workflow_id=pipeline.workflow_id,
         created_at=pipeline.created_at,
         updated_at=pipeline.updated_at,
         has_auth_token=bool(pipeline.auth_token),
@@ -178,6 +186,8 @@ async def update_pipeline(
         default_callback_url=db_pipeline.default_callback_url,
         egress_pipeline_path=db_pipeline.egress_pipeline_path,
         retry_config=db_pipeline.retry_config,
+        workflow_enabled=db_pipeline.workflow_enabled or False,
+        workflow_id=db_pipeline.workflow_id,
         created_at=db_pipeline.created_at,
         updated_at=db_pipeline.updated_at,
         has_auth_token=bool(db_pipeline.auth_token),
@@ -196,3 +206,33 @@ async def delete_pipeline(pipeline_id: UUID, db: AsyncSession = Depends(get_db))
     await db.delete(pipeline)
     await db.commit()
     return {"message": "Pipeline deleted successfully"}
+
+
+@router.get("/workflows/available")
+async def list_available_workflows():
+    """
+    Proxy endpoint — lists workflows from the main backend.
+    Used by the frontend to populate the workflow dropdown in pipeline forms.
+    """
+    from app.services.workflow_caller import workflow_caller
+
+    success, workflows, error = await workflow_caller.list_workflows()
+    if not success:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to fetch workflows from backend: {error}"
+        )
+
+    # Return only active workflows with minimal info for the dropdown
+    filtered = [
+        {
+            "id": str(w.get("id", "")),
+            "name": w.get("name", ""),
+            "description": w.get("description", ""),
+            "is_active": w.get("is_active", False),
+        }
+        for w in (workflows or [])
+        if w.get("is_active", False)
+    ]
+
+    return {"workflows": filtered, "total": len(filtered)}

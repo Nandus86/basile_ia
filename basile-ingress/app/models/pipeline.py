@@ -33,6 +33,10 @@ class WebhookPipeline(Base):
     
     retry_config = Column(JSONB, default={"maxRetries": 3, "delays": [5000, 15000, 60000]})
     
+    # Workflow / Automação pré-destino
+    workflow_enabled = Column(Boolean, default=False)
+    workflow_id = Column(String(255), nullable=True)
+    
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     

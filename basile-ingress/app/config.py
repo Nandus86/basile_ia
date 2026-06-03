@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     DISPATCH_MAX_RETRIES: int = 50  # total retry attempts before dropping
     DISPATCH_RETRY_DELAYS: list = [5, 10, 30, 60, 120]  # seconds between retries (cycles through)
 
+    # Backend API (for workflow execution)
+    BACKEND_API_URL: str = "http://basile-backend:8000/api"
+    WORKFLOW_TIMEOUT: int = 120  # seconds — timeout for workflow execution calls
+
     class Config:
         env_file = ".env"
         extra = "allow"

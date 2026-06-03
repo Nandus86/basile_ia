@@ -33,6 +33,10 @@ class WebhookPipelineBase(BaseModel):
     egress_pipeline_path: Optional[str] = None
     
     retry_config: Dict[str, Any] = Field(default={"maxRetries": 3, "delays": [5000, 15000, 60000]})
+    
+    # Workflow / Automação
+    workflow_enabled: bool = False
+    workflow_id: Optional[str] = None
 
 
 class WebhookPipelineCreate(WebhookPipelineBase):
@@ -54,6 +58,10 @@ class WebhookPipelineUpdate(BaseModel):
     default_callback_url: Optional[str] = None
     egress_pipeline_path: Optional[str] = None
     retry_config: Optional[Dict[str, Any]] = None
+    
+    # Workflow / Automação
+    workflow_enabled: Optional[bool] = None
+    workflow_id: Optional[str] = None
 
 
 class WebhookPipelineResponse(WebhookPipelineBase):

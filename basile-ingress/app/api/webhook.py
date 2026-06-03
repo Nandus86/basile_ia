@@ -15,6 +15,7 @@ from app.schemas.pipeline import WebhookReceivedResponse, TestWebhookRequest, Te
 from app.services.webhook_processor import normalize_webhook_payload, validate_pipeline_auth
 from app.services.queue_publisher import enqueue_for_retry, save_job_status
 from app.services.http_forwarder import forwarder
+from app.services.workflow_caller import workflow_caller
 
 
 router = APIRouter()
@@ -87,6 +88,30 @@ async def receive_webhook(
             
     if callback_url:
         worker_payload["callback_url"] = callback_url
+
+    # ── Execute Workflow (if enabled) ──
+    if pipeline.workflow_enabled and pipeline.workflow_id:
+        logger.info(
+            f"[Webhook] Executing workflow {pipeline.workflow_id} "
+            f"for pipeline '{path}'"
+        )
+        wf_success, wf_result, wf_error = await workflow_caller.execute(
+            pipeline.workflow_id, worker_payload
+        )
+        if wf_success and wf_result:
+            if isinstance(wf_result, dict):
+                # Replace: use only the workflow result as the payload
+                worker_payload = wf_result
+            logger.info(
+                f"[Webhook] Workflow result applied as payload "
+                f"for pipeline '{path}'"
+            )
+        else:
+            # Fallback: continue with original payload on workflow failure
+            logger.warning(
+                f"[Webhook] Workflow failed for pipeline '{path}': "
+                f"{wf_error}. Continuing with original payload."
+            )
 
     # ── Try to forward immediately ──
     output_url = pipeline.output_url
