@@ -89,7 +89,7 @@
           :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#6366F1', strokeWidth: 2 } }"
           :pan-on-drag="[1]"
           :selection-on-drag="true"
-          :selection-key-code="null"
+          :selection-key-code="true"
           :pan-activation-key-code="'Space'"
         >
           <Background pattern-color="#333" :gap="20" />
