@@ -29,6 +29,7 @@
     <!-- Tabs Header -->
     <v-tabs v-model="activeTab" color="primary" class="mb-6">
       <v-tab value="webhooks">Webhooks</v-tab>
+      <v-tab value="entradas">Entradas (Ingress)</v-tab>
       <v-tab value="notificacoes">Notificações</v-tab>
       <v-tab value="disparador">Disparador</v-tab>
       <v-tab value="automacao">Automação</v-tab>
@@ -483,6 +484,124 @@
     </v-dialog>
       </v-window-item>
       </template>
+
+      <v-window-item value="entradas">
+        <!-- Ingress Data Table -->
+        <v-card class="glass-card">
+          <v-card-title class="d-flex align-center px-6 py-4">
+            <v-icon class="mr-2" color="teal">mdi-login-variant</v-icon>
+            <span class="text-white font-weight-medium">Logs de Entrada (Ingress)</span>
+            <v-spacer></v-spacer>
+            <v-btn color="teal" variant="tonal" prepend-icon="mdi-refresh" size="small" @click="fetchIngressLogs" :loading="ingressLoading">
+              Atualizar
+            </v-btn>
+          </v-card-title>
+          
+          <v-divider></v-divider>
+
+          <v-card-text class="px-6 py-4">
+            <v-row dense>
+              <v-col cols="12" sm="6" md="4">
+                <v-text-field
+                  v-model="ingressSearchPath"
+                  prepend-inner-icon="mdi-magnify"
+                  placeholder="Buscar Path (ex: meu-webhook)..."
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" sm="6" md="4">
+                <v-select
+                  v-model="ingressStatusFilter"
+                  :items="['forwarded', 'queued', 'validation_error', 'unauthorized', 'not_found', 'error']"
+                  label="Status"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                ></v-select>
+              </v-col>
+            </v-row>
+          </v-card-text>
+
+          <v-divider></v-divider>
+
+          <v-data-table
+            :headers="[
+              { title: 'Data/Hora', key: 'created_at', width: '180px' },
+              { title: 'Webhook Path', key: 'pipeline_path' },
+              { title: 'URL Destino', key: 'destination_url' },
+              { title: 'Código HTTP', key: 'response_code', align: 'center', width: '110px' },
+              { title: 'Duração', key: 'duration_ms', align: 'center', width: '110px' },
+              { title: 'Status', key: 'status', align: 'center', width: '140px' },
+              { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '120px' }
+            ]"
+            :items="ingressLogs"
+            :loading="ingressLoading"
+            hover
+            hide-default-footer
+            class="bg-transparent"
+          >
+            <template v-slot:item.created_at="{ item }">
+              <span class="text-body-2">{{ formatDate(item.created_at) }}</span>
+            </template>
+
+            <template v-slot:item.pipeline_path="{ item }">
+              <v-chip variant="outlined" color="teal" size="small">
+                /webhook/{{ item.pipeline_path }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.destination_url="{ item }">
+              <span class="text-caption text-truncate d-inline-block" style="max-width: 300px;" :title="item.destination_url">
+                {{ item.destination_url || '—' }}
+              </span>
+            </template>
+
+            <template v-slot:item.response_code="{ item }">
+              <v-chip v-if="item.response_code" :color="item.response_code < 400 ? 'success' : 'error'" size="x-small" variant="tonal">
+                {{ item.response_code }}
+              </v-chip>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
+
+            <template v-slot:item.duration_ms="{ item }">
+              <span v-if="item.duration_ms" class="text-body-2">
+                <v-icon size="12" class="mr-1">mdi-timer-outline</v-icon>
+                {{ item.duration_ms }} ms
+              </span>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
+
+            <template v-slot:item.status="{ item }">
+              <v-chip :color="getIngressStatusColor(item.status)" size="small" variant="tonal">
+                <v-icon start size="12">{{ getIngressStatusIcon(item.status) }}</v-icon>
+                {{ item.status.toUpperCase() }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.actions="{ item }">
+              <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-eye" @click="openIngressLogDetails(item)">
+                Ver
+              </v-btn>
+            </template>
+
+            <template v-slot:bottom>
+              <div class="d-flex align-center justify-end pa-4 border-t" style="gap: 16px;">
+                <v-pagination
+                  v-model="ingressPage"
+                  :length="Math.ceil(ingressTotal / ingressItemsPerPage) || 1"
+                  density="compact"
+                  total-visible="5"
+                  active-color="primary"
+                ></v-pagination>
+              </div>
+            </template>
+          </v-data-table>
+        </v-card>
+      </v-window-item>
 
       <v-window-item value="disparador">
         <v-row class="mb-6 mt-2">
@@ -995,6 +1114,121 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Dialog de Detalhes do Log do Ingress -->
+    <v-dialog v-model="ingressDialog" max-width="950" scrollable>
+      <v-card class="glass-card" style="background: #0D1117 !important" v-if="selectedIngressLog">
+        <v-card-title class="d-flex align-center pa-5 border-b">
+          <v-icon class="mr-2" size="24" :color="getIngressStatusColor(selectedIngressLog.status)">
+            {{ getIngressStatusIcon(selectedIngressLog.status) }}
+          </v-icon>
+          <div>
+            <span class="text-subtitle-1 font-weight-bold text-white">Log do Ingress: {{ selectedIngressLog.id.substring(0, 8) }}</span>
+            <div class="text-caption text-medium-emphasis mt-n1">
+              Recebido em {{ formatDate(selectedIngressLog.created_at) }} • Duração: {{ selectedIngressLog.duration_ms || 0 }} ms
+            </div>
+          </div>
+          <v-spacer />
+          <v-chip :color="getIngressStatusColor(selectedIngressLog.status)" size="small" class="mr-3" variant="flat">
+            {{ selectedIngressLog.status.toUpperCase() }}
+          </v-chip>
+          <v-btn icon variant="text" size="small" @click="ingressDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-tabs v-model="ingressDetailTab" color="primary" class="border-b">
+          <v-tab value="general">Geral / Resposta</v-tab>
+          <v-tab value="raw">Payload Recebido (Bruto)</v-tab>
+          <v-tab value="output">Payload Enviado (Tratado)</v-tab>
+        </v-tabs>
+
+        <v-card-text class="pa-5" style="max-height: 650px; overflow-y: auto;">
+          <!-- TAB: GERAL -->
+          <div v-if="ingressDetailTab === 'general'">
+            <v-row>
+              <v-col cols="12" md="6">
+                <div class="text-caption text-medium-emphasis mb-1">Path do Pipeline</div>
+                <div class="text-body-2 font-weight-bold text-white">/webhook/{{ selectedIngressLog.pipeline_path }}</div>
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="text-caption text-medium-emphasis mb-1">URL de Destino</div>
+                <div class="text-body-2 font-weight-bold text-white">{{ selectedIngressLog.destination_url || '—' }}</div>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <v-row>
+              <v-col cols="12" sm="6">
+                <div class="text-caption text-medium-emphasis mb-1">Código de Resposta HTTP</div>
+                <v-chip v-if="selectedIngressLog.response_code" :color="selectedIngressLog.response_code < 400 ? 'success' : 'error'" size="small">
+                  {{ selectedIngressLog.response_code }}
+                </v-chip>
+                <div v-else class="text-body-2 text-medium-emphasis">—</div>
+              </v-col>
+              <v-col cols="12" sm="6">
+                <div class="text-caption text-medium-emphasis mb-1">Status Final</div>
+                <v-chip :color="getIngressStatusColor(selectedIngressLog.status)" size="small" variant="flat">
+                  {{ selectedIngressLog.status.toUpperCase() }}
+                </v-chip>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Error message if any -->
+            <div v-if="selectedIngressLog.error_message" class="mb-4">
+              <h4 class="text-subtitle-2 font-weight-bold text-error mb-2">Mensagem de Erro</h4>
+              <v-alert type="error" variant="tonal" class="text-caption">
+                <pre style="white-space: pre-wrap; font-family: monospace;">{{ selectedIngressLog.error_message }}</pre>
+              </v-alert>
+            </div>
+
+            <!-- Destination Response Body if any -->
+            <div>
+              <h4 class="text-subtitle-2 font-weight-bold text-white mb-2">Corpo da Resposta do Destino</h4>
+              <v-sheet rounded class="code-sheet pa-4" v-if="selectedIngressLog.response_body">
+                <pre>{{ selectedIngressLog.response_body }}</pre>
+              </v-sheet>
+              <div v-else class="text-medium-emphasis font-italic text-body-2">Nenhuma resposta do destino gravada.</div>
+            </div>
+          </div>
+
+          <!-- TAB: RAW PAYLOAD -->
+          <div v-else-if="ingressDetailTab === 'raw'">
+            <div class="d-flex justify-space-between align-center mb-2">
+              <span class="text-caption text-medium-emphasis">Exibindo payload recebido cru da origem externa</span>
+              <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedIngressLog.raw_payload)">
+                Copiar Payload
+              </v-btn>
+            </div>
+            <v-sheet rounded class="code-sheet pa-4">
+              <pre>{{ formatJSON(selectedIngressLog.raw_payload) }}</pre>
+            </v-sheet>
+          </div>
+
+          <!-- TAB: OUTPUT PAYLOAD -->
+          <div v-else-if="ingressDetailTab === 'output'">
+            <div class="d-flex justify-space-between align-center mb-2">
+              <span class="text-caption text-medium-emphasis">Exibindo payload pós-tratamento/automação enviado ao destino</span>
+              <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedIngressLog.output_payload)">
+                Copiar Payload
+              </v-btn>
+            </div>
+            <v-sheet rounded class="code-sheet pa-4" v-if="selectedIngressLog.output_payload">
+              <pre>{{ formatJSON(selectedIngressLog.output_payload) }}</pre>
+            </v-sheet>
+            <div v-else class="text-medium-emphasis font-italic text-body-2">Nenhum payload de saída gerado (ex: falha na validação inicial).</div>
+          </div>
+        </v-card-text>
+
+        <v-card-actions class="pa-4 border-t">
+          <v-spacer />
+          <v-btn variant="text" @click="ingressDialog = false">Fechar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
     
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.text }}
@@ -1005,12 +1239,31 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import axiosInstance from '@/plugins/axios'
+import axios from 'axios'
 import VueApexCharts from 'vue3-apexcharts'
 import ApexCharts from 'apexcharts'
 
 const apexchart = VueApexCharts
 
 const activeTab = ref('webhooks')
+
+// Ingress (Entradas) client and state
+const ingressAxios = axios.create({
+  baseURL: '/ingress-api',
+  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' }
+})
+
+const ingressLogs = ref([])
+const ingressTotal = ref(0)
+const ingressPage = ref(1)
+const ingressItemsPerPage = ref(20)
+const ingressLoading = ref(false)
+const ingressSearchPath = ref('')
+const ingressStatusFilter = ref(null)
+const ingressDialog = ref(false)
+const selectedIngressLog = ref(null)
+const ingressDetailTab = ref('general')
 
 // Debounce utility for search inputs
 let _debounceTimer = null
@@ -1804,9 +2057,82 @@ watch(workflowPage, () => {
   fetchWorkflowExecutions()
 })
 
+const fetchIngressLogs = async () => {
+  ingressLoading.value = true
+  try {
+    const skip = (ingressPage.value - 1) * ingressItemsPerPage.value
+    let url = `/pipelines/logs?skip=${skip}&limit=${ingressItemsPerPage.value}`
+    if (ingressStatusFilter.value) {
+      url += `&status=${encodeURIComponent(ingressStatusFilter.value)}`
+    }
+    if (ingressSearchPath.value) {
+      url += `&pipeline_path=${encodeURIComponent(ingressSearchPath.value)}`
+    }
+    const { data } = await ingressAxios.get(url)
+    ingressLogs.value = data.items || []
+    ingressTotal.value = data.total || 0
+  } catch (e) {
+    showSnackbar('Erro ao carregar logs do Ingress', 'error')
+  } finally {
+    ingressLoading.value = false
+  }
+}
+
+const openIngressLogDetails = async (log) => {
+  try {
+    const { data } = await ingressAxios.get(`/pipelines/logs/${log.id}`)
+    selectedIngressLog.value = data
+    ingressDetailTab.value = 'general'
+    ingressDialog.value = true
+  } catch (e) {
+    showSnackbar('Erro ao carregar detalhes do log do Ingress', 'error')
+  }
+}
+
+const getIngressStatusColor = (status) => {
+  return {
+    'forwarded': 'success',
+    'queued': 'warning',
+    'validation_error': 'error',
+    'unauthorized': 'error',
+    'not_found': 'error',
+    'error': 'error'
+  }[status] || 'grey'
+}
+
+const getIngressStatusIcon = (status) => {
+  return {
+    'forwarded': 'mdi-check-circle',
+    'queued': 'mdi-clock-outline',
+    'validation_error': 'mdi-alert-circle-outline',
+    'unauthorized': 'mdi-lock-alert',
+    'not_found': 'mdi-alert-octagon-outline',
+    'error': 'mdi-alert'
+  }[status] || 'mdi-help-circle'
+}
+
+watch(ingressSearchPath, () => {
+  clearTimeout(_debounceTimer)
+  _debounceTimer = setTimeout(() => {
+    ingressPage.value = 1
+    fetchIngressLogs()
+  }, 400)
+})
+
+watch(ingressStatusFilter, () => {
+  ingressPage.value = 1
+  fetchIngressLogs()
+})
+
+watch(ingressPage, () => {
+  fetchIngressLogs()
+})
+
 watch(activeTab, (newTab) => {
   if (newTab === 'automacao') {
     fetchWorkflows()
+  } else if (newTab === 'entradas') {
+    fetchIngressLogs()
   }
 })
 
@@ -1830,6 +2156,7 @@ onMounted(() => {
   fetchData()
   fetchDisparadorData()
   fetchWorkflows()
+  fetchIngressLogs()
   connectSSE()
 })
 

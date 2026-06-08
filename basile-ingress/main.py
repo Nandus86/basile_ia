@@ -22,6 +22,7 @@ async def lifespan(app: FastAPI):
     global _dispatcher_task
 
     # Startup
+    from app.models.ingress_log import IngressLog
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await redis_client.connect()

@@ -93,3 +93,40 @@ class TestWebhookResponse(BaseModel):
     pipeline: str
     normalized: Dict[str, Any]
     message: str
+
+
+class IngressLogListItem(BaseModel):
+    id: UUID
+    pipeline_id: Optional[UUID] = None
+    pipeline_path: str
+    status: str
+    destination_url: Optional[str] = None
+    response_code: Optional[int] = None
+    duration_ms: Optional[int] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class IngressLogDetail(BaseModel):
+    id: UUID
+    pipeline_id: Optional[UUID] = None
+    pipeline_path: str
+    status: str
+    raw_payload: Optional[Dict[str, Any]] = None
+    output_payload: Optional[Dict[str, Any]] = None
+    destination_url: Optional[str] = None
+    response_code: Optional[int] = None
+    response_body: Optional[str] = None
+    duration_ms: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class IngressLogListResponse(BaseModel):
+    items: List[IngressLogListItem]
+    total: int
+    skip: int
+    limit: int

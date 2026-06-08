@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from uuid import UUID
+from typing import Optional
 
 from app.database import get_db
 from app.models.pipeline import WebhookPipeline
@@ -236,3 +237,56 @@ async def list_available_workflows():
     ]
 
     return {"workflows": filtered, "total": len(filtered)}
+
+
+@router.get("/logs", response_model=IngressLogListResponse)
+async def list_ingress_logs(
+    skip: int = 0,
+    limit: int = 50,
+    pipeline_path: Optional[str] = None,
+    status: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import desc, func, or_
+    from app.models.ingress_log import IngressLog
+    
+    query = select(IngressLog)
+    if pipeline_path:
+        paths = [p.strip() for p in pipeline_path.split(",") if p.strip()]
+        if paths:
+            conditions = [IngressLog.pipeline_path.ilike(f"%{p}%") for p in paths]
+            query = query.where(or_(*conditions))
+    if status:
+        query = query.where(IngressLog.status == status)
+        
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar_one()
+    
+    query = query.order_by(desc(IngressLog.created_at)).offset(skip).limit(limit)
+    result = await db.execute(query)
+    logs = result.scalars().all()
+    
+    return IngressLogListResponse(
+        items=logs,
+        total=total,
+        skip=skip,
+        limit=limit
+    )
+
+
+@router.get("/logs/{log_id}", response_model=IngressLogDetail)
+async def get_ingress_log_details(
+    log_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.models.ingress_log import IngressLog
+    
+    query = select(IngressLog).where(IngressLog.id == log_id)
+    result = await db.execute(query)
+    log = result.scalar_one_or_none()
+    
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+        
+    return log
