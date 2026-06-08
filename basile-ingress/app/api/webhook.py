@@ -132,6 +132,19 @@ async def receive_webhook(
                     f"[Webhook] Workflow result applied as payload "
                     f"for pipeline '{path}'"
                 )
+                
+                # Check for stop / cancel parameter from workflow execution
+                stop_val = worker_payload.get("stop")
+                if stop_val in (True, "true", "True"):
+                    status = "stopped"
+                    response_code = 200
+                    response_body = json.dumps({"message": "Stopped by workflow condition"})
+                    await save_job_status(job_id, str(pipeline.id), "stopped")
+                    return WebhookReceivedResponse(
+                        success=True,
+                        job_id=job_id,
+                        message="Webhook processing stopped by workflow condition"
+                    )
             else:
                 # Fallback: continue with original payload on workflow failure
                 logger.warning(

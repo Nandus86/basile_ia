@@ -515,7 +515,7 @@
               <v-col cols="12" sm="6" md="4">
                 <v-select
                   v-model="ingressStatusFilter"
-                  :items="['forwarded', 'queued', 'validation_error', 'unauthorized', 'not_found', 'error']"
+                  :items="['forwarded', 'queued', 'stopped', 'validation_error', 'unauthorized', 'not_found', 'error']"
                   label="Status"
                   variant="outlined"
                   density="compact"
@@ -2098,6 +2098,7 @@ const getIngressStatusColor = (status) => {
   return {
     'forwarded': 'success',
     'queued': 'warning',
+    'stopped': 'info',
     'validation_error': 'error',
     'unauthorized': 'error',
     'not_found': 'error',
@@ -2109,6 +2110,7 @@ const getIngressStatusIcon = (status) => {
   return {
     'forwarded': 'mdi-check-circle',
     'queued': 'mdi-clock-outline',
+    'stopped': 'mdi-octagon-outline',
     'validation_error': 'mdi-alert-circle-outline',
     'unauthorized': 'mdi-lock-alert',
     'not_found': 'mdi-alert-octagon-outline',
