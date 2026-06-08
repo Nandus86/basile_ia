@@ -110,7 +110,18 @@ class Dispatcher:
     @staticmethod
     def _extract_worker_payload(job_data: dict) -> dict:
         """Build payload compatible with forwarder"""
-        return {k: v for k, v in job_data.items() if not k.startswith("_") and k != "pipeline_id"}
+        payload = {k: v for k, v in job_data.items() if not k.startswith("_") and k != "pipeline_id"}
+        
+        # Sanitize standard fields to avoid 422 errors on the worker/backend side
+        if payload.get("message") is None:
+            payload["message"] = ""
+        if not payload.get("session_id"):
+            import uuid
+            payload["session_id"] = f"session_{uuid.uuid4().hex[:8]}"
+        if "user_access_level" in payload and payload["user_access_level"] is None:
+            payload["user_access_level"] = "normal"
+            
+        return payload
 
     async def _set_status(
         self, job_id: str, status: str, attempts: int = 0, error: str = None

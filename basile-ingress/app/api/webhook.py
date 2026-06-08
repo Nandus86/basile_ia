@@ -140,6 +140,15 @@ async def receive_webhook(
                 )
                 error_msg = f"Workflow error: {wf_error}"
 
+        # Sanitize standard fields to avoid 422 errors on the worker/backend side
+        if worker_payload.get("message") is None:
+            worker_payload["message"] = ""
+        if not worker_payload.get("session_id"):
+            import uuid
+            worker_payload["session_id"] = f"session_{uuid.uuid4().hex[:8]}"
+        if "user_access_level" in worker_payload and worker_payload["user_access_level"] is None:
+            worker_payload["user_access_level"] = "normal"
+
         # ── Try to forward immediately ──
         output_url = pipeline.output_url
         output_method = pipeline.output_method or "POST"
