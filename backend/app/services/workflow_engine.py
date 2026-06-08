@@ -256,6 +256,12 @@ def parse_typed_value(val_str: str) -> Any:
     if not val_str:
         return val_str
 
+    # Suporte case-insensitive para booleano antes de outros parsers
+    if val_str.lower() == 'true':
+        return True
+    if val_str.lower() == 'false':
+        return False
+
     # 1. Tentar parsear diretamente com json.loads (booleans, numbers, arrays, dicts com aspas duplas, null)
     try:
         return json.loads(val_str)
@@ -385,14 +391,18 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
     """Evaluate a comparison between two values."""
     op = operator.lower().strip()
 
-    # String coercions for comparison
-    str_a = str(value_a) if value_a is not None else ''
-    str_b = str(value_b) if value_b is not None else ''
+    # Auto-resolve typed values if they are strings
+    typed_a = parse_typed_value(value_a) if isinstance(value_a, str) else value_a
+    typed_b = parse_typed_value(value_b) if isinstance(value_b, str) else value_b
+
+    # String coercions for comparison based on typed values
+    str_a = str(typed_a) if typed_a is not None else ''
+    str_b = str(typed_b) if typed_b is not None else ''
 
     if op in ('equals', 'eq', '=='):
-        return str_a == str_b
+        return typed_a == typed_b
     if op in ('not_equals', 'neq', '!='):
-        return str_a != str_b
+        return typed_a != typed_b
     if op in ('contains',):
         return str_b in str_a
     if op in ('not_contains',):
@@ -402,13 +412,13 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
     if op in ('ends_with',):
         return str_a.endswith(str_b)
     if op in ('exists',):
-        return value_a is not None and str_a != ''
+        return typed_a is not None and str_a != ''
     if op in ('is_empty', 'not_exists'):
-        return value_a is None or str_a == '' or value_a == [] or value_a == {}
+        return typed_a is None or str_a == '' or typed_a == [] or typed_a == {}
 
     # Numeric comparisons
-    num_a = _coerce_numeric(value_a)
-    num_b = _coerce_numeric(value_b)
+    num_a = _coerce_numeric(typed_a)
+    num_b = _coerce_numeric(typed_b)
     if num_a is not None and num_b is not None:
         if op in ('greater_than', 'gt', '>'):
             return num_a > num_b
