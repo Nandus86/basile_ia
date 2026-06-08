@@ -174,7 +174,6 @@ async def receive_webhook(
             status = "forwarded"
             response_code = 200
             if response_data:
-                import json
                 try:
                     response_body = json.dumps(response_data)
                 except:
