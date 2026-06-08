@@ -14,6 +14,8 @@ from app.schemas.pipeline import (
     WebhookPipelineUpdate,
     WebhookPipelineResponse,
     WebhookPipelineList,
+    IngressLogListResponse,
+    IngressLogDetail,
 )
 
 
