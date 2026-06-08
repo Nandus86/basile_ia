@@ -245,6 +245,7 @@ async def get_stm_key_detail(key: str):
                 messages.append(json.loads(item))
             except json.JSONDecodeError:
                 messages.append({"raw": item})
+        messages.reverse()  # Ordenação decrescente (mais recentes primeiro)
         return {
             "key": key,
             "type": "list",
@@ -606,7 +607,7 @@ async def get_mtm_session_messages(
         q = (
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
-            .order_by(ConversationMessage.created_at.asc())
+            .order_by(ConversationMessage.created_at.desc())  # Ordenação decrescente (mais recentes primeiro)
             .limit(limit)
         )
 
