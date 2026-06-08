@@ -131,13 +131,22 @@ async def list_ingress_logs(
     from app.models.ingress_log import IngressLog
     
     query = select(IngressLog)
-    if pipeline_path:
+    
+    def is_valid_param(val: Optional[str]) -> bool:
+        if not val:
+            return False
+        clean = val.strip().lower()
+        return clean not in ("", "null", "undefined", "none")
+        
+    if is_valid_param(pipeline_path):
         paths = [p.strip() for p in pipeline_path.split(",") if p.strip()]
-        if paths:
-            conditions = [IngressLog.pipeline_path.ilike(f"%{p}%") for p in paths]
+        valid_paths = [p for p in paths if p.lower() not in ("null", "undefined", "none", "")]
+        if valid_paths:
+            conditions = [IngressLog.pipeline_path.ilike(f"%{p}%") for p in valid_paths]
             query = query.where(or_(*conditions))
-    if status:
-        query = query.where(IngressLog.status == status)
+            
+    if is_valid_param(status):
+        query = query.where(IngressLog.status == status.strip())
         
     count_query = select(func.count()).select_from(query.subquery())
     total_result = await db.execute(count_query)

@@ -2062,12 +2062,17 @@ const fetchIngressLogs = async () => {
   try {
     const skip = (ingressPage.value - 1) * ingressItemsPerPage.value
     let url = `/pipelines/logs?skip=${skip}&limit=${ingressItemsPerPage.value}`
-    if (ingressStatusFilter.value) {
-      url += `&status=${encodeURIComponent(ingressStatusFilter.value)}`
+    
+    const statusVal = ingressStatusFilter.value
+    if (statusVal && statusVal !== 'null' && statusVal !== 'undefined' && String(statusVal).trim() !== '') {
+      url += `&status=${encodeURIComponent(statusVal)}`
     }
-    if (ingressSearchPath.value) {
-      url += `&pipeline_path=${encodeURIComponent(ingressSearchPath.value)}`
+    
+    const pathVal = ingressSearchPath.value
+    if (pathVal && pathVal !== 'null' && pathVal !== 'undefined' && String(pathVal).trim() !== '') {
+      url += `&pipeline_path=${encodeURIComponent(pathVal)}`
     }
+    
     const { data } = await ingressAxios.get(url)
     ingressLogs.value = data.items || []
     ingressTotal.value = data.total || 0
