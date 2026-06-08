@@ -550,29 +550,44 @@ async def stream_job_updates(request: Request):
     """SSE endpoint that streams real-time job status updates via Redis PubSub"""
     async def event_generator():
         client = await redis_client.connect()
-        pubsub = client.pubsub()
+        pubsub = client.pubsub(ignore_subscribe_messages=True)
         await pubsub.subscribe("job_updates")
         logger.info("SSE client connected on /tracking/stream")
+        
+        last_heartbeat = asyncio.get_event_loop().time()
+        heartbeat_interval = 15.0  # seconds
+        
         try:
-            async for message in pubsub.listen():
+            while True:
                 if await request.is_disconnected():
                     logger.info("SSE client disconnected from /tracking/stream")
                     break
-                if message["type"] == "message":
+                
+                # Fetch next message with a timeout to prevent blocking indefinitely
+                message = await pubsub.get_message(timeout=1.0)
+                if message:
                     data = message["data"]
                     if isinstance(data, bytes):
                         data = data.decode()
                     yield f"data: {data}\n\n"
+                
+                # Periodic heartbeat to trigger write failures on disconnected clients
+                now = asyncio.get_event_loop().time()
+                if now - last_heartbeat >= heartbeat_interval:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = now
+                    
         except asyncio.CancelledError:
-            pass
+            logger.info("SSE streaming task cancelled")
         except Exception as e:
             logger.error(f"SSE stream error: {e}")
         finally:
             try:
                 await pubsub.unsubscribe("job_updates")
                 await pubsub.close()
-            except Exception:
-                pass
+                logger.info("SSE resources cleaned up successfully")
+            except Exception as clean_err:
+                logger.error(f"Error cleaning up SSE pubsub: {clean_err}")
 
     return StreamingResponse(
         event_generator(),

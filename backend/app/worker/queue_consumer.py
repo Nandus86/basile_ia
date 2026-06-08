@@ -43,6 +43,7 @@ async def _publish_job_update(job_id, status, webhook_path=None, request_data=No
 async def _listen_for_aborts():
     """Background task to listen for abort signals via Redis PubSub."""
     import asyncio
+    pubsub = None
     try:
         # Pega a connection nativa do banco gerida pela class do redis_client
         client = await redis_client.connect()
@@ -69,6 +70,14 @@ async def _listen_for_aborts():
         pass
     except Exception as e:
         logger.error(f"Error in pubsub abort listener: {e}")
+    finally:
+        if pubsub:
+            try:
+                await pubsub.unsubscribe("job_control")
+                await pubsub.close()
+                logger.info("PubSub abort listener resources cleaned up")
+            except Exception as clean_err:
+                logger.error(f"Error cleaning up pubsub abort listener: {clean_err}")
 
 async def _save_to_mtm(agent_id: str, session_id: str, role: str, content: str):
     """Helper to save a message to MTM (PostgreSQL ConversationMessage)."""
