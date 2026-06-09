@@ -398,6 +398,99 @@
         ></v-text-field>
       </template>
 
+      <!-- ═══ VARIABLES ═══ -->
+      <template v-if="block.type === 'variables'">
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          Defina variáveis estáticas (fixas) ou dinâmicas que acumulam valores ao longo da execução do workflow.
+        </v-alert>
+
+        <div v-for="(v, idx) in (config.variables || [])" :key="idx" class="rule-item mb-3 pa-3 rounded border">
+          <div class="d-flex justify-space-between align-center mb-2">
+            <span class="text-caption font-weight-bold">Variável {{ idx + 1 }}</span>
+            <v-btn icon variant="text" size="x-small" color="error" @click="removeVariable(idx)">
+              <v-icon size="16">mdi-close</v-icon>
+            </v-btn>
+          </div>
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field
+                v-model="v.name"
+                label="Nome"
+                placeholder="celula"
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mb-2"
+                @update:model-value="emitUpdate"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-select
+                v-model="v.type"
+                :items="[
+                  { title: 'Texto (string)', value: 'string' },
+                  { title: 'Número (number)', value: 'number' },
+                  { title: 'Booleano (boolean)', value: 'boolean' },
+                  { title: 'Lista (array)', value: 'array' },
+                  { title: 'Objeto (object)', value: 'object' }
+                ]"
+                label="Tipo"
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mb-2"
+                @update:model-value="emitUpdate"
+              ></v-select>
+            </v-col>
+          </v-row>
+          <v-row dense>
+            <v-col cols="6">
+              <v-select
+                v-model="v.mode"
+                :items="[
+                  { title: 'Dinâmico', value: 'dynamic' },
+                  { title: 'Fixo (Constante)', value: 'fixed' }
+                ]"
+                label="Origem"
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mb-2"
+                @update:model-value="emitUpdate"
+              ></v-select>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-if="v.mode === 'fixed'"
+                v-model="v.value"
+                label="Valor Fixo"
+                placeholder="Valor estático"
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mb-2"
+                @update:model-value="emitUpdate"
+              ></v-text-field>
+              <v-text-field
+                v-else
+                v-model="v.expression"
+                label="Expressão"
+                placeholder="{{ $trigger.payload.celula }}"
+                variant="outlined"
+                density="compact"
+                hide-details
+                class="mb-2"
+                @update:model-value="emitUpdate"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+        </div>
+
+        <v-btn size="small" variant="tonal" color="primary" @click="addVariable" class="mb-3 w-100">
+          <v-icon start size="16">mdi-plus</v-icon> Adicionar Variável
+        </v-btn>
+      </template>
+
       <!-- ═══ DELAY ═══ -->
       <template v-if="block.type === 'delay'">
         <v-text-field
@@ -666,6 +759,7 @@ const BLOCK_META = {
   response:     { icon: 'mdi-logout',            color: '#EC4899', label: 'Configurar Saída' },
   python:       { icon: 'mdi-language-python',   color: '#3B82F6', label: 'Configurar Python' },
   mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'Configurar MCP' },
+  variables:    { icon: 'mdi-variable',          color: '#10B981', label: 'Configurar Variáveis' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
@@ -820,6 +914,16 @@ function addOperation() {
 }
 function removeOperation(idx) {
   config.value.operations.splice(idx, 1)
+  emitUpdate()
+}
+
+function addVariable() {
+  if (!config.value.variables) config.value.variables = []
+  config.value.variables.push({ name: '', type: 'string', mode: 'dynamic', value: '', expression: '' })
+  emitUpdate()
+}
+function removeVariable(idx) {
+  config.value.variables.splice(idx, 1)
   emitUpdate()
 }
 

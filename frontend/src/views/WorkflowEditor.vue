@@ -494,6 +494,7 @@ const toolboxItems = [
   { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },
   { type: 'transform', label: 'Transform', icon: 'mdi-swap-horizontal', color: '#F97316', category: 'utility' },
   { type: 'delay', label: 'Delay', icon: 'mdi-timer-sand', color: '#6B7280', category: 'utility' },
+  { type: 'variables', label: 'Variáveis', icon: 'mdi-variable', color: '#10B981', category: 'utility' },
 ]
 
 const availableContextKeys = computed(() => {

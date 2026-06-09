@@ -932,6 +932,8 @@ class WorkflowEngine:
                 return await self._exec_response(config, context, last_output_key)
             case 'python':
                 return await self._exec_python(config, context)
+            case 'variables':
+                return await self._exec_variables(config, context, block['id'])
             case 'mcp':
                 return await self._exec_mcp(config, context)
             case _:
@@ -950,6 +952,87 @@ class WorkflowEngine:
         if val is None:
             val = context.get(last_output_key)
         return val
+
+    async def _exec_variables(self, config: Dict[str, Any], context: Dict[str, Any], block_id: str) -> Any:
+        """Execute variables block to store/accumulate values."""
+        output_key = config.get('output_key', block_id)
+        
+        # Obter estado anterior do context
+        estado_anterior = context.get(f'${output_key}')
+        if not isinstance(estado_anterior, dict):
+            estado_anterior = {}
+            
+        estado_novo = {**estado_anterior}
+        
+        variables = config.get('variables', [])
+        for var_def in variables:
+            name = var_def.get('name')
+            if not name:
+                continue
+                
+            var_type = var_def.get('type', 'string')
+            mode = var_def.get('mode', 'dynamic')
+            
+            if mode == 'fixed':
+                val_raw = var_def.get('value')
+                estado_novo[name] = self._coerce_type(val_raw, var_type)
+            else:
+                expr = var_def.get('expression', '')
+                if expr:
+                    val_resolved = resolve_template(expr, context)
+                    if val_resolved is not None and val_resolved != '' and val_resolved != expr:
+                        estado_novo[name] = self._coerce_type(val_resolved, var_type)
+                    elif name not in estado_novo:
+                        estado_novo[name] = self._get_default_value(var_type)
+                elif name not in estado_novo:
+                    estado_novo[name] = self._get_default_value(var_type)
+                    
+        return estado_novo
+
+    def _coerce_type(self, val: Any, target_type: str) -> Any:
+        if val is None:
+            return self._get_default_value(target_type)
+            
+        if isinstance(val, str):
+            val_parsed = parse_typed_value(val)
+        else:
+            val_parsed = val
+            
+        if target_type == 'string':
+            return str(val_parsed)
+        elif target_type == 'number':
+            try:
+                if '.' in str(val_parsed):
+                    return float(val_parsed)
+                return int(val_parsed)
+            except:
+                return 0
+        elif target_type == 'boolean':
+            if isinstance(val_parsed, str):
+                return val_parsed.lower() in ('true', '1', 'yes')
+            return bool(val_parsed)
+        elif target_type == 'array':
+            if isinstance(val_parsed, list):
+                return val_parsed
+            if val_parsed:
+                return [val_parsed]
+            return []
+        elif target_type == 'object':
+            if isinstance(val_parsed, dict):
+                return val_parsed
+            return {}
+        return val_parsed
+
+    def _get_default_value(self, target_type: str) -> Any:
+        if target_type == 'array':
+            return []
+        elif target_type == 'object':
+            return {}
+        elif target_type == 'boolean':
+            return False
+        elif target_type == 'number':
+            return 0
+        return None
 
     async def _exec_http(self, config: Dict[str, Any], context: Dict[str, Any]) -> Any:
         """Execute an HTTP request block."""
