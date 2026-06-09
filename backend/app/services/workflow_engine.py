@@ -1218,10 +1218,13 @@ class WorkflowEngine:
 
         # Inject workflow metadata
         context_data['_workflow_execution'] = True
-        context_data['_workflow_context'] = {
-            k.lstrip('$'): v for k, v in context.items()
-            if k not in ('$workflow',)
-        }
+        if config.get('inject_full_context', True):
+            context_data['_workflow_context'] = {
+                k.lstrip('$'): v for k, v in context.items()
+                if k not in ('$workflow',)
+            }
+        else:
+            context_data['_workflow_context'] = {}
 
         logger.info(f"[WorkflowEngine] 🤖 Invoking agent {agent_id} with message: {message[:100]}...")
 

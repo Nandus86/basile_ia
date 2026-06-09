@@ -331,6 +331,16 @@
           class="mb-3"
           @update:model-value="emitUpdate"
         ></v-switch>
+        <v-switch
+          :model-value="config.inject_full_context !== false"
+          @update:model-value="val => { config.inject_full_context = val; emitUpdate(); }"
+          label="Injetar Contexto Completo"
+          color="primary"
+          density="compact"
+          class="mb-3"
+          hint="Se desativado, o agente não recebe o histórico de blocos do workflow por padrão (reduz o prompt)"
+          persistent-hint
+        ></v-switch>
       </template>
 
       <!-- ═══ TRANSFORM ═══ -->
