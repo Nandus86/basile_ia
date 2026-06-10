@@ -1141,22 +1141,42 @@ class WorkflowEngine:
         default_target = config.get('default_target')
 
         matched_targets = []
-        for rule in rules:
+        matched_idx = -1
+        any_matched = False
+
+        for idx, rule in enumerate(rules):
             value_a = resolve_template(rule.get('value_a'), context)
             value_b = resolve_template(rule.get('value_b'), context)
             operator = rule.get('operator', 'equals')
             target = rule.get('target_block_id')
 
             if evaluate_condition(value_a, operator, value_b):
+                any_matched = True
                 matched_targets.append(target)
+                if matched_idx == -1:
+                    matched_idx = idx
                 if mode == 'first_match':
                     break
 
         if not matched_targets and default_target:
             matched_targets = [default_target]
 
+        # Determine branch label
+        if mode == 'first_match':
+            if matched_idx != -1:
+                branch_label = f"rule_{matched_idx}"
+            else:
+                branch_label = "default"
+        else: # all_matches
+            branch_label = "match" if any_matched else "default"
+
+        # Backwards compatibility: if rules still have target_block_id text configured (legacy),
+        # fallback to returning the first matched target directly.
+        legacy_target = matched_targets[0] if matched_targets else None
+
         return {
-            '_branch': matched_targets[0] if matched_targets else None,
+            '_branch': branch_label,
+            '_legacy_target': legacy_target,
             '_all_matches': matched_targets,
             'mode': mode,
         }
@@ -1623,12 +1643,31 @@ class WorkflowEngine:
                         return target
 
             elif block_type == 'router' and branch_label:
-                return branch_label  # Router stores the block_id directly
+                # 1. Search for edge matching the handle (e.g. sourceHandle = 'rule_0' or 'match'/'default')
+                for edge in edges:
+                    if edge.get('source') == block_id and edge.get('sourceHandle') == branch_label:
+                        return edge['target']
+
+                # 2. Backwards compatibility: fallback to checking if there is an edge matching legacy target_block_id
+                legacy_target = block_result.get('_legacy_target')
+                if legacy_target:
+                    for edge in edges:
+                        if edge.get('source') == block_id and edge.get('target') == legacy_target:
+                            return legacy_target
+
+                # 3. Fallback: if branch_label happens to be the block ID itself
+                for edge in edges:
+                    if edge.get('source') == block_id and edge.get('target') == branch_label:
+                        return branch_label
 
         # Standard: follow edge from this block (no label or first available)
         for edge in edges:
             if edge.get('source') == block_id:
                 label = edge.get('label', '')
+                source_handle = edge.get('sourceHandle')
+                # Ignore edges that belong to specific conditional handles (true, false, match, default, rule_x)
+                if source_handle in ('true', 'false', 'match', 'default') or (source_handle and source_handle.startswith('rule_')):
+                    continue
                 if not label or label == '':
                     return edge['target']
 

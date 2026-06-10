@@ -246,6 +246,16 @@
           hide-details
           @update:model-value="emitUpdate"
         ></v-select>
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          <div v-if="config.mode === 'first_match'">
+            <v-icon size="14" class="mr-1">mdi-information</v-icon>
+            Conecte cada saída (Regra 1, Regra 2...) e a saída de erro (Outro) aos blocos correspondentes no canvas.
+          </div>
+          <div v-else>
+            <v-icon size="14" class="mr-1">mdi-information</v-icon>
+            Conecte as saídas Match (Verde) e Outro (Vermelho) aos blocos correspondentes no canvas.
+          </div>
+        </v-alert>
         <div v-for="(rule, idx) in (config.rules || [])" :key="idx" class="rule-item mb-3 pa-3 rounded border">
           <div class="d-flex justify-space-between align-center mb-2">
             <span class="text-caption font-weight-bold">Regra {{ idx + 1 }}</span>
@@ -256,7 +266,6 @@
           <v-text-field v-model="rule.value_a" label="Valor A" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
           <v-select v-model="rule.operator" :items="operators" label="Operador" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-select>
           <v-text-field v-model="rule.value_b" label="Valor B" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
-          <v-text-field v-model="rule.target_block_id" label="ID do bloco destino" variant="outlined" density="compact" hide-details @update:model-value="emitUpdate"></v-text-field>
         </div>
         <v-btn size="small" variant="tonal" color="primary" @click="addRule" class="mb-3">
           <v-icon start size="16">mdi-plus</v-icon> Adicionar Regra

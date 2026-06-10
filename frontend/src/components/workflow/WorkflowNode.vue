@@ -7,9 +7,31 @@
         {{ data._status }}
       </v-chip>
     </div>
-    <div class="node-body" v-if="subtitle">
-      <span class="node-subtitle">{{ subtitle }}</span>
+    <div class="node-body" v-if="subtitle || data.type === 'router'">
+      <span class="node-subtitle" v-if="subtitle">{{ subtitle }}</span>
+      
+      <!-- Router First Match list of rules -->
+      <div v-if="data.type === 'router' && data.config?.mode === 'first_match'" class="router-rules-list mt-2">
+        <div v-for="(rule, idx) in (data.config.rules || [])" :key="idx" class="router-rule-node-item d-flex align-center justify-end pr-2 text-caption font-weight-bold" style="font-size: 10px; height: 24px; color: #E5E7EB; line-height: 24px;">
+          <span>Regra {{ idx + 1 }}</span>
+        </div>
+        <!-- Fallback "Outro" -->
+        <div class="router-rule-node-item d-flex align-center justify-end pr-2 text-caption font-weight-bold" style="font-size: 10px; height: 24px; color: #EF4444; line-height: 24px;">
+          <span>Outro</span>
+        </div>
+      </div>
+      
+      <!-- Router All Matches list -->
+      <div v-if="data.type === 'router' && data.config?.mode === 'all_matches'" class="router-rules-list mt-2">
+        <div class="router-rule-node-item d-flex align-center justify-end pr-2 text-caption font-weight-bold" style="font-size: 10px; height: 24px; color: #10B981; line-height: 24px;">
+          <span>Match</span>
+        </div>
+        <div class="router-rule-node-item d-flex align-center justify-end pr-2 text-caption font-weight-bold" style="font-size: 10px; height: 24px; color: #EF4444; line-height: 24px;">
+          <span>Outro</span>
+        </div>
+      </div>
     </div>
+
     <Handle v-if="showTargetHandle" type="target" :position="Position.Left" class="handle-in" />
     <Handle v-if="showSourceHandle" type="source" :position="Position.Right" class="handle-out" />
     <!-- IF/Router: extra handles for branching -->
@@ -28,6 +50,43 @@
       id="false"
       class="handle-branch handle-false"
       :style="{ top: '65%' }"
+    />
+    <!-- Router First Match: dynamic rule handles -->
+    <Handle
+      v-if="data.type === 'router' && data.config?.mode === 'first_match'"
+      v-for="(rule, idx) in (data.config.rules || [])"
+      :key="idx"
+      type="source"
+      :position="Position.Right"
+      :id="`rule_${idx}`"
+      class="handle-branch handle-router-rule"
+      :style="{ top: `${50 + idx * 24}px` }"
+    />
+    <!-- Router First Match: fallback/default handle when no rules match -->
+    <Handle
+      v-if="data.type === 'router' && data.config?.mode === 'first_match'"
+      type="source"
+      :position="Position.Right"
+      id="default"
+      class="handle-branch handle-false"
+      :style="{ top: `${50 + (data.config.rules || []).length * 24}px` }"
+    />
+    <!-- Router All Matches: match / default handles -->
+    <Handle
+      v-if="data.type === 'router' && data.config?.mode === 'all_matches'"
+      type="source"
+      :position="Position.Right"
+      id="match"
+      class="handle-branch handle-true"
+      :style="{ top: '50px' }"
+    />
+    <Handle
+      v-if="data.type === 'router' && data.config?.mode === 'all_matches'"
+      type="source"
+      :position="Position.Right"
+      id="default"
+      class="handle-branch handle-false"
+      :style="{ top: '74px' }"
     />
   </div>
 </template>
@@ -90,7 +149,7 @@ const subtitle = computed(() => {
 })
 
 const showTargetHandle = computed(() => props.data.type !== 'trigger')
-const showSourceHandle = computed(() => props.data.type !== 'if') // IF uses branch handles
+const showSourceHandle = computed(() => props.data.type !== 'if' && props.data.type !== 'router')
 
 const statusColor = computed(() => {
   switch (props.data._status) {
@@ -188,5 +247,20 @@ const statusColor = computed(() => {
 @keyframes pulse-border {
   0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
   50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+}
+
+.handle-router-rule {
+  background: #8B5CF6 !important; /* Purple for first match router rule outputs */
+}
+.router-rules-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 4px;
+}
+.router-rule-node-item {
+  position: relative;
+  text-align: right;
+  opacity: 0.85;
 }
 </style>

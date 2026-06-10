@@ -82,6 +82,7 @@
           @pane-ready="onPaneReady"
           @node-click="onNodeClick"
           @pane-click="onPaneClick"
+          @edge-click="onEdgeClick"
           @connect="onConnect"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
@@ -96,6 +97,59 @@
           <Controls />
           <MiniMap />
         </VueFlow>
+
+        <!-- Floating Menu for Connection Line Style / Delete -->
+        <div
+          v-if="showEdgeMenu"
+          class="floating-edge-menu pa-2 rounded border"
+          :style="{
+            position: 'fixed',
+            top: `${edgeMenuPosition.y}px`,
+            left: `${edgeMenuPosition.x}px`,
+            zIndex: 9999,
+            background: 'rgba(20, 20, 30, 0.98)',
+            borderColor: 'rgba(255,255,255,0.15)',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(10px)',
+            minWidth: '220px'
+          }"
+        >
+          <div class="d-flex align-center justify-space-between mb-2 px-1">
+            <span class="text-caption font-weight-bold text-medium-emphasis" style="font-size: 9px !important; letter-spacing: 0.5px; color: #9CA3AF !important;">ESTILO DE CONEXÃO</span>
+            <v-btn icon variant="text" size="x-small" @click="showEdgeMenu = false"><v-icon size="14">mdi-close</v-icon></v-btn>
+          </div>
+          <div class="d-flex flex-wrap px-1 mb-2" style="gap: 6px;">
+            <div
+              v-for="color in connectionColors"
+              :key="color.value"
+              class="color-dot cursor-pointer"
+              :style="{
+                backgroundColor: color.value,
+                width: '20px',
+                height: '20px',
+                borderRadius: '50%',
+                border: selectedEdge?.style?.stroke === color.value ? '2px solid white' : '1px solid rgba(255,255,255,0.2)',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                transition: 'transform 0.1s'
+              }"
+              @click="setEdgeColor(color.value)"
+              :title="color.name"
+            ></div>
+          </div>
+          <v-divider class="my-2 border-opacity-25"></v-divider>
+          <v-btn
+            color="error"
+            variant="text"
+            block
+            size="small"
+            density="compact"
+            prepend-icon="mdi-trash-can"
+            @click="deleteSelectedEdge"
+            class="justify-start"
+          >
+            Excluir Conexão
+          </v-btn>
+        </div>
       </div>
 
       <!-- Properties Panel -->
@@ -452,6 +506,22 @@ const testing = ref(false)
 const testResultTab = ref('final')
 const showAdjacentBlocks = ref(false)
 
+// Floating edge styling menu variables
+const selectedEdge = ref(null)
+const edgeMenuPosition = ref({ x: 0, y: 0 })
+const showEdgeMenu = ref(false)
+const connectionColors = [
+  { name: 'Padrão', value: '#6366F1' },   // Indigo
+  { name: 'Verde', value: '#10B981' },    // Green
+  { name: 'Vermelho', value: '#EF4444' },  // Red
+  { name: 'Azul', value: '#3B82F6' },     // Blue
+  { name: 'Amarelo', value: '#F59E0B' },  // Amber/Yellow
+  { name: 'Laranja', value: '#F97316' },  // Orange
+  { name: 'Rosa', value: '#EC4899' },     // Pink
+  { name: 'Roxo', value: '#8B5CF6' },     // Purple
+  { name: 'Cinza', value: '#9CA3AF' }      // Grey
+]
+
 // Paused workflow test resumption variables
 const resuming = ref(false)
 const simulatedInputText = ref('')
@@ -638,16 +708,24 @@ async function loadWorkflow() {
         label: b.label || b.type,
         data: { type: b.type, config: b.config || {}, label: b.label },
       }))
-      edges.value = def.edges.map((e, i) => ({
-        id: e.id || `e-${i}`,
-        source: e.source,
-        target: e.target,
-        sourceHandle: e.sourceHandle || e.label || null,
-        label: e.label || '',
-        type: 'smoothstep',
-        animated: true,
-        style: { stroke: e.label === 'true' ? '#10B981' : e.label === 'false' ? '#EF4444' : '#6366F1', strokeWidth: 2 },
-      }))
+      edges.value = def.edges.map((e, i) => {
+        const sourceHandleVal = e.sourceHandle || e.label || null;
+        const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match')
+          ? '#10B981'
+          : (sourceHandleVal === 'false' || sourceHandleVal === 'default')
+            ? '#EF4444'
+            : '#6366F1';
+        return {
+          id: e.id || `e-${i}`,
+          source: e.source,
+          target: e.target,
+          sourceHandle: sourceHandleVal,
+          label: e.label || '',
+          type: 'smoothstep',
+          animated: true,
+          style: e.style || { stroke: defaultColor, strokeWidth: 2 },
+        }
+      })
       // Update counter
       for (const n of nodes.value) {
         const num = parseInt(n.id.split('_').pop())
@@ -690,11 +768,16 @@ function onDrop(event) {
 function onConnect(params) {
   const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'default'}`
   const label = params.sourceHandle || ''
+  const defaultColor = (params.sourceHandle === 'true' || params.sourceHandle === 'match')
+    ? '#10B981'
+    : (params.sourceHandle === 'false' || params.sourceHandle === 'default')
+      ? '#EF4444'
+      : '#6366F1';
   edges.value = [...edges.value, {
     id: edgeId, source: params.source, target: params.target,
     sourceHandle: params.sourceHandle, label,
     type: 'smoothstep', animated: true,
-    style: { stroke: label === 'true' ? '#10B981' : label === 'false' ? '#EF4444' : '#6366F1', strokeWidth: 2 },
+    style: { stroke: defaultColor, strokeWidth: 2 },
   }]
   markUnsaved()
 }
@@ -724,8 +807,37 @@ function onEdgesChange(changes) {
 
 function onNodeClick({ node }) {
   selectedBlock.value = { id: node.id, ...node.data }
+  showEdgeMenu.value = false
 }
-function onPaneClick() { selectedBlock.value = null }
+function onPaneClick() { 
+  selectedBlock.value = null
+  showEdgeMenu.value = false
+}
+
+function onEdgeClick({ event, edge }) {
+  event.stopPropagation()
+  selectedEdge.value = edge
+  edgeMenuPosition.value = { x: event.clientX, y: event.clientY }
+  showEdgeMenu.value = true
+}
+
+function setEdgeColor(color) {
+  if (!selectedEdge.value) return
+  const edge = edges.value.find(e => e.id === selectedEdge.value.id)
+  if (edge) {
+    edge.style = { stroke: color, strokeWidth: 3 }
+    markUnsaved()
+  }
+  showEdgeMenu.value = false
+}
+
+function deleteSelectedEdge() {
+  if (!selectedEdge.value) return
+  edges.value = edges.value.filter(e => e.id !== selectedEdge.value.id)
+  selectedEdge.value = null
+  showEdgeMenu.value = false
+  markUnsaved()
+}
 
 function onBlockUpdate(block) {
   const node = nodes.value.find(n => n.id === block.id)
@@ -797,6 +909,7 @@ async function saveDefinition() {
     const edgesDef = edges.value.map(e => ({
       id: e.id, source: e.source, target: e.target,
       sourceHandle: e.sourceHandle || null, label: e.label || '',
+      style: e.style || null,
     }))
     const definition = { 
         version: '2.0', 
