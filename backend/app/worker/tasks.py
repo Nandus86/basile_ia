@@ -2106,6 +2106,7 @@ async def _check_collaborator_workflow_shortcuts(
             "workflow_name": wf.name,
             "collaborator_name": collab.name,
             "matched_keyword": best_match["keyword"],
+            "store_in_memory": result_ctx.get("store_in_memory", True),
         }
         if result_ctx.get("status") == "paused":
             direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
@@ -2248,6 +2249,7 @@ async def _check_workflow_direct_triggers(
                 "agent_used": f"Workflow Automation ({wf.name})",
                 "workflow_name": wf.name,
                 "matched_keyword": best_match["keyword"],
+                "store_in_memory": result_ctx.get("store_in_memory", True),
             }
             if isinstance(final_result, dict):
                 # Merge all automation fields at root level
@@ -2375,6 +2377,7 @@ async def _check_global_workflow_shortcuts(
                 "agent_used": f"Workflow Automation ({wf.name})",
                 "workflow_name": wf.name,
                 "matched_keyword": best_match["keyword"],
+                "store_in_memory": result_ctx.get("store_in_memory", True),
             }
             if result_ctx.get("status") == "paused":
                 direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
@@ -2730,12 +2733,14 @@ async def process_message_task(
                         engine = WorkflowEngine(db)
                         res_ctx = await engine.resume(UUID(active_wf_run), input_data)
                         wf_name = res_ctx.get("context", {}).get("workflow", {}).get("name", "Unknown Workflow")
+                        store_in_mem = res_ctx.get("store_in_memory", True)
                         
                         # Add user message to history
-                        await redis_client.add_message(
-                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
-                            tz_name=_resolve_tz_name(transition_data)
-                        )
+                        if store_in_mem:
+                            await redis_client.add_message(
+                                session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                                tz_name=_resolve_tz_name(transition_data)
+                            )
                         
                         final_status = res_ctx.get("status")
                         if final_status == "paused":
@@ -2753,7 +2758,7 @@ async def process_message_task(
                                 else:
                                     response_text = str(final_result)
                             
-                            if response_text:
+                            if response_text and store_in_mem:
                                 await redis_client.add_message(
                                     session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
                                     tz_name=_resolve_tz_name(transition_data)
@@ -2764,7 +2769,8 @@ async def process_message_task(
                                 await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
 
                              # Save user message to MTM too
-                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                                if store_in_mem:
+                                    await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
 
                             response_data = {
                                 "status": "paused",
@@ -2792,7 +2798,7 @@ async def process_message_task(
                             else:
                                 response_text = str(final_result)
                         
-                        if response_text:
+                        if response_text and store_in_mem:
                             await redis_client.add_message(
                                 session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
                                 tz_name=_resolve_tz_name(transition_data)
@@ -2801,9 +2807,10 @@ async def process_message_task(
                         # Save to MTM
                         import uuid as _uuid
                         _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
-                        await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                        if response_text:
-                            await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+                        if store_in_mem:
+                            await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                            if response_text:
+                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
                             
                         processing_time = (time.time() - start_time) * 1000
                         response_data = {
@@ -2861,21 +2868,23 @@ async def process_message_task(
                         response_text = global_wf_response.get("response", "")
                         
                         # Save to history
-                        await redis_client.add_message(
-                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
-                            tz_name=_resolve_tz_name(transition_data)
-                        )
-                        if response_text:
+                        store_in_mem = global_wf_response.get("store_in_memory", True)
+                        if store_in_mem:
                             await redis_client.add_message(
-                                session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                session_id=session_id, role="user", content=message, ttl_seconds=86400,
                                 tz_name=_resolve_tz_name(transition_data)
                             )
-                        # Save to MTM (using a dummy fallback agent_id if none provided)
-                        import uuid
-                        _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
-                        await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                        if response_text:
-                            await _save_mtm_message(db, _save_agent_id, session_id, "assistant", str(response_text))
+                            if response_text:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                            # Save to MTM (using a dummy fallback agent_id if none provided)
+                            import uuid
+                            _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
+                            await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                            if response_text:
+                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", str(response_text))
 
                         processing_time = (time.time() - start_time) * 1000
                         response_data = {
@@ -2981,19 +2990,21 @@ async def process_message_task(
                             response_text = wf_direct_response.get("response", "")
                             
                             # Save to history
-                            await redis_client.add_message(
-                                session_id=session_id, role="user", content=message, ttl_seconds=86400,
-                                tz_name=_resolve_tz_name(transition_data)
-                            )
-                            if response_text:
+                            store_in_mem = wf_direct_response.get("store_in_memory", True)
+                            if store_in_mem:
                                 await redis_client.add_message(
-                                    session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                    session_id=session_id, role="user", content=message, ttl_seconds=86400,
                                     tz_name=_resolve_tz_name(transition_data)
                                 )
-                            # Save to MTM
-                            await _save_mtm_message(db, str(agent.id), session_id, "user", message)
-                            if response_text:
-                                await _save_mtm_message(db, str(agent.id), session_id, "assistant", str(response_text))
+                                if response_text:
+                                    await redis_client.add_message(
+                                        session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                        tz_name=_resolve_tz_name(transition_data)
+                                    )
+                                # Save to MTM
+                                await _save_mtm_message(db, str(agent.id), session_id, "user", message)
+                                if response_text:
+                                    await _save_mtm_message(db, str(agent.id), session_id, "assistant", str(response_text))
 
                             processing_time = (time.time() - start_time) * 1000
                             # Build response_data: merge ALL automation fields at root level
@@ -3568,10 +3579,11 @@ async def process_message_task(
                 print(f"[Task] ⚡ Direct payload bypass from collaborator workflow — skipping primary LLM")
                 
                 response_text = direct_data.get("response", "")
+                store_in_mem = direct_data.get("store_in_memory", True)
                 
                 # Save to history
                 user_tz_name = _resolve_tz_name(transition_data)
-                if stm_enabled:
+                if stm_enabled and store_in_mem:
                     await redis_client.add_message(
                         session_id=session_id, role="user", content=message, ttl_seconds=stm_ttl_seconds,
                         tz_name=user_tz_name
@@ -3582,7 +3594,7 @@ async def process_message_task(
                             tz_name=user_tz_name
                         )
                 # Save to MTM
-                if agent_id and session_id:
+                if agent_id and session_id and store_in_mem:
                     if response_text:
                         await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
                 
@@ -3672,7 +3684,11 @@ async def process_message_task(
                 
                 agent_used = f"{agent_config.get('name', 'Unknown')} (Bypass Automation)" if wf_result is not None else f"{agent_config.get('name', 'Unknown')} (Passthrough)"
                 
-                if output_text.strip():
+                store_in_mem = True
+                if 'result_ctx' in locals() and isinstance(result_ctx, dict):
+                    store_in_mem = result_ctx.get("store_in_memory", True)
+
+                if output_text.strip() and store_in_mem:
                     if stm_enabled:
                         await redis_client.add_message(
                             session_id=session_id, role="assistant",
@@ -3681,6 +3697,25 @@ async def process_message_task(
                         )
                     if agent_id and session_id:
                         await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
+                elif not store_in_mem:
+                    # Clean up user message we saved earlier
+                    try:
+                        from app.models.conversation_message import ConversationMessage
+                        from sqlalchemy import delete as sa_delete
+                        import uuid
+                        await db.execute(
+                            sa_delete(ConversationMessage)
+                            .where(
+                                ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
+                                ConversationMessage.session_id == str(session_id),
+                                ConversationMessage.role == "user",
+                                ConversationMessage.content == message
+                            )
+                        )
+                        await db.commit()
+                        print(f"[Task] 🧹 Cleaned up user message from MTM because workflow output memory is disabled.")
+                    except Exception as clean_err:
+                        print(f"[Task] ⚠️ Error cleaning up user message from MTM: {clean_err}")
 
                 processing_time = (time.time() - start_time) * 1000
                 wf_status = "completed"

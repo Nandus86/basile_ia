@@ -549,6 +549,16 @@
         <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
           Este bloco define a resposta a ser enviada no payload de saída, retornando o resultado do bloco anterior.
         </v-alert>
+        <v-switch
+          :model-value="config.store_in_memory !== false"
+          @update:model-value="val => { config.store_in_memory = val; emitUpdate(); }"
+          label="Salvar Saída no Histórico/Memória"
+          color="primary"
+          density="compact"
+          class="mb-3"
+          hint="Se desativado, a resposta final deste workflow não será salva no histórico de conversas do banco de dados (MTM) e da memória de curto prazo (Redis)."
+          persistent-hint
+        ></v-switch>
       </template>
 
       <!-- ═══ SUB-WORKFLOW ═══ -->

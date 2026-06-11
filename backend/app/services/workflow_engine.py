@@ -722,6 +722,13 @@ class WorkflowEngine:
         recursion_depth: int = 0,
     ) -> Dict[str, Any]:
         t0 = time.time()
+        # Find response block to check if we should store in memory
+        store_in_memory = True
+        for b in blocks.values():
+            if b.get('type') == 'response':
+                store_in_memory = b.get('config', {}).get('store_in_memory', True)
+                break
+
         last_output_key = None
         # Try to find the last output key from existing context/blocks_log if resuming
         if blocks_log:
@@ -787,6 +794,7 @@ class WorkflowEngine:
                         'current_block_id': pe.block_id,
                         'context': clean_context,
                         'result': current_result,
+                        'store_in_memory': store_in_memory,
                     }
                 except Exception as e:
                     block_status = "failed"
@@ -863,6 +871,7 @@ class WorkflowEngine:
                 'context': clean_context,
                 'status': 'completed',
                 'last_block': last_output_key,
+                'store_in_memory': store_in_memory,
             }
 
         except Exception as e:
