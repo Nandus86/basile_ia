@@ -305,6 +305,13 @@ Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}.
                 
                 print(f"[Supervisor] ✅ Loop agent '{agent_name}' responded")
                 
+                # Check for direct payload result from loop agent
+                if isinstance(response, str) and '"__direct_payload"' in response:
+                    print(f"[Supervisor] ⚡ Direct payload detected in loop agent response — stopping supervisor loop")
+                    state["final_response"] = response
+                    state["next_action"] = "end"
+                    return state
+
                 # After loop execution, go back to evaluate
                 state["next_action"] = "evaluate"
                 
@@ -500,6 +507,13 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
             
             print(f"[Supervisor] ✅ {agent_name} responded")
             
+            # Check for direct payload result
+            if isinstance(response, str) and '"__direct_payload"' in response:
+                print(f"[Supervisor] ⚡ Direct payload detected in agent response — stopping supervisor immediately")
+                state["final_response"] = response
+                state["next_action"] = "end"
+                return state
+
             # Decide next step: evaluate (for orchestrators with loop) or synthesize (simple agents)
             is_orchestrator = getattr(agent_model, "is_orchestrator", False) if agent_model else False
             has_collaboration = agent_config.get("collaboration_enabled", False)

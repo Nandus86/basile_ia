@@ -891,6 +891,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 return called
 
             async def call_model_node(state: AgentExecState):
+                if agent_config.get("__direct_payload_result"):
+                    return {"messages": [AIMessage(content="[DIRECT_PAYLOAD_BYPASS_STOP]")]}
+
                 if not budget.can_continue():
                     return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
 
@@ -913,6 +916,9 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
 
             def should_continue_edge(state: AgentExecState) -> str:
                 """Aresta do agente: se o LLM não pediu nenhuma tool, verifica se always_end está pendente."""
+                if agent_config.get("__direct_payload_result"):
+                    return END
+
                 last_msg = state["messages"][-1]
                 if not getattr(last_msg, "tool_calls", None):
                     called_tools = _get_called_tool_names(state)

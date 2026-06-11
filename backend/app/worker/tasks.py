@@ -636,7 +636,7 @@ async def _enrich_agent_prompt(
 
         try:
             collab_tools, mandatory_instructions, deterministic_matches, always_start, always_end = await _build_collaborator_tools(
-                db, agent_model, message, context_data, user_access_level=user_access_level
+                db, agent_model, message, context_data, user_access_level=user_access_level, agent_config=agent_config
             )
 
             if deterministic_matches:
@@ -1156,6 +1156,7 @@ async def _build_collaborator_tools(
     message: str,
     context_data: Optional[Dict[str, Any]] = None,
     user_access_level: str = "normal",
+    agent_config: Optional[Dict[str, Any]] = None,
 ) -> tuple[list, list, list, list, list]:
     """
     Build LangChain tools from an orchestrator's collaborators.
@@ -1307,7 +1308,7 @@ async def _build_collaborator_tools(
         # which StructuredTool.from_function included in the args_schema,
         # confusing the LLM into NOT calling the tool.
         def _make_collab_invoker(
-            _agent, _database, _ctx, _planner_enabled, _p_prompt, _p_model, _r_style
+            _agent, _database, _ctx, _planner_enabled, _p_prompt, _p_model, _r_style, _parent_config
         ):
             async def _invoke_collab(instrucao: str) -> str:
                 """Invoke a collaborator agent with the given instruction."""
@@ -1357,6 +1358,8 @@ async def _build_collaborator_tools(
                             if isinstance(wf_direct, dict) and wf_direct.get("__direct_payload"):
                                 import json as _wf_json
                                 print(f"[CollabTool] ⚡ Workflow direct payload bypass for '{_agent.name}'")
+                                if _parent_config is not None:
+                                    _parent_config["__direct_payload_result"] = wf_direct
                                 return _wf_json.dumps(wf_direct, ensure_ascii=False)
                             elif isinstance(wf_direct, str):
                                 print(f"[CollabTool] ⚡ Workflow trigger bypass for '{_agent.name}'")
@@ -1373,6 +1376,19 @@ async def _build_collaborator_tools(
                         response_style=_r_style,
                     )
                     print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
+                    
+                    # Intercept direct payload in the collaborator's final response
+                    if response and isinstance(response, str) and '"__direct_payload"' in response:
+                        import json as _dp_json
+                        try:
+                            parsed = _dp_json.loads(response)
+                            if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                                print(f"[CollabTool] ⚡ Direct payload response from collaborator '{name}' intercepted")
+                                if _parent_config is not None:
+                                    _parent_config["__direct_payload_result"] = parsed
+                        except Exception:
+                            pass
+
                     # NOTE: Do NOT sanitize here — the orchestrator LLM needs the full
                     # structured data (achados/dados/recomendacao) to synthesize the
                     # final response. Sanitization happens at the final output stage
@@ -1391,6 +1407,7 @@ async def _build_collaborator_tools(
             _p_prompt=getattr(collab, "planner_prompt", None),
             _p_model=getattr(collab, "planner_model", None),
             _r_style=getattr(collab, "response_style", "structured"),
+            _parent_config=agent_config,
         )
 
         tool = StructuredTool.from_function(
@@ -3032,6 +3049,42 @@ async def process_message_task(
                 agent_used = result.get("agent_used")
                 last_agent = result.get("last_agent")
 
+                # Check for direct payload in supervisor response
+                if isinstance(final_result, str) and '"__direct_payload"' in final_result:
+                    import json as _dp_json
+                    try:
+                        parsed = _dp_json.loads(final_result)
+                        if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                            print(f"[Task] ⚡ Direct payload detected in supervisor response — intercepting")
+                            
+                            processing_time = (time.time() - start_time) * 1000
+                            response_data = {
+                                "status": parsed.get("status", "completed"),
+                                "processing_time_ms": processing_time,
+                            }
+                            # Merge all keys except internal marker and status
+                            for k, v in parsed.items():
+                                if k not in ("__direct_payload", "status"):
+                                    response_data[k] = v
+                                    
+                            response_text = parsed.get("response", "")
+                            if response_text:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant",
+                                    content=str(response_text), ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                                await _save_mtm_message(db, fallback_agent_id, session_id, "assistant", str(response_text))
+                            
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+                            if callback_url:
+                                await _send_callback(callback_url, response_data)
+                            return response_data
+                    except Exception as _dp_err:
+                        print(f"[Task] ⚠️ Failed to parse direct payload from supervisor response: {_dp_err}")
+
                 if "[FIM_DE_INTERACAO]" in str(final_result):
                     final_result = ""
                     print(f"[Task] 🛑 Interação finalizada silenciosamente pelo supervisor")
@@ -3653,6 +3706,38 @@ async def process_message_task(
                 except asyncio.TimeoutError:
                     print(f"[Task] ⏱️ Agent execution timed out after {timeout_seconds}s")
                     raise
+
+                # ── Check if direct payload config result was set (e.g. from collaborator tool execution) ──
+                if agent_config and agent_config.get("__direct_payload_result"):
+                    parsed = agent_config["__direct_payload_result"]
+                    print(f"[Task] ⚡ Direct payload detected from agent_config — intercepting and returning immediately")
+                    
+                    processing_time = (time.time() - start_time) * 1000
+                    response_data = {
+                        "status": parsed.get("status", "completed"),
+                        "processing_time_ms": processing_time,
+                    }
+                    # Merge all keys except internal marker and status
+                    for k, v in parsed.items():
+                        if k not in ("__direct_payload", "status"):
+                            response_data[k] = v
+                            
+                    response_text = parsed.get("response", "")
+                    if response_text and stm_enabled:
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant",
+                            content=str(response_text), ttl_seconds=stm_ttl_seconds,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                    if response_text and agent_id and session_id:
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
+                    
+                    response_transition_data = _merge_transition_data(transition_data, context_data)
+                    if response_transition_data:
+                        response_data["transition_data"] = response_transition_data
+                    if callback_url:
+                        await _send_callback(callback_url, response_data)
+                    return response_data
 
                 # ── Check if orchestrator output contains __direct_payload from collaborator tool ──
                 if isinstance(output_text, str) and '"__direct_payload"' in output_text:
