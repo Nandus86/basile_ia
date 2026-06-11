@@ -1537,7 +1537,7 @@ async def _build_workflow_tools(
             name=tool_name,
             description=tool_desc,
             args_schema=DynamicInput,
-            return_direct=False,
+            return_direct=getattr(wf, "return_direct_payload", False),
         )
         tools.append(tool)
         print(f"[Task] ⚙️ Workflow tool created: {tool_name} → '{wf.name}' ({len(blocks)} blocks)")
