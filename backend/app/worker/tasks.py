@@ -762,7 +762,7 @@ async def _enrich_agent_prompt(
                 )
 
             # 2. Build standard workflow tools
-            wf_tools = await _build_workflow_tools(db, agent_model, context_data)
+            wf_tools = await _build_workflow_tools(db, agent_model, context_data, agent_config=agent_config)
             if wf_tools:
                 existing_tools = agent_config.get("tools", []) or []
                 agent_config["tools"] = existing_tools + wf_tools
@@ -1437,6 +1437,7 @@ async def _build_workflow_tools(
     db,
     agent_model,
     context_data: Optional[Dict[str, Any]] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
 ) -> list:
     """
     Build LangChain tools from an agent's linked workflows.
@@ -1500,7 +1501,7 @@ async def _build_workflow_tools(
         if len(tool_desc) > 1000:
             tool_desc = tool_desc[:997] + "..."
 
-        def _make_workflow_invoker(_wf_id, _wf_name, _database, _ctx):
+        def _make_workflow_invoker(_wf_id, _wf_name, _database, _ctx, _parent_config, _wf):
             async def _invoke_workflow(**kwargs) -> str:
                 """Invoke a workflow automation with the given payload and AI parameters."""
                 try:
@@ -1532,6 +1533,35 @@ async def _build_workflow_tools(
 
                     # Use the clean final result (last block output only)
                     final_result = result_ctx.get('result')
+
+                    is_direct = getattr(_wf, "return_direct_payload", False)
+                    if is_direct:
+                        direct_payload = {
+                            "__direct_payload": True,
+                            "status": result_ctx.get("status", "completed"),
+                            "agent_used": f"Workflow Automation ({_wf_name})",
+                            "workflow_name": _wf_name,
+                        }
+                        if result_ctx.get("status") == "paused":
+                            direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
+                        
+                        if isinstance(final_result, dict):
+                            direct_payload.update(final_result)
+                            if "response" not in direct_payload:
+                                direct_payload["response"] = _json.dumps(final_result, ensure_ascii=False)
+                        elif isinstance(final_result, list):
+                            direct_payload["response"] = _json.dumps(final_result, ensure_ascii=False)
+                            direct_payload["data"] = final_result
+                        elif final_result is not None:
+                            direct_payload["response"] = str(final_result)
+                        else:
+                            direct_payload["response"] = f"Automação '{_wf_name}' executada com sucesso."
+                        
+                        print(f"[WorkflowTool] ⚡ return_direct_payload is True -> flagging parent config")
+                        if _parent_config is not None:
+                            _parent_config["__direct_payload_result"] = direct_payload
+                        return _json.dumps(direct_payload, ensure_ascii=False)
+
                     if final_result is not None:
                         return f"Automação '{_wf_name}' executada com sucesso.\n\nResultado:\n{_json.dumps(final_result, ensure_ascii=False, indent=2)}"
 
@@ -1547,6 +1577,8 @@ async def _build_workflow_tools(
             _wf_name=wf.name,
             _database=db,
             _ctx=context_data,
+            _parent_config=agent_config,
+            _wf=wf,
         )
 
         tool = StructuredTool.from_function(

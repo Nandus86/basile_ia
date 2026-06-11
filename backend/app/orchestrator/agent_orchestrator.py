@@ -305,7 +305,7 @@ Responda APENAS em JSON válido com este formato exato:
                 )
 
             # 2. Build standard workflow tools
-            wf_tools = await _build_workflow_tools(self.db, agent, context_data)
+            wf_tools = await _build_workflow_tools(self.db, agent, context_data, agent_config=agent_config)
             if wf_tools:
                 existing_tools = agent_config.get("tools", []) or []
                 agent_config["tools"] = existing_tools + wf_tools

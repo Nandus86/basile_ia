@@ -128,7 +128,7 @@ async def run_swarm(
             member_tools = member_config.get("tools", []) or []
             
             # Retrieve linked workflows as tools
-            wf_tools = await _build_workflow_tools(db, member, context_data)
+            wf_tools = await _build_workflow_tools(db, member, context_data, agent_config=member_config)
             if wf_tools:
                 member_tools = list(member_tools) + wf_tools
                 
