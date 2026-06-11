@@ -2693,9 +2693,14 @@ async def process_message_task(
     import json
     start_time = time.time()
     
+    if context_data is None:
+        context_data = {}
+    if session_id and "session_id" not in context_data:
+        context_data["session_id"] = session_id
+
     # Set request context for deep services (MCP tools)
     from app.context import set_request_context
-    set_request_context(context_data or {})
+    set_request_context(context_data)
 
     agent = None
     agent_config = None

@@ -297,8 +297,9 @@ async def process_message_structured(
     for k, v in full_payload.items():
         if k not in standard_keys:
             c_data[k] = v
-    if c_data:
-        request.context_data = c_data
+    if request.session_id and "session_id" not in c_data:
+        c_data["session_id"] = request.session_id
+    request.context_data = c_data
     
     try:
         # Initialize factory and resolve STM
@@ -700,8 +701,9 @@ async def process_message_stream(
             for k, v in full_payload.items():
                 if k not in standard_keys:
                     c_data[k] = v
-            if c_data:
-                request.context_data = c_data
+            if request.session_id and "session_id" not in c_data:
+                c_data["session_id"] = request.session_id
+            request.context_data = c_data
                 
             context_data = request.context_data or {}
             transition_data = request.transition_data or {}
