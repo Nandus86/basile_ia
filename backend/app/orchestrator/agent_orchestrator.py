@@ -295,7 +295,7 @@ Responda APENAS em JSON válido com este formato exato:
             from app.worker.tasks import _build_workflow_tools, _execute_startup_workflows
             
             # 1. Execute auto-run workflows first (Pre-hooks)
-            startup_results = await _execute_startup_workflows(self.db, agent, context_data)
+            startup_results = await _execute_startup_workflows(self.db, agent, context_data, agent_config=agent_config)
             if startup_results:
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                     f"\n\n## 🔄 DADOS PRÉ-CARREGADOS (AUTOMAÇÕES DE INÍCIO)\n"
@@ -691,6 +691,11 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
                 )
             
             print(f"[Orchestrator] ✅ Collaborator '{agent.name}' responded")
+
+            if agent_config and agent_config.get("__direct_payload_result"):
+                wf_direct = agent_config["__direct_payload_result"]
+                print(f"[Orchestrator] ⚡ Collaborator '{agent.name}' run flagged direct payload post-invoke")
+                return (agent.name, json.dumps(wf_direct, ensure_ascii=False))
 
             # Sanitize structured JSON responses (achados/dados/recomendacao)
             # to prevent raw internal JSON from reaching the orchestrator or end user

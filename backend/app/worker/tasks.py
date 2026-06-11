@@ -664,6 +664,17 @@ async def _enrich_agent_prompt(
                     response_style=getattr(selected_collab, "response_style", "structured"),
                 )
 
+                if collab_response and isinstance(collab_response, str) and '"__direct_payload"' in collab_response:
+                    import json as _dp_json
+                    try:
+                        parsed = _dp_json.loads(collab_response)
+                        if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                            print(f"[Task] ⚡ True trigger collaborator '{collab_name}' returned direct payload — flagging agent_config")
+                            if agent_config is not None:
+                                agent_config["__direct_payload_result"] = parsed
+                    except Exception as _dp_err:
+                        print(f"[Task] ⚠️ Failed to parse direct payload from true trigger: {_dp_err}")
+
                 if collab_response:
                     filtered_tools = []
                     for tool in collab_tools:
@@ -752,7 +763,7 @@ async def _enrich_agent_prompt(
     if agent_model:
         try:
             # 1. Execute auto-run workflows first (Pre-hooks)
-            startup_results = await _execute_startup_workflows(db, agent_model, context_data)
+            startup_results = await _execute_startup_workflows(db, agent_model, context_data, agent_config=agent_config)
             if startup_results:
                 agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
                     f"\n\n## 🔄 DADOS PRÉ-CARREGADOS (AUTOMAÇÕES DE INÍCIO)\n"
@@ -1597,6 +1608,7 @@ async def _execute_startup_workflows(
     db,
     agent_model,
     context_data: Optional[Dict[str, Any]] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Executes workflows marked with 'auto_run' = true on agent startup.
@@ -1643,6 +1655,34 @@ async def _execute_startup_workflows(
             
             # Use the clean final result (last block output only)
             final_result = exec_result.get('result') or exec_result.get('context', {})
+            
+            is_direct = getattr(wf, "return_direct_payload", False)
+            if is_direct:
+                direct_payload = {
+                    "__direct_payload": True,
+                    "status": exec_result.get("status", "completed"),
+                    "agent_used": f"Workflow Automation ({wf.name})",
+                    "workflow_name": wf.name,
+                }
+                if exec_result.get("status") == "paused":
+                    direct_payload["execution_id"] = str(exec_result.get("execution_id"))
+                
+                if isinstance(final_result, dict):
+                    direct_payload.update(final_result)
+                    if "response" not in direct_payload:
+                        direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+                elif isinstance(final_result, list):
+                    direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+                    direct_payload["data"] = final_result
+                elif final_result is not None:
+                    direct_payload["response"] = str(final_result)
+                else:
+                    direct_payload["response"] = f"Automação '{wf.name}' executada com sucesso."
+                
+                print(f"[Startup Workflow] ⚡ return_direct_payload is True -> flagging agent config")
+                if agent_config is not None:
+                    agent_config["__direct_payload_result"] = direct_payload
+
             results_str += f"\n### Resultado da Automação: {wf.name}\n```json\n{json.dumps(final_result, ensure_ascii=False, indent=2)}\n```\n"
         except Exception as e:
             print(f"[Startup Workflow] Failed to execute {wf.name}: {e}")
