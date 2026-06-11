@@ -2534,26 +2534,35 @@ async def _check_trigger_mcps(
 # Anti-Bot Guard — detect AI/bot interlocutors
 # ─────────────────────────────────────────────────────────────
 
-async def _check_anti_bot_guard(session_id: str, history: list) -> bool:
+async def _check_anti_bot_guard(session_id: str, history: list, agent_config: Optional[dict] = None) -> bool:
     """
     Anti-Bot Guard: every 5 user messages, analyze if interlocutor is a bot.
     Returns True if the session should be BLOCKED (bot detected), False otherwise.
     """
     try:
+        # Load config from agent advanced configuration
+        antibot_cfg = agent_config.get("antibot", {}) if agent_config else {}
+        if not antibot_cfg.get("enabled", True):
+            return False
+
+        check_every = int(antibot_cfg.get("check_every_messages", 5))
+        if check_every <= 0:
+            return False
+
         # Increment counter
         count = await redis_client.increment_antibot_counter(session_id)
 
-        # Only check every 5 messages
-        if count % 5 != 0:
+        # Only check every N messages
+        if count % check_every != 0:
             return False
 
-        # Collect only user messages from history (last 5)
+        # Collect only user messages from history (last N)
         user_messages = [
             msg.get("content", "") for msg in history
             if msg.get("role") == "user"
-        ][-5:]
+        ][-check_every:]
 
-        if len(user_messages) < 5:
+        if len(user_messages) < check_every:
             return False
 
         # Build analysis prompt
@@ -3284,7 +3293,7 @@ async def process_message_task(
                         }
 
                     # Periodic check every 5 messages
-                    is_bot = await _check_anti_bot_guard(session_id, history)
+                    is_bot = await _check_anti_bot_guard(session_id, history, agent_config)
                     if is_bot:
                         print(f"[AntiBot] 🚫 Session {session_id} just got BLOCKED. Returning silence.")
                         processing_time = (time.time() - start_time) * 1000
