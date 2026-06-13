@@ -544,6 +544,15 @@ class WorkflowEngine:
         if not blocks:
             raise ValueError(f"Workflow '{workflow.name}' has no blocks defined")
 
+        # Proactively unwrap nested test payloads (e.g., if trigger_data is wrapped in block_1/payload)
+        trigger_block = self._find_trigger_block(blocks)
+        if trigger_block and isinstance(trigger_data, dict):
+            tb_id = trigger_block['id']
+            if tb_id in trigger_data and isinstance(trigger_data[tb_id], dict) and 'payload' in trigger_data[tb_id]:
+                trigger_data = trigger_data[tb_id]['payload']
+            elif 'payload' in trigger_data and len(trigger_data) == 1 and isinstance(trigger_data['payload'], dict):
+                trigger_data = trigger_data['payload']
+
         # Create execution record
         execution = WorkflowExecution(
             workflow_id=workflow_id,
@@ -634,6 +643,16 @@ class WorkflowEngine:
         # Restore reference sharing for the trigger block output key
         trigger_block = self._find_trigger_block(blocks)
         if trigger_block:
+            # Proactively unwrap nested test payloads in trigger context if found
+            if '$trigger' in context and isinstance(context['$trigger'], dict):
+                payload = context['$trigger'].get('payload')
+                tb_id = trigger_block['id']
+                if isinstance(payload, dict):
+                    if tb_id in payload and isinstance(payload[tb_id], dict) and 'payload' in payload[tb_id]:
+                        context['$trigger']['payload'] = payload[tb_id]['payload']
+                    elif 'payload' in payload and len(payload) == 1 and isinstance(payload['payload'], dict):
+                        context['$trigger']['payload'] = payload['payload']
+
             trigger_output_key = trigger_block.get('config', {}).get('output_key', trigger_block['id'])
             if '$trigger' in context:
                 context[f'${trigger_output_key}'] = context['$trigger']
