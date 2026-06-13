@@ -155,6 +155,7 @@ async def duplicate_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_d
 async def execute_workflow(
     workflow_id: UUID,
     request: WorkflowExecuteRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -171,6 +172,32 @@ async def execute_workflow(
             trigger_data=request.trigger_data,
             trigger_type="manual",
         )
+
+        # Check for early response
+        if isinstance(result_context, dict) and result_context.get("status") == "early_response":
+            exec_id = result_context.get("execution_id")
+            next_block = result_context.get("current_block_id")
+            early_result = result_context.get("result")
+            # Schedule the remaining background execution
+            background_tasks.add_task(engine.continue_background_execution, exec_id, next_block)
+            
+            # Return early to caller as if it's completed
+            exec_result = await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == exec_id))
+            execution = exec_result.scalar_one_or_none()
+            if execution:
+                return WorkflowExecutionResponse(
+                    id=execution.id,
+                    workflow_id=execution.workflow_id,
+                    status="completed",
+                    result=early_result,
+                    context=result_context.get("context", {}),
+                    current_block_id=execution.current_block_id,
+                    blocks_executed=execution.blocks_executed,
+                    duration_ms=execution.duration_ms,
+                    error_message=execution.error_message,
+                    started_at=execution.started_at,
+                    completed_at=execution.completed_at
+                )
 
         # Fetch the execution record
         exec_result = await db.execute(
@@ -372,6 +399,7 @@ async def test_single_block(
 async def resume_workflow_execution(
     execution_id: UUID,
     request: WorkflowExecuteRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -387,6 +415,31 @@ async def resume_workflow_execution(
             execution_id=execution_id,
             input_data=request.trigger_data,
         )
+
+        # Check for early response
+        if isinstance(result_context, dict) and result_context.get("status") == "early_response":
+            next_block = result_context.get("current_block_id")
+            early_result = result_context.get("result")
+            # Schedule the remaining background execution
+            background_tasks.add_task(engine.continue_background_execution, execution_id, next_block)
+            
+            # Return early to caller as if it's completed
+            result = await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))
+            execution = result.scalar_one_or_none()
+            if execution:
+                return WorkflowExecutionResponse(
+                    id=execution.id,
+                    workflow_id=execution.workflow_id,
+                    status="completed",
+                    result=early_result,
+                    context=result_context.get("context", {}),
+                    current_block_id=execution.current_block_id,
+                    blocks_executed=execution.blocks_executed,
+                    duration_ms=execution.duration_ms,
+                    error_message=execution.error_message,
+                    started_at=execution.started_at,
+                    completed_at=execution.completed_at
+                )
 
         # Fetch the updated execution record
         result = await db.execute(

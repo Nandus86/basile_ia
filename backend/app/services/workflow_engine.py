@@ -450,6 +450,14 @@ class WorkflowPauseException(Exception):
         super().__init__(f"Workflow paused at block {block_id}")
 
 
+class WorkflowEarlyResponseException(Exception):
+    """Exception raised when a response block forces an early return to the caller, while continuing in background."""
+    def __init__(self, result: Any, next_block_id: str):
+        self.result = result
+        self.next_block_id = next_block_id
+        super().__init__(f"Early response ready. Next block: {next_block_id}")
+
+
 # ─────────────────────────────────────────────────────────────
 # Main Engine
 # ─────────────────────────────────────────────────────────────
@@ -538,6 +546,14 @@ class WorkflowEngine:
                 edges=edges,
                 blocks_log=blocks_log,
             )
+        except WorkflowEarlyResponseException as early:
+            return {
+                'status': 'early_response',
+                'execution_id': execution.id,
+                'current_block_id': early.next_block_id,
+                'context': {k.lstrip('$'): v for k, v in context.items()},
+                'result': early.result,
+            }
         except Exception as e:
             execution.status = "failed"
             execution.error_message = f"{type(e).__name__}: {str(e)}"
@@ -702,14 +718,23 @@ class WorkflowEngine:
         logger.info(f"[WorkflowEngine] ▶️ Resuming workflow execution {execution_id} at block {next_block_id}")
         
         # Run execution loop starting from the next block
-        return await self._run_execution_loop(
-            execution=execution,
-            context=context,
-            current_block_id=next_block_id,
-            blocks=blocks,
-            edges=edges,
-            blocks_log=blocks_log,
-        )
+        try:
+            return await self._run_execution_loop(
+                execution=execution,
+                context=context,
+                current_block_id=next_block_id,
+                blocks=blocks,
+                edges=edges,
+                blocks_log=blocks_log,
+            )
+        except WorkflowEarlyResponseException as early:
+            return {
+                'status': 'early_response',
+                'execution_id': execution.id,
+                'current_block_id': early.next_block_id,
+                'context': {k.lstrip('$'): v for k, v in context.items()},
+                'result': early.result,
+            }
 
     async def _run_execution_loop(
         self,
@@ -835,6 +860,19 @@ class WorkflowEngine:
                 next_block_id = self._resolve_next(
                     block, block_result, context, edges
                 )
+                
+                if block.get('type') == 'response' and next_block_id:
+                    # Update state in DB before throwing so the background task has the latest logs
+                    execution.status = "running"
+                    execution.current_block_id = next_block_id
+                    clean_context = {k.lstrip('$'): v for k, v in context.items()}
+                    execution.context = make_json_safe(clean_context)
+                    execution.blocks_executed = make_json_safe(blocks_log)
+                    await self.db.commit()
+                    
+                    logger.info(f"[WorkflowEngine] 🚀 Early response triggered at '{current_block_id}', returning result and continuing in background from '{next_block_id}'")
+                    raise WorkflowEarlyResponseException(block_result, next_block_id)
+
                 current_block_id = next_block_id
 
             # Success
