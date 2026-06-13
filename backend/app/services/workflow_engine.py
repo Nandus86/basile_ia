@@ -1006,10 +1006,15 @@ class WorkflowEngine:
     ) -> Any:
         """Execute a response block, returning the last executed block's output."""
         if not last_output_key:
-            return context.get('$trigger', {}).get('payload', {})
+            val = context.get('$trigger', {}).get('payload', {})
+            logger.info(f"[WorkflowEngine] 📤 Response block fired. No previous block found, outputting trigger payload: {str(val)[:200]}")
+            return val
+            
         val = context.get(f'${last_output_key}')
         if val is None:
             val = context.get(last_output_key)
+            
+        logger.info(f"[WorkflowEngine] 📤 Response block fired. Captured output from previous block '{last_output_key}': {str(val)[:200]}")
         return val
 
     async def _exec_variables(self, config: Dict[str, Any], context: Dict[str, Any], block_id: str) -> Any:
