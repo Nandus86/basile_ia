@@ -960,9 +960,14 @@ async function submitSimulatedResponse(responseVal) {
   resuming.value = true
   try {
     const execId = testResult.value.execution_id
+    // Mirror production resume format: include button_response fields
+    // that routers/conditions may check (populated by WhatsApp infra in prod)
     const payload = {
       trigger_data: {
-        message: responseVal
+        message: responseVal,
+        button_response: responseVal,
+        global: { button_response: responseVal },
+        system: { button_response: responseVal },
       }
     }
     const res = await axios.post(`/workflows/executions/${execId}/resume`, payload)

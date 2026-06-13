@@ -395,54 +395,6 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
     typed_a = parse_typed_value(value_a) if isinstance(value_a, str) else value_a
     typed_b = parse_typed_value(value_b) if isinstance(value_b, str) else value_b
 
-    # Dictionary fallback check: if one value is a dict and the other is a string,
-    # extract candidate text values from the dict to compare.
-    if isinstance(typed_a, dict) and isinstance(typed_b, str):
-        candidates = []
-        for k in ['message', 'button_response', 'value']:
-            if k in typed_a and isinstance(typed_a[k], str):
-                candidates.append(typed_a[k])
-        for nest in ['global', 'system']:
-            if nest in typed_a and isinstance(typed_a[nest], dict):
-                btn_resp = typed_a[nest].get('button_response')
-                if isinstance(btn_resp, str):
-                    candidates.append(btn_resp)
-        if op in ('equals', 'eq', '=='):
-            if any(c == typed_b for c in candidates):
-                return True
-        elif op in ('contains',):
-            if any(typed_b in c for c in candidates):
-                return True
-        elif op in ('starts_with',):
-            if any(c.startswith(typed_b) for c in candidates):
-                return True
-        elif op in ('ends_with',):
-            if any(c.endswith(typed_b) for c in candidates):
-                return True
-
-    elif isinstance(typed_b, dict) and isinstance(typed_a, str):
-        candidates = []
-        for k in ['message', 'button_response', 'value']:
-            if k in typed_b and isinstance(typed_b[k], str):
-                candidates.append(typed_b[k])
-        for nest in ['global', 'system']:
-            if nest in typed_b and isinstance(typed_b[nest], dict):
-                btn_resp = typed_b[nest].get('button_response')
-                if isinstance(btn_resp, str):
-                    candidates.append(btn_resp)
-        if op in ('equals', 'eq', '=='):
-            if any(typed_a == c for c in candidates):
-                return True
-        elif op in ('contains',):
-            if any(c in typed_a for c in candidates):
-                return True
-        elif op in ('starts_with',):
-            if any(typed_a.startswith(c) for c in candidates):
-                return True
-        elif op in ('ends_with',):
-            if any(typed_a.endswith(c) for c in candidates):
-                return True
-
     # String coercions for comparison based on typed values
     str_a = str(typed_a) if typed_a is not None else ''
     str_b = str(typed_b) if typed_b is not None else ''
@@ -544,19 +496,6 @@ class WorkflowEngine:
         if not blocks:
             raise ValueError(f"Workflow '{workflow.name}' has no blocks defined")
 
-        # Proactively unwrap nested test payloads (e.g., if trigger_data is wrapped in block_x/payload)
-        trigger_block = self._find_trigger_block(blocks)
-        if trigger_block and isinstance(trigger_data, dict):
-            block_key = None
-            for k in trigger_data.keys():
-                if (k.startswith('block_') or k == 'trigger') and isinstance(trigger_data[k], dict) and 'payload' in trigger_data[k]:
-                    block_key = k
-                    break
-            if block_key:
-                trigger_data = trigger_data[block_key]['payload']
-            elif 'payload' in trigger_data and len(trigger_data) == 1 and isinstance(trigger_data['payload'], dict):
-                trigger_data = trigger_data['payload']
-
         # Create execution record
         execution = WorkflowExecution(
             workflow_id=workflow_id,
@@ -644,27 +583,6 @@ class WorkflowEngine:
             else:
                 context[f'${k}'] = v
 
-        # Restore reference sharing for the trigger block output key
-        trigger_block = self._find_trigger_block(blocks)
-        if trigger_block:
-            # Proactively unwrap nested test payloads in trigger context if found
-            if '$trigger' in context and isinstance(context['$trigger'], dict):
-                payload = context['$trigger'].get('payload')
-                if isinstance(payload, dict):
-                    block_key = None
-                    for k in payload.keys():
-                        if (k.startswith('block_') or k == 'trigger') and isinstance(payload[k], dict) and 'payload' in payload[k]:
-                            block_key = k
-                            break
-                    if block_key:
-                        context['$trigger']['payload'] = payload[block_key]['payload']
-                    elif 'payload' in payload and len(payload) == 1 and isinstance(payload['payload'], dict):
-                        context['$trigger']['payload'] = payload['payload']
-
-            trigger_output_key = trigger_block.get('config', {}).get('output_key', trigger_block['id'])
-            if '$trigger' in context:
-                context[f'${trigger_output_key}'] = context['$trigger']
-
         # Check for cancel signal ("sair")
         is_cancel = False
         if isinstance(input_data, str) and input_data.strip().lower() == 'sair':
@@ -717,23 +635,6 @@ class WorkflowEngine:
                 'result': None,
             }
 
-        # Pre-process input_data to ensure message synchronizes with button responses
-        if isinstance(input_data, dict):
-            msg_val = input_data.get('message')
-            if isinstance(msg_val, str) and msg_val.strip():
-                if 'global' not in input_data or not isinstance(input_data['global'], dict):
-                    input_data['global'] = {}
-                if 'button_response' not in input_data['global']:
-                    input_data['global']['button_response'] = msg_val
-                
-                if 'system' not in input_data or not isinstance(input_data['system'], dict):
-                    input_data['system'] = {}
-                if 'button_response' not in input_data['system']:
-                    input_data['system']['button_response'] = msg_val
-                
-                if 'button_response' not in input_data:
-                    input_data['button_response'] = msg_val
-
         # Merge new input_data into trigger payload so subsequent blocks and MCP tools can access it
         if '$trigger' in context and isinstance(context['$trigger'], dict):
             payload = context['$trigger'].get('payload')
@@ -755,17 +656,6 @@ class WorkflowEngine:
                             payload['parsed_message'] = parsed_msg
                     except Exception:
                         pass
-                    
-                    # Proactively synchronize 'message' to button responses in the payload
-                    if 'global' not in payload or not isinstance(payload['global'], dict):
-                        payload['global'] = {}
-                    payload['global']['button_response'] = msg_val
-                    
-                    if 'system' not in payload or not isinstance(payload['system'], dict):
-                        payload['system'] = {}
-                    payload['system']['button_response'] = msg_val
-                    
-                    payload['button_response'] = msg_val
             else:
                 payload['message'] = input_data
                 if isinstance(input_data, str) and input_data.strip():
@@ -777,17 +667,6 @@ class WorkflowEngine:
                             payload['parsed_message'] = parsed_msg
                     except Exception:
                         pass
-                    
-                    # Proactively synchronize 'message' to button responses in the payload
-                    if 'global' not in payload or not isinstance(payload['global'], dict):
-                        payload['global'] = {}
-                    payload['global']['button_response'] = input_data
-                    
-                    if 'system' not in payload or not isinstance(payload['system'], dict):
-                        payload['system'] = {}
-                    payload['system']['button_response'] = input_data
-                    
-                    payload['button_response'] = input_data
 
 
         # Set execution status to running
@@ -1756,10 +1635,9 @@ class WorkflowEngine:
             branch_label = block_result.get('_branch')
 
             if block_type == 'if':
-                # Look for edge with matching label or sourceHandle (true/false)
+                # Look for edge with matching label (true/false)
                 for edge in edges:
-                    edge_handle = edge.get('sourceHandle') or edge.get('label')
-                    if edge.get('source') == block_id and edge_handle == branch_label:
+                    if edge.get('source') == block_id and edge.get('label') == branch_label:
                         return edge['target']
 
                 # Fallback: check config true_branch / false_branch
@@ -1774,10 +1652,9 @@ class WorkflowEngine:
                         return target
 
             elif block_type == 'router' and branch_label:
-                # 1. Search for edge matching the handle (e.g. sourceHandle/label = 'rule_0' or 'match'/'default')
+                # 1. Search for edge matching the handle (e.g. sourceHandle = 'rule_0' or 'match'/'default')
                 for edge in edges:
-                    edge_handle = edge.get('sourceHandle') or edge.get('label')
-                    if edge.get('source') == block_id and edge_handle == branch_label:
+                    if edge.get('source') == block_id and edge.get('sourceHandle') == branch_label:
                         return edge['target']
 
                 # 2. Backwards compatibility: fallback to checking if there is an edge matching legacy target_block_id
@@ -1796,7 +1673,7 @@ class WorkflowEngine:
         for edge in edges:
             if edge.get('source') == block_id:
                 label = edge.get('label', '')
-                source_handle = edge.get('sourceHandle') or label
+                source_handle = edge.get('sourceHandle')
                 # Ignore edges that belong to specific conditional handles (true, false, match, default, rule_x)
                 if source_handle in ('true', 'false', 'match', 'default') or (source_handle and source_handle.startswith('rule_')):
                     continue
