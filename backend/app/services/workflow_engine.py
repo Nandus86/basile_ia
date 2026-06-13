@@ -583,6 +583,13 @@ class WorkflowEngine:
             else:
                 context[f'${k}'] = v
 
+        # Restore reference sharing for the trigger block output key
+        trigger_block = self._find_trigger_block(blocks)
+        if trigger_block:
+            trigger_output_key = trigger_block.get('config', {}).get('output_key', trigger_block['id'])
+            if '$trigger' in context:
+                context[f'${trigger_output_key}'] = context['$trigger']
+
         # Check for cancel signal ("sair")
         is_cancel = False
         if isinstance(input_data, str) and input_data.strip().lower() == 'sair':
