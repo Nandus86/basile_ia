@@ -1635,9 +1635,10 @@ class WorkflowEngine:
             branch_label = block_result.get('_branch')
 
             if block_type == 'if':
-                # Look for edge with matching label (true/false)
+                # Look for edge with matching label or sourceHandle (true/false)
                 for edge in edges:
-                    if edge.get('source') == block_id and edge.get('label') == branch_label:
+                    edge_handle = edge.get('sourceHandle') or edge.get('label')
+                    if edge.get('source') == block_id and edge_handle == branch_label:
                         return edge['target']
 
                 # Fallback: check config true_branch / false_branch
@@ -1652,9 +1653,10 @@ class WorkflowEngine:
                         return target
 
             elif block_type == 'router' and branch_label:
-                # 1. Search for edge matching the handle (e.g. sourceHandle = 'rule_0' or 'match'/'default')
+                # 1. Search for edge matching the handle (e.g. sourceHandle/label = 'rule_0' or 'match'/'default')
                 for edge in edges:
-                    if edge.get('source') == block_id and edge.get('sourceHandle') == branch_label:
+                    edge_handle = edge.get('sourceHandle') or edge.get('label')
+                    if edge.get('source') == block_id and edge_handle == branch_label:
                         return edge['target']
 
                 # 2. Backwards compatibility: fallback to checking if there is an edge matching legacy target_block_id
@@ -1673,7 +1675,7 @@ class WorkflowEngine:
         for edge in edges:
             if edge.get('source') == block_id:
                 label = edge.get('label', '')
-                source_handle = edge.get('sourceHandle')
+                source_handle = edge.get('sourceHandle') or label
                 # Ignore edges that belong to specific conditional handles (true, false, match, default, rule_x)
                 if source_handle in ('true', 'false', 'match', 'default') or (source_handle and source_handle.startswith('rule_')):
                     continue
