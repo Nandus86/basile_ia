@@ -862,16 +862,20 @@ class WorkflowEngine:
                 )
                 
                 if block.get('type') == 'response' and next_block_id:
-                    # Update state in DB before throwing so the background task has the latest logs
-                    execution.status = "running"
-                    execution.current_block_id = next_block_id
-                    clean_context = {k.lstrip('$'): v for k, v in context.items()}
-                    execution.context = make_json_safe(clean_context)
-                    execution.blocks_executed = make_json_safe(blocks_log)
-                    await self.db.commit()
-                    
-                    logger.info(f"[WorkflowEngine] 🚀 Early response triggered at '{current_block_id}', returning result and continuing in background from '{next_block_id}'")
-                    raise WorkflowEarlyResponseException(block_result, next_block_id)
+                    next_block_type = blocks.get(next_block_id, {}).get('type')
+                    if next_block_type == 'wait_input':
+                        logger.info(f"[WorkflowEngine] ⏭️ Skipping early response because next block is wait_input ({next_block_id})")
+                    else:
+                        # Update state in DB before throwing so the background task has the latest logs
+                        execution.status = "running"
+                        execution.current_block_id = next_block_id
+                        clean_context = {k.lstrip('$'): v for k, v in context.items()}
+                        execution.context = make_json_safe(clean_context)
+                        execution.blocks_executed = make_json_safe(blocks_log)
+                        await self.db.commit()
+                        
+                        logger.info(f"[WorkflowEngine] 🚀 Early response triggered at '{current_block_id}', returning result and continuing in background from '{next_block_id}'")
+                        raise WorkflowEarlyResponseException(block_result, next_block_id)
 
                 current_block_id = next_block_id
 
