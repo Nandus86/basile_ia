@@ -745,6 +745,7 @@ class WorkflowEngine:
         edges: List[Dict[str, Any]],
         blocks_log: List[Dict[str, Any]],
         recursion_depth: int = 0,
+        is_background: bool = False,
     ) -> Dict[str, Any]:
         t0 = time.time()
         # Find response block to check if we should store in memory
@@ -865,6 +866,8 @@ class WorkflowEngine:
                     next_block_type = blocks.get(next_block_id, {}).get('type')
                     if next_block_type == 'wait_input':
                         logger.info(f"[WorkflowEngine] ⏭️ Skipping early response because next block is wait_input ({next_block_id})")
+                    elif is_background:
+                        logger.info(f"[WorkflowEngine] ⏭️ Skipping early response because workflow is already in background mode")
                     else:
                         # Update state in DB before throwing so the background task has the latest logs
                         execution.status = "running"
