@@ -544,12 +544,16 @@ class WorkflowEngine:
         if not blocks:
             raise ValueError(f"Workflow '{workflow.name}' has no blocks defined")
 
-        # Proactively unwrap nested test payloads (e.g., if trigger_data is wrapped in block_1/payload)
+        # Proactively unwrap nested test payloads (e.g., if trigger_data is wrapped in block_x/payload)
         trigger_block = self._find_trigger_block(blocks)
         if trigger_block and isinstance(trigger_data, dict):
-            tb_id = trigger_block['id']
-            if tb_id in trigger_data and isinstance(trigger_data[tb_id], dict) and 'payload' in trigger_data[tb_id]:
-                trigger_data = trigger_data[tb_id]['payload']
+            block_key = None
+            for k in trigger_data.keys():
+                if (k.startswith('block_') or k == 'trigger') and isinstance(trigger_data[k], dict) and 'payload' in trigger_data[k]:
+                    block_key = k
+                    break
+            if block_key:
+                trigger_data = trigger_data[block_key]['payload']
             elif 'payload' in trigger_data and len(trigger_data) == 1 and isinstance(trigger_data['payload'], dict):
                 trigger_data = trigger_data['payload']
 
@@ -646,10 +650,14 @@ class WorkflowEngine:
             # Proactively unwrap nested test payloads in trigger context if found
             if '$trigger' in context and isinstance(context['$trigger'], dict):
                 payload = context['$trigger'].get('payload')
-                tb_id = trigger_block['id']
                 if isinstance(payload, dict):
-                    if tb_id in payload and isinstance(payload[tb_id], dict) and 'payload' in payload[tb_id]:
-                        context['$trigger']['payload'] = payload[tb_id]['payload']
+                    block_key = None
+                    for k in payload.keys():
+                        if (k.startswith('block_') or k == 'trigger') and isinstance(payload[k], dict) and 'payload' in payload[k]:
+                            block_key = k
+                            break
+                    if block_key:
+                        context['$trigger']['payload'] = payload[block_key]['payload']
                     elif 'payload' in payload and len(payload) == 1 and isinstance(payload['payload'], dict):
                         context['$trigger']['payload'] = payload['payload']
 
