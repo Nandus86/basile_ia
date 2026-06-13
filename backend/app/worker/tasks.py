@@ -2740,7 +2740,7 @@ async def process_message_task(
                         }
                         
                         engine = WorkflowEngine(db)
-                        res_ctx = await engine.resume(UUID(active_wf_run), input_data)
+                        res_ctx = await engine.resume(UUID(active_wf_run), input_data, is_background=True)
                         wf_name = res_ctx.get("context", {}).get("workflow", {}).get("name", "Unknown Workflow")
                         store_in_mem = res_ctx.get("store_in_memory", True)
                         

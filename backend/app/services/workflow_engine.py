@@ -570,7 +570,8 @@ class WorkflowEngine:
     async def resume(
         self,
         execution_id: UUID,
-        input_data: Any,
+        input_data: Dict[str, Any],
+        is_background: bool = False,
     ) -> Dict[str, Any]:
         """Resume a paused workflow execution with the provided input data."""
         # Load execution
@@ -726,6 +727,7 @@ class WorkflowEngine:
                 blocks=blocks,
                 edges=edges,
                 blocks_log=blocks_log,
+                is_background=is_background,
             )
         except WorkflowEarlyResponseException as early:
             return {
@@ -919,6 +921,9 @@ class WorkflowEngine:
                 'store_in_memory': store_in_memory,
             }
 
+        except WorkflowEarlyResponseException:
+            # Let it bubble up to execute/resume so they can handle early response
+            raise
         except Exception as e:
             total_duration = int((time.time() - t0) * 1000)
             execution.status = "failed"
