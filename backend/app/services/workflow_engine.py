@@ -395,6 +395,54 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
     typed_a = parse_typed_value(value_a) if isinstance(value_a, str) else value_a
     typed_b = parse_typed_value(value_b) if isinstance(value_b, str) else value_b
 
+    # Dictionary fallback check: if one value is a dict and the other is a string,
+    # extract candidate text values from the dict to compare.
+    if isinstance(typed_a, dict) and isinstance(typed_b, str):
+        candidates = []
+        for k in ['message', 'button_response', 'value']:
+            if k in typed_a and isinstance(typed_a[k], str):
+                candidates.append(typed_a[k])
+        for nest in ['global', 'system']:
+            if nest in typed_a and isinstance(typed_a[nest], dict):
+                btn_resp = typed_a[nest].get('button_response')
+                if isinstance(btn_resp, str):
+                    candidates.append(btn_resp)
+        if op in ('equals', 'eq', '=='):
+            if any(c == typed_b for c in candidates):
+                return True
+        elif op in ('contains',):
+            if any(typed_b in c for c in candidates):
+                return True
+        elif op in ('starts_with',):
+            if any(c.startswith(typed_b) for c in candidates):
+                return True
+        elif op in ('ends_with',):
+            if any(c.endswith(typed_b) for c in candidates):
+                return True
+
+    elif isinstance(typed_b, dict) and isinstance(typed_a, str):
+        candidates = []
+        for k in ['message', 'button_response', 'value']:
+            if k in typed_b and isinstance(typed_b[k], str):
+                candidates.append(typed_b[k])
+        for nest in ['global', 'system']:
+            if nest in typed_b and isinstance(typed_b[nest], dict):
+                btn_resp = typed_b[nest].get('button_response')
+                if isinstance(btn_resp, str):
+                    candidates.append(btn_resp)
+        if op in ('equals', 'eq', '=='):
+            if any(typed_a == c for c in candidates):
+                return True
+        elif op in ('contains',):
+            if any(c in typed_a for c in candidates):
+                return True
+        elif op in ('starts_with',):
+            if any(typed_a.startswith(c) for c in candidates):
+                return True
+        elif op in ('ends_with',):
+            if any(typed_a.endswith(c) for c in candidates):
+                return True
+
     # String coercions for comparison based on typed values
     str_a = str(typed_a) if typed_a is not None else ''
     str_b = str(typed_b) if typed_b is not None else ''
@@ -642,6 +690,23 @@ class WorkflowEngine:
                 'result': None,
             }
 
+        # Pre-process input_data to ensure message synchronizes with button responses
+        if isinstance(input_data, dict):
+            msg_val = input_data.get('message')
+            if isinstance(msg_val, str) and msg_val.strip():
+                if 'global' not in input_data or not isinstance(input_data['global'], dict):
+                    input_data['global'] = {}
+                if 'button_response' not in input_data['global']:
+                    input_data['global']['button_response'] = msg_val
+                
+                if 'system' not in input_data or not isinstance(input_data['system'], dict):
+                    input_data['system'] = {}
+                if 'button_response' not in input_data['system']:
+                    input_data['system']['button_response'] = msg_val
+                
+                if 'button_response' not in input_data:
+                    input_data['button_response'] = msg_val
+
         # Merge new input_data into trigger payload so subsequent blocks and MCP tools can access it
         if '$trigger' in context and isinstance(context['$trigger'], dict):
             payload = context['$trigger'].get('payload')
@@ -663,6 +728,17 @@ class WorkflowEngine:
                             payload['parsed_message'] = parsed_msg
                     except Exception:
                         pass
+                    
+                    # Proactively synchronize 'message' to button responses in the payload
+                    if 'global' not in payload or not isinstance(payload['global'], dict):
+                        payload['global'] = {}
+                    payload['global']['button_response'] = msg_val
+                    
+                    if 'system' not in payload or not isinstance(payload['system'], dict):
+                        payload['system'] = {}
+                    payload['system']['button_response'] = msg_val
+                    
+                    payload['button_response'] = msg_val
             else:
                 payload['message'] = input_data
                 if isinstance(input_data, str) and input_data.strip():
@@ -674,6 +750,17 @@ class WorkflowEngine:
                             payload['parsed_message'] = parsed_msg
                     except Exception:
                         pass
+                    
+                    # Proactively synchronize 'message' to button responses in the payload
+                    if 'global' not in payload or not isinstance(payload['global'], dict):
+                        payload['global'] = {}
+                    payload['global']['button_response'] = input_data
+                    
+                    if 'system' not in payload or not isinstance(payload['system'], dict):
+                        payload['system'] = {}
+                    payload['system']['button_response'] = input_data
+                    
+                    payload['button_response'] = input_data
 
 
         # Set execution status to running
