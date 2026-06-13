@@ -2740,7 +2740,7 @@ async def process_message_task(
                         }
                         
                         engine = WorkflowEngine(db)
-                        res_ctx = await engine.resume(UUID(active_wf_run), input_data, is_background=True)
+                        res_ctx = await engine.resume(UUID(active_wf_run), input_data)
                         wf_name = res_ctx.get("context", {}).get("workflow", {}).get("name", "Unknown Workflow")
                         store_in_mem = res_ctx.get("store_in_memory", True)
                         
@@ -2752,7 +2752,56 @@ async def process_message_task(
                             )
                         
                         final_status = res_ctx.get("status")
-                        if final_status == "paused":
+
+                        if final_status == "early_response":
+                            print(f"[Task] Workflow triggered early response at block {res_ctx.get('last_block')}")
+                            processing_time = (time.time() - start_time) * 1000
+                            
+                            final_result = res_ctx.get("result")
+                            response_text = ""
+                            if final_result:
+                                if isinstance(final_result, dict):
+                                    response_text = final_result.get("response", final_result.get("output", json.dumps(final_result, ensure_ascii=False)))
+                                elif isinstance(final_result, list):
+                                    response_text = json.dumps(final_result, ensure_ascii=False)
+                                else:
+                                    response_text = str(final_result)
+                            
+                            if response_text and store_in_mem:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                                import uuid as _uuid
+                                _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
+                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+
+                            response_data = {
+                                "status": "early_response",
+                                "execution_id": str(res_ctx.get("execution_id")),
+                                "processing_time_ms": processing_time,
+                                "response": response_text,
+                                "is_hitl_pause": False,
+                                "workflow_name": wf_name,
+                            }
+                            if isinstance(final_result, dict):
+                                response_data.update(final_result)
+                            
+                            # Fire the callback so n8n gets the message IMMEDIATELY
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                                
+                            # Now continue the loop in the background!
+                            next_block_id = res_ctx.get("current_block_id")
+                            if next_block_id:
+                                print(f"[Task] Continuing loop in background from block {next_block_id}...")
+                                await engine.continue_background_execution(UUID(active_wf_run), next_block_id)
+                                
+                            return response_data
+                        
+                        elif final_status == "paused":
                             print(f"[Task] Workflow paused again at block {res_ctx.get('current_block_id')}")
                             processing_time = (time.time() - start_time) * 1000
                             
