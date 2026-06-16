@@ -425,6 +425,17 @@
             Não é BOT
           </v-btn>
           <v-btn
+            v-if="getSessionId(selectedJob)"
+            color="deep-orange"
+            variant="tonal"
+            prepend-icon="mdi-lock-open-variant"
+            :loading="unlockingSession"
+            @click="unlockSession(getSessionId(selectedJob))"
+            size="small"
+          >
+            Liberar Trava (Locks)
+          </v-btn>
+          <v-btn
             v-if="selectedJob.status === 'in_progress' || selectedJob.status === 'queued'"
             color="error"
             variant="flat"
@@ -1612,6 +1623,7 @@ const pauseMinutes = ref(null)
 const pausingAgent = ref(false)
 const activatingAgent = ref(false)
 const unblockingBot = ref(false)
+const unlockingSession = ref(false)
 
 // STM/MTM Memory Dialog
 const memoryDialog = ref(false)
@@ -1980,6 +1992,20 @@ const unblockBot = async (sessionId) => {
     showSnackbar('Erro ao remover bloqueio', 'error')
   } finally {
     unblockingBot.value = false
+  }
+}
+
+const unlockSession = async (sessionId) => {
+  if (!sessionId) return
+  unlockingSession.value = true
+  try {
+    await axiosInstance.post(`/tracking/sessions/${sessionId}/unlock`)
+    showSnackbar('Trava de concorrência e buffer da sessão liberados!', 'success')
+  } catch (error) {
+    console.error('Error unlocking session:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao liberar trava da sessão', 'error')
+  } finally {
+    unlockingSession.value = false
   }
 }
 

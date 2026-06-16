@@ -25,6 +25,20 @@ async def reset_antibot_block(session_id: str):
     return {"success": True, "message": f"Bloqueio Anti-Bot removido para sessão {session_id}"}
 
 
+@router.post("/sessions/{session_id}/unlock")
+async def unlock_session(session_id: str):
+    """Release the concurrency lock and clear the message buffer for a session"""
+    lock_owner = await redis_client.get_user_lock_owner(session_id)
+    await redis_client.release_user_lock(session_id)
+    await redis_client.drain_buffer(session_id)
+    logger.info(f"[Guard] 🔓 Session {session_id} manually unlocked by user. Lock owner was {lock_owner}")
+    return {
+        "success": True, 
+        "message": f"Trava de concorrência e buffer limpos para a sessão {session_id}.",
+        "previous_owner": lock_owner
+    }
+
+
 @router.get("/logs")
 async def get_tracking_logs(
     skip: int = Query(0, ge=0),
