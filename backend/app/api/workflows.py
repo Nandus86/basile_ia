@@ -353,6 +353,36 @@ async def delete_workflow_execution(
     return None
 
 
+@router.post("/executions/{execution_id}/cancel", response_model=WorkflowExecutionResponse)
+async def cancel_workflow_execution(
+    execution_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a running, pending, or paused workflow execution"""
+    from datetime import datetime, timezone
+    result = await db.execute(
+        select(WorkflowExecution).where(WorkflowExecution.id == execution_id)
+    )
+    execution = result.scalar_one_or_none()
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    if execution.status not in ("running", "pending", "paused"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel execution in status {execution.status}"
+        )
+
+    execution.status = "cancelled"
+    execution.error_message = "Execução cancelada manualmente pelo usuário"
+    execution.completed_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(execution)
+    return execution
+
+
+
 # ─────────────────────────────────────────────────────────────
 # Block Testing
 # ─────────────────────────────────────────────────────────────

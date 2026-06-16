@@ -817,6 +817,23 @@ class WorkflowEngine:
 
         try:
             while current_block_id:
+                # Check database to see if execution was cancelled/stopped externally
+                await self.db.refresh(execution)
+                if execution.status == "cancelled":
+                    logger.info(f"[WorkflowEngine] 🛑 Execution {execution.id} has been cancelled externally.")
+                    # Clean active session mapping if completed/cancelled
+                    session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+                    if session_id:
+                        from app.redis_client import redis_client
+                        await redis_client.delete(f"active_workflow_run:{session_id}")
+                    return {
+                        'result': None,
+                        'context': {k.lstrip('$'): v for k, v in context.items()},
+                        'status': 'cancelled',
+                        'last_block': last_output_key,
+                        'store_in_memory': store_in_memory,
+                    }
+
                 block = blocks.get(current_block_id)
                 if not block:
                     # Fallback lookup: check if any block has output_key matching current_block_id

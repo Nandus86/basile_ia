@@ -964,9 +964,22 @@
               </template>
 
               <template v-slot:item.actions="{ item }">
-                <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-magnify" @click="openWfExecutionDetails(item)">
-                  Investigar
-                </v-btn>
+                <div class="d-flex ga-1 justify-center align-center">
+                  <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-magnify" @click="openWfExecutionDetails(item)">
+                    Investigar
+                  </v-btn>
+                  <v-btn
+                    v-if="item.status === 'running' || item.status === 'pending' || item.status === 'paused'"
+                    color="error"
+                    variant="tonal"
+                    size="small"
+                    prepend-icon="mdi-stop-circle-outline"
+                    :loading="cancellingWfId === item.id"
+                    @click="cancelWfExecution(item.id)"
+                  >
+                    Parar
+                  </v-btn>
+                </div>
               </template>
 
               <template v-slot:bottom>
@@ -1109,6 +1122,16 @@
         </v-card-text>
 
         <v-card-actions class="pa-4 border-t">
+          <v-btn
+            v-if="selectedWfExecution.status === 'running' || selectedWfExecution.status === 'pending' || selectedWfExecution.status === 'paused'"
+            color="error"
+            variant="flat"
+            prepend-icon="mdi-stop-circle-outline"
+            :loading="cancellingWf"
+            @click="cancelWfExecution(selectedWfExecution.id)"
+          >
+            Parar Execução
+          </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="wfDrawer = false">Fechar</v-btn>
         </v-card-actions>
@@ -2030,12 +2053,43 @@ const openWfExecutionDetails = async (execution) => {
   }
 }
 
+const cancellingWfId = ref(null)
+const cancellingWf = ref(false)
+
+const cancelWfExecution = async (executionId) => {
+  cancellingWfId.value = executionId
+  cancellingWf.value = true
+  try {
+    await axiosInstance.post(`/workflows/executions/${executionId}/cancel`)
+    showSnackbar('Sinal de parada enviado para a automação!', 'warning')
+    
+    // Update local state in table
+    const idx = workflowExecutions.value.findIndex(e => e.id === executionId)
+    if (idx !== -1) {
+      workflowExecutions.value[idx].status = 'cancelled'
+    }
+    
+    // Update local state in drawer
+    if (selectedWfExecution.value && selectedWfExecution.value.id === executionId) {
+      selectedWfExecution.value.status = 'cancelled'
+      selectedWfExecution.value.error_message = 'Execução cancelada manualmente pelo usuário'
+    }
+  } catch (error) {
+    console.error('Error cancelling execution:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao parar automação', 'error')
+  } finally {
+    cancellingWfId.value = null
+    cancellingWf.value = false
+  }
+}
+
 const getWfStatusColor = (status) => {
   return {
     'completed': 'success',
     'failed': 'error',
     'pending': 'warning',
-    'running': 'info'
+    'running': 'info',
+    'cancelled': 'grey'
   }[status] || 'grey'
 }
 
@@ -2044,7 +2098,8 @@ const getWfStatusIcon = (status) => {
     'completed': 'mdi-check-circle',
     'failed': 'mdi-alert-circle',
     'pending': 'mdi-clock-outline',
-    'running': 'mdi-sync'
+    'running': 'mdi-sync',
+    'cancelled': 'mdi-stop-circle-outline'
   }[status] || 'mdi-help-circle'
 }
 
