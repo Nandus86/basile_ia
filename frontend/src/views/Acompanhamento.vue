@@ -426,6 +426,17 @@
           </v-btn>
           <v-btn
             v-if="getSessionId(selectedJob)"
+            color="error"
+            variant="tonal"
+            prepend-icon="mdi-robot-dead"
+            :loading="blockingBot"
+            @click="blockBot(getSessionId(selectedJob))"
+            size="small"
+          >
+            É BOT
+          </v-btn>
+          <v-btn
+            v-if="getSessionId(selectedJob)"
             color="deep-orange"
             variant="tonal"
             prepend-icon="mdi-lock-open-variant"
@@ -1623,6 +1634,7 @@ const pauseMinutes = ref(null)
 const pausingAgent = ref(false)
 const activatingAgent = ref(false)
 const unblockingBot = ref(false)
+const blockingBot = ref(false)
 const unlockingSession = ref(false)
 
 // STM/MTM Memory Dialog
@@ -1992,6 +2004,20 @@ const unblockBot = async (sessionId) => {
     showSnackbar('Erro ao remover bloqueio', 'error')
   } finally {
     unblockingBot.value = false
+  }
+}
+
+const blockBot = async (sessionId) => {
+  if (!sessionId) return
+  blockingBot.value = true
+  try {
+    await axiosInstance.post(`/tracking/antibot/${sessionId}`)
+    showSnackbar('Sessão marcada e bloqueada como BOT!', 'error')
+  } catch (error) {
+    console.error('Error blocking bot:', error)
+    showSnackbar(error.response?.data?.detail || 'Erro ao bloquear sessão como bot', 'error')
+  } finally {
+    blockingBot.value = false
   }
 }
 

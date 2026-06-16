@@ -25,6 +25,14 @@ async def reset_antibot_block(session_id: str):
     return {"success": True, "message": f"Bloqueio Anti-Bot removido para sessão {session_id}"}
 
 
+@router.post("/antibot/{session_id}")
+async def block_antibot_session(session_id: str, ttl: int = 86400):
+    """Manually flag a session as a bot and block it. Default 24h (86400s) TTL."""
+    await redis_client.set_antibot_blocked(session_id, ttl)
+    logger.info(f"[AntiBot] 🔒 Session {session_id} manually BLOCKED as bot by user")
+    return {"success": True, "message": f"Sessão {session_id} bloqueada como BOT."}
+
+
 @router.post("/sessions/{session_id}/unlock")
 async def unlock_session(session_id: str):
     """Release the concurrency lock and clear the message buffer for a session"""
