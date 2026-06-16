@@ -352,6 +352,56 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
         val = _resolve_path(root_val, rest) if (root_val is not None and rest) else root_val
         return str(val) if val is not None else ''
 
+    # Handle $or(arg1, arg2, ...)
+    if path.startswith('or('):
+        import ast
+        args_str = path[3:-1]
+        try:
+            args = ast.literal_eval(f'({args_str},)')
+            for arg in args:
+                val = arg
+                if isinstance(arg, str):
+                    clean_arg = arg.strip().lstrip('$')
+                    parts = clean_arg.split('.', 1)
+                    root_key = parts[0]
+                    rest = parts[1] if len(parts) > 1 else None
+                    root_val = context.get(f'${root_key}') or context.get(root_key)
+                    if root_val is not None:
+                        val = _resolve_path(root_val, rest) if rest else root_val
+                    else:
+                        val = parse_typed_value(arg)
+                if val:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    # Handle $and(arg1, arg2, ...)
+    if path.startswith('and('):
+        import ast
+        args_str = path[4:-1]
+        try:
+            args = ast.literal_eval(f'({args_str},)')
+            if not args:
+                return False
+            for arg in args:
+                val = arg
+                if isinstance(arg, str):
+                    clean_arg = arg.strip().lstrip('$')
+                    parts = clean_arg.split('.', 1)
+                    root_key = parts[0]
+                    rest = parts[1] if len(parts) > 1 else None
+                    root_val = context.get(f'${root_key}') or context.get(root_key)
+                    if root_val is not None:
+                        val = _resolve_path(root_val, rest) if rest else root_val
+                    else:
+                        val = parse_typed_value(arg)
+                if not val:
+                    return False
+            return True
+        except Exception:
+            return False
+
     # $env.VAR_NAME → environment variable
     if path.startswith('env.'):
         import os
