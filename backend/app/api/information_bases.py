@@ -134,6 +134,14 @@ async def webhook_ingest(
             message=f"Information Base with code {request.id_base} not found"
         )
     
+    # Delete existing facets for this user and external_id to prevent orphan facets
+    if request.external_id:
+        await weaviate.delete_information_base_nodes(
+            base_code=request.id_base,
+            user_id=request.id,
+            external_id=request.external_id
+        )
+
     # Use semantic ingestion if schema has semantic/vectorize flags
     from app.services.semantic_ingestion import process_webhook_payload, _has_semantic_flags
     
