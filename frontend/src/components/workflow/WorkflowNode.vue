@@ -136,7 +136,7 @@ const subtitle = computed(() => {
     case 'delay':
       return cfg.delay_ms ? `${cfg.delay_ms}ms` : ''
     case 'trigger':
-      return cfg.trigger_type || 'webhook'
+      return cfg.trigger_type || 'event'
     case 'python':
       return cfg.code ? cfg.code.split('\n')[0].substring(0, 40) + '...' : 'Sem código'
     case 'mcp':

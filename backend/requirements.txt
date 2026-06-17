@@ -45,3 +45,6 @@ arq>=0.26.0
 
 # RabbitMQ
 aio-pika>=9.3.1
+
+# Task Scheduling
+apscheduler>=3.10.0

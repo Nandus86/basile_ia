@@ -50,8 +50,22 @@ async def lifespan(app: FastAPI):
     # Connect to RabbitMQ for publishing messages
     await rabbitmq_client.connect()
     
+    # Initialize and sync Workflow Scheduler
+    try:
+        from app.services.workflow_scheduler import workflow_scheduler
+        workflow_scheduler.start()
+        await workflow_scheduler.sync_all_workflows()
+    except Exception as e:
+        logging.error(f"[Main startup] Failed to initialize workflow scheduler: {e}")
+    
     yield
     # Shutdown: cleanup all connections
+    try:
+        from app.services.workflow_scheduler import workflow_scheduler
+        workflow_scheduler.shutdown()
+    except Exception:
+        pass
+        
     try:
         from app.worker.queue_client import close_arq_pool
         await close_arq_pool()

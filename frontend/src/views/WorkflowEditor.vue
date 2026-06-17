@@ -551,7 +551,7 @@ let idCounter = 1
 const nodeTypes = { workflow: markRaw(WorkflowNode) }
 
 const toolboxItems = [
-  { type: 'trigger', label: 'Webhook', icon: 'mdi-lightning-bolt', color: '#F59E0B', category: 'trigger' },
+  { type: 'trigger', label: 'Gatilho', icon: 'mdi-lightning-bolt', color: '#F59E0B', category: 'trigger' },
   { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
   { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
   { type: 'mcp', label: 'MCP', icon: 'mdi-connection', color: '#14B8A6', category: 'action' },
@@ -758,9 +758,15 @@ function onDrop(event) {
   const position = project({ x: event.clientX - 260, y: event.clientY - 60 })
   const blockId = `block_${idCounter++}`
   const label = toolboxItems.find(t => t.type === type)?.label || type
+  
+  const config = { output_key: blockId }
+  if (type === 'trigger') {
+    config.trigger_type = 'event'
+  }
+  
   nodes.value = [...nodes.value, {
     id: blockId, type: 'workflow', position,
-    label, data: { type, config: { output_key: blockId }, label },
+    label, data: { type, config, label },
   }]
   markUnsaved()
 }

@@ -41,28 +41,89 @@
       <template v-if="block.type === 'trigger'">
         <v-select
           v-model="config.trigger_type"
-          :items="['webhook', 'manual', 'schedule', 'event']"
+          :items="[
+            { title: 'Evento de Entrada (Padrão)', value: 'event' },
+            { title: 'Webhook Externo (HTTP)', value: 'webhook' },
+            { title: 'Agendamento (Cron/Horário)', value: 'schedule' },
+            { title: 'Disparo Manual (Teste)', value: 'manual' }
+          ]"
+          item-title="title"
+          item-value="value"
           label="Tipo de Gatilho"
           variant="outlined"
           density="compact"
           class="mb-3"
           hide-details
-          @update:model-value="emitUpdate"
+          @update:model-value="onTriggerTypeChange"
         ></v-select>
-        <v-select
-          v-if="config.trigger_type === 'webhook'"
-          v-model="config.webhook_config_id"
-          :items="webhookConfigs"
-          item-title="name"
-          item-value="id"
-          label="Webhook Config (opcional)"
-          variant="outlined"
-          density="compact"
-          clearable
-          hide-details
-          class="mb-3"
-          @update:model-value="emitUpdate"
-        ></v-select>
+
+        <!-- Event Trigger Info -->
+        <div v-if="!config.trigger_type || config.trigger_type === 'event'" class="mb-3">
+          <v-alert type="info" variant="tonal" density="compact" class="text-caption">
+            Este gatilho ativa o workflow a partir de eventos do sistema, como mensagens no chat. 
+            Configure as palavras-chave nas configurações do Workflow (ícone de engrenagem no topo).
+          </v-alert>
+        </div>
+
+        <!-- Webhook Trigger Configuration -->
+        <div v-if="config.trigger_type === 'webhook'">
+          <v-text-field
+            v-model="config.webhook_path"
+            label="Caminho do Webhook (path)"
+            placeholder="meu-gatilho-vendas"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hint="Defina um caminho único para disparar este workflow"
+            persistent-hint
+            @update:model-value="emitUpdate"
+          ></v-text-field>
+          
+          <v-alert v-if="config.webhook_path" type="success" variant="tonal" density="compact" class="mb-3 text-caption">
+            <div class="font-weight-bold mb-1">URL para Disparo:</div>
+            <code class="text-caption d-block my-1" style="word-break: break-all; color: #10B981; font-family: monospace;">{{ webhookUrl }}</code>
+            <v-btn size="x-small" variant="outlined" color="success" class="mt-1" @click="copyWebhookUrl">
+              <v-icon start size="12">mdi-content-copy</v-icon> Copiar URL
+            </v-btn>
+          </v-alert>
+
+          <v-select
+            v-model="config.webhook_config_id"
+            :items="webhookConfigs"
+            item-title="name"
+            item-value="id"
+            label="Webhook Config (Autenticação opcional)"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            class="mb-3"
+            @update:model-value="emitUpdate"
+          ></v-select>
+        </div>
+
+        <!-- Schedule Trigger Configuration -->
+        <div v-if="config.trigger_type === 'schedule'">
+          <v-text-field
+            v-model="config.cron"
+            label="Expressão Cron"
+            placeholder="*/15 * * * *"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hint="Padrão de 5 campos. Ex: */15 * * * * (a cada 15 min), 0 9 * * * (todo dia às 9h)"
+            persistent-hint
+            @update:model-value="emitUpdate"
+          ></v-text-field>
+        </div>
+
+        <!-- Manual Trigger Configuration -->
+        <div v-if="config.trigger_type === 'manual'" class="mb-3">
+          <v-alert type="info" variant="tonal" density="compact" class="text-caption">
+            Este gatilho é disparado manualmente ou via testes. 
+            Use o botão "Executar" (ou ícone Play) no painel superior do editor para testar e simular.
+          </v-alert>
+        </div>
       </template>
 
       <!-- ═══ HTTP REQUEST ═══ -->
@@ -958,6 +1019,27 @@ function removeVariable(idx) {
 
 function copyVar(key) {
   navigator.clipboard.writeText(`{{ $${key} }}`)
+}
+
+const webhookUrl = computed(() => {
+  if (!config.value.webhook_path) return ''
+  const base = window.location.origin
+  return `${base}/api/workflows/trigger/${config.value.webhook_path}`
+})
+
+function copyWebhookUrl() {
+  if (webhookUrl.value) {
+    navigator.clipboard.writeText(webhookUrl.value)
+  }
+}
+
+function onTriggerTypeChange(val) {
+  if (val === 'webhook') {
+    if (!config.value.webhook_path) config.value.webhook_path = ''
+  } else if (val === 'schedule') {
+    if (!config.value.cron) config.value.cron = '*/15 * * * *'
+  }
+  emitUpdate()
 }
 
 function emitUpdate() {

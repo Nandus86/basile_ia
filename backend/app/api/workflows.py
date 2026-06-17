@@ -3,8 +3,9 @@ Workflows API — CRUD + Execution endpoints
 """
 import logging
 import time
+import asyncio
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from uuid import UUID
@@ -64,6 +65,13 @@ async def create_workflow(workflow_in: WorkflowCreate, db: AsyncSession = Depend
     await db.commit()
     await db.refresh(workflow)
 
+    # Sync with WorkflowScheduler
+    try:
+        from app.services.workflow_scheduler import workflow_scheduler
+        await workflow_scheduler.sync_workflow(workflow.id, workflow.is_active, workflow.definition or {})
+    except Exception as e:
+        logger.error(f"Failed to sync workflow {workflow.id} with scheduler: {e}")
+
     return workflow
 
 @router.put("/{workflow_id}", response_model=WorkflowResponse)
@@ -86,6 +94,13 @@ async def update_workflow(
     await db.commit()
     await db.refresh(workflow)
 
+    # Sync with WorkflowScheduler
+    try:
+        from app.services.workflow_scheduler import workflow_scheduler
+        await workflow_scheduler.sync_workflow(workflow.id, workflow.is_active, workflow.definition or {})
+    except Exception as e:
+        logger.error(f"Failed to sync workflow {workflow.id} with scheduler: {e}")
+
     return workflow
 
 @router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -99,6 +114,14 @@ async def delete_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_db))
 
     await db.delete(workflow)
     await db.commit()
+
+    # Remove from WorkflowScheduler
+    try:
+        from app.services.workflow_scheduler import workflow_scheduler
+        await workflow_scheduler.sync_workflow(workflow_id, is_active=False, definition={})
+    except Exception as e:
+        logger.error(f"Failed to remove workflow {workflow_id} from scheduler: {e}")
+
     return None
 
 @router.post("/{workflow_id}/duplicate", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
@@ -124,6 +147,13 @@ async def duplicate_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_d
     db.add(new_workflow)
     await db.commit()
     await db.refresh(new_workflow)
+
+    # Sync with WorkflowScheduler
+    try:
+        from app.services.workflow_scheduler import workflow_scheduler
+        await workflow_scheduler.sync_workflow(new_workflow.id, new_workflow.is_active, new_workflow.definition or {})
+    except Exception as e:
+        logger.error(f"Failed to sync duplicated workflow {new_workflow.id} with scheduler: {e}")
 
     # Copy agent associations
     try:
@@ -490,4 +520,109 @@ async def resume_workflow_execution(
     except Exception as e:
         logger.error(f"[Workflows API] Resume failed: {e}")
         raise HTTPException(status_code=500, detail=f"Workflow resume failed: {str(e)}")
+
+
+@router.post("/trigger/{path:path}")
+async def trigger_workflow_by_path(
+    path: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """Trigger a workflow by its configured webhook trigger path."""
+    try:
+        trigger_data = await request.json()
+    except Exception:
+        trigger_data = {}
+
+    # Find workflow by trigger webhook path
+    result = await db.execute(select(Workflow).where(Workflow.is_active == True))
+    workflows = result.scalars().all()
+
+    target_wf = None
+    for wf in workflows:
+        definition = wf.definition or {}
+        blocks = definition.get("blocks", [])
+        
+        # Check v2 blocks
+        if isinstance(blocks, list):
+            for block in blocks:
+                if block.get("type") == "trigger":
+                    config = block.get("config", {})
+                    if config.get("trigger_type") == "webhook" and config.get("webhook_path") == path:
+                        target_wf = wf
+                        break
+        elif isinstance(blocks, dict):
+            for block in blocks.values():
+                if block.get("type") == "trigger":
+                    config = block.get("config", {})
+                    if config.get("trigger_type") == "webhook" and config.get("webhook_path") == path:
+                        target_wf = wf
+                        break
+        if target_wf:
+            break
+
+    if not target_wf:
+        raise HTTPException(status_code=404, detail=f"No active workflow found with webhook trigger path: {path}")
+
+    from app.services.workflow_engine import WorkflowEngine
+    engine = WorkflowEngine(db)
+
+    if target_wf.return_direct_payload:
+        result_context = await engine.execute(
+            workflow_id=target_wf.id,
+            trigger_data=trigger_data,
+            trigger_type="webhook"
+        )
+        
+        if isinstance(result_context, dict) and result_context.get("status") == "early_response":
+            exec_id = result_context.get("execution_id")
+            next_block = result_context.get("current_block_id")
+            background_tasks.add_task(engine.continue_background_execution, exec_id, next_block)
+            return result_context.get("result")
+
+        exec_result = await db.execute(
+            select(WorkflowExecution)
+            .where(WorkflowExecution.workflow_id == target_wf.id)
+            .order_by(WorkflowExecution.created_at.desc())
+            .limit(1)
+        )
+        execution = exec_result.scalar_one_or_none()
+        if execution:
+            return execution.result
+        return result_context
+    else:
+        execution = WorkflowExecution(
+            workflow_id=target_wf.id,
+            status="pending",
+            trigger_type="webhook",
+            trigger_data=trigger_data,
+            context={},
+            blocks_executed=[],
+            blocks_total=len((target_wf.definition or {}).get('blocks', [])),
+        )
+        db.add(execution)
+        await db.commit()
+        await db.refresh(execution)
+
+        async def _run_async():
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as bg_db:
+                bg_engine = WorkflowEngine(bg_db)
+                try:
+                    await bg_engine.execute(
+                        workflow_id=target_wf.id,
+                        trigger_data=trigger_data,
+                        trigger_type="webhook",
+                    )
+                except Exception as e:
+                    logger.error(f"[Workflows API] Async webhook trigger failed: {e}")
+
+        asyncio.create_task(_run_async())
+
+        return {
+            "execution_id": str(execution.id),
+            "status": "pending",
+            "message": "Workflow disparado e enfileirado para execução",
+        }
 
