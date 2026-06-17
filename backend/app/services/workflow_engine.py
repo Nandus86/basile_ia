@@ -1062,6 +1062,8 @@ class WorkflowEngine:
                 return await self._exec_variables(config, context, block['id'])
             case 'mcp':
                 return await self._exec_mcp(config, context)
+            case 'vector_insert':
+                return await self._exec_vector_insert(config, context)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -1683,6 +1685,77 @@ class WorkflowEngine:
         except Exception as exc:
             logger.error(f"[WorkflowEngine] MCP block '{mcp.name}' error: {exc}")
             raise
+
+    async def _exec_vector_insert(self, config: Dict[str, Any], context: Dict[str, Any]) -> Any:
+        """Execute vector_insert block to ingest data directly into Weaviate."""
+        from app.weaviate_client import weaviate_client
+        from app.models.information_base import InformationBase
+        from app.services.semantic_ingestion import process_webhook_payload
+        from sqlalchemy import select
+        import json
+
+        base_code_raw = config.get('base_code', '')
+        user_id_raw = config.get('user_id', '')
+        external_id_raw = config.get('external_id', '')
+        data_raw = config.get('data', '')
+
+        base_code = resolve_template(base_code_raw, context)
+        user_id = resolve_template(user_id_raw, context)
+        external_id = resolve_template(external_id_raw, context) if external_id_raw else None
+        payload = resolve_template(data_raw, context)
+
+        if not base_code:
+            raise ValueError("Bloco 'Salvar na Base': 'base_code' é obrigatório")
+        if not user_id:
+            raise ValueError("Bloco 'Salvar na Base': 'user_id' é obrigatório")
+        if not payload:
+            raise ValueError("Bloco 'Salvar na Base': 'data' (payload) é obrigatório")
+
+        # Parse string data if it is a JSON string
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                raise ValueError("Bloco 'Salvar na Base': 'data' precisa ser um objeto JSON válido ou um dicionário.")
+
+        # Load InformationBase from DB
+        result = await self.db.execute(select(InformationBase).where(InformationBase.code == base_code))
+        base = result.scalar_one_or_none()
+        if not base:
+            raise ValueError(f"Base de Informações com código '{base_code}' não encontrada")
+
+        # Clean old facets to avoid orphans
+        if external_id:
+            await weaviate_client.delete_information_base_nodes(
+                base_code=base_code,
+                user_id=user_id,
+                external_id=external_id
+            )
+
+        # Process facets
+        facets = process_webhook_payload(payload, base.content_schema)
+
+        saved_count = 0
+        for i, facet in enumerate(facets):
+            success = await weaviate_client.save_information_base_node(
+                base_code=base_code,
+                user_id=user_id,
+                content=facet["content"],
+                metadata=facet["metadata"],
+                external_id=external_id,
+                facet_index=i if len(facets) > 1 else None,
+                facet_type=facet.get("facet_type", "raw"),
+            )
+            if success:
+                saved_count += 1
+
+        return {
+            "success": saved_count > 0,
+            "saved_facets": saved_count,
+            "base_code": base_code,
+            "user_id": user_id,
+            "external_id": external_id
+        }
 
     async def _exec_sub_workflow(self, config: Dict[str, Any], context: Dict[str, Any], recursion_depth: int) -> Any:
         """Execute a sub-workflow as a nested block."""

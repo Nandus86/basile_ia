@@ -788,6 +788,60 @@
         ></v-select>
       </template>
 
+      <!-- ═══ VECTOR INSERT / SALVAR NA BASE ═══ -->
+      <template v-if="block.type === 'vector_insert'">
+        <v-select
+          v-model="config.base_code"
+          :items="informationBases"
+          item-title="name"
+          item-value="code"
+          label="Base de Informações"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          clearable
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-text-field
+          v-model="config.user_id"
+          label="ID do Usuário (user_id)"
+          placeholder="{{ $trigger.payload.user_id }}"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="Suporta templates do contexto"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-text-field
+          v-model="config.external_id"
+          label="ID Externo (external_id - Opcional)"
+          placeholder="{{ $trigger.payload.id }}"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="Limpará blocos antigos com o mesmo ID para evitar duplicatas"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-textarea
+          v-model="vectorInsertDataJson"
+          label="Dados para Salvar (JSON ou String)"
+          placeholder='{"texto": "{{ $trigger.payload.text }}", "categoria": "faq"}'
+          variant="outlined"
+          density="compact"
+          rows="6"
+          class="mb-3 monospace-field"
+          hint="Dados que serão processados de acordo com o esquema da base selecionada"
+          persistent-hint
+          @update:model-value="onVectorInsertDataChange"
+        ></v-textarea>
+      </template>
+
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
           <v-expansion-panel-title class="text-caption">
@@ -832,6 +886,7 @@ const props = defineProps({
   workflows: { type: Array, default: () => [] },
   mcps: { type: Array, default: () => [] },
   currentWorkflowId: { type: String, default: null },
+  informationBases: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['update', 'close', 'delete', 'duplicate'])
 
@@ -850,6 +905,7 @@ const BLOCK_META = {
   python:       { icon: 'mdi-language-python',   color: '#3B82F6', label: 'Configurar Python' },
   mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'Configurar MCP' },
   variables:    { icon: 'mdi-variable',          color: '#10B981', label: 'Configurar Variáveis' },
+  vector_insert:{ icon: 'mdi-database-plus',     color: '#10B981', label: 'Configurar Salvar na Base' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
@@ -952,6 +1008,7 @@ const bodyJson = ref(typeof config.value.body === 'object' ? JSON.stringify(conf
 const contextMappingJson = ref(JSON.stringify(config.value.context_mapping || {}, null, 2))
 const responseMappingJson = ref(JSON.stringify(config.value.response_mapping || {}, null, 2))
 const payloadTemplateJson = ref(typeof config.value.payload_template === 'object' ? JSON.stringify(config.value.payload_template, null, 2) : (config.value.payload_template || ''))
+const vectorInsertDataJson = ref(typeof config.value.data === 'object' ? JSON.stringify(config.value.data, null, 2) : (config.value.data || ''))
 
 watch(() => props.block.id, () => {
   headersJson.value = JSON.stringify(config.value.headers || {}, null, 2)
@@ -960,6 +1017,7 @@ watch(() => props.block.id, () => {
   contextMappingJson.value = JSON.stringify(config.value.context_mapping || {}, null, 2)
   responseMappingJson.value = JSON.stringify(config.value.response_mapping || {}, null, 2)
   payloadTemplateJson.value = typeof config.value.payload_template === 'object' ? JSON.stringify(config.value.payload_template, null, 2) : (config.value.payload_template || '')
+  vectorInsertDataJson.value = typeof config.value.data === 'object' ? JSON.stringify(config.value.data, null, 2) : (config.value.data || '')
 })
 
 function onHeadersChange(val) {
@@ -984,6 +1042,10 @@ function onResponseMappingChange(val) {
 }
 function onPayloadTemplateChange(val) {
   try { config.value.payload_template = JSON.parse(val) } catch { config.value.payload_template = val }
+  emitUpdate()
+}
+function onVectorInsertDataChange(val) {
+  try { config.value.data = JSON.parse(val) } catch { config.value.data = val }
   emitUpdate()
 }
 

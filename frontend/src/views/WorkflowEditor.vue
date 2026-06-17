@@ -180,6 +180,7 @@
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
                 :mcps="mcpsList"
+                :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
@@ -199,6 +200,7 @@
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
                 :mcps="mcpsList"
+                :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
@@ -220,6 +222,7 @@
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
                 :mcps="mcpsList"
+                :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
                 hide-close
@@ -494,6 +497,7 @@ const agentsList = ref([])
 const webhooksList = ref([])
 const workflowsList = ref([])
 const mcpsList = ref([])
+const informationBasesList = ref([])
 const saving = ref(false)
 const selectedBlock = ref(null)
 const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
@@ -555,6 +559,7 @@ const toolboxItems = [
   { type: 'http_request', label: 'HTTP Request', icon: 'mdi-api', color: '#3B82F6', category: 'action' },
   { type: 'agent', label: 'Agente IA', icon: 'mdi-robot', color: '#10B981', category: 'action' },
   { type: 'mcp', label: 'MCP', icon: 'mdi-connection', color: '#14B8A6', category: 'action' },
+  { type: 'vector_insert', label: 'Salvar na Base', icon: 'mdi-database-plus', color: '#10B981', category: 'action' },
   { type: 'python', label: 'Python', icon: 'mdi-language-python', color: '#3B82F6', category: 'action' },
   { type: 'wait_input', label: 'Aguardar Resposta', icon: 'mdi-account-question', color: '#EC4899', category: 'action' },
   { type: 'response', label: 'Saída', icon: 'mdi-logout', color: '#EC4899', category: 'action' },
@@ -618,7 +623,7 @@ const handleKeyDown = (event) => {
 
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
-  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), loadWorkflow()])
+  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), fetchInformationBases(), loadWorkflow()])
 })
 
 onUnmounted(() => {
@@ -681,6 +686,9 @@ async function fetchWorkflows() {
 }
 async function fetchMcps() {
   try { mcpsList.value = (await axios.get('/mcp')).data.mcps || [] } catch {}
+}
+async function fetchInformationBases() {
+  try { informationBasesList.value = (await axios.get('/information-bases')).data.information_bases || [] } catch {}
 }
 
 async function loadWorkflow() {

@@ -116,6 +116,7 @@ const BLOCK_META = {
   python:       { icon: 'mdi-language-python',   color: '#3B82F6', label: 'Python' },
   mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'MCP' },
   variables:    { icon: 'mdi-variable',          color: '#10B981', label: 'Variáveis' },
+  vector_insert:{ icon: 'mdi-database-plus',     color: '#10B981', label: 'Salvar na Base' },
 }
 
 const meta = computed(() => BLOCK_META[props.data.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Bloco' })
@@ -143,6 +144,8 @@ const subtitle = computed(() => {
       return cfg.mcp_name || (cfg.mcp_id ? 'MCP vinculado' : 'Sem MCP')
     case 'variables':
       return cfg.variables ? `${cfg.variables.length} variáveis` : 'Sem variáveis'
+    case 'vector_insert':
+      return cfg.base_code ? `Salvar em: ${cfg.base_code}` : 'Salvar na Base'
     default:
       return ''
   }
@@ -210,6 +213,7 @@ const statusColor = computed(() => {
 .node-python        { border-color: #3B82F640; }
 .node-mcp           { border-color: #14B8A640; }
 .node-variables     { border-color: #10B98140; }
+.node-vector_insert { border-color: #10B98140; }
 
 /* Handles */
 .handle-in, .handle-out {
