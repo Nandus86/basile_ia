@@ -929,15 +929,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                     return END
                 return "tools"
 
-            def after_tools_edge(state: AgentExecState) -> str:
-                """Após execução de tools: se todas as ferramentas de finalização foram chamadas, encerra o grafo."""
-                called_tools = _get_called_tool_names(state)
-                for t_name in always_end_queue:
-                    if t_name not in called_tools:
-                        return "agent"
-                if always_end_queue:
-                    return END
-                return "agent"
+
 
             async def force_end_node(state: AgentExecState):
                 """Intercept quando o LLM tentou parar sem chamar always_end_queue.
@@ -964,7 +956,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             agent_graph.add_node("force_end", force_end_node)
             agent_graph.add_edge(START, "agent")
             agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-            agent_graph.add_conditional_edges("tools", after_tools_edge, ["agent", END])
+            agent_graph.add_edge("tools", "agent")     # Sempre volta ao agente para formular resposta final
             agent_graph.add_edge("force_end", "tools") # Força execução da always_end e volta para agent finalizar
 
             react_agent = agent_graph.compile()
@@ -1314,15 +1306,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                         return {"messages": [response]}
             return {"messages": []}
 
-        def after_tools_edge(state: AgentExecState) -> str:
-            """Após execução de tools: se todas as ferramentas de finalização foram chamadas, encerra o grafo."""
-            called_tools = _get_called_tool_names(state)
-            for t_name in always_end_queue:
-                if t_name not in called_tools:
-                    return "agent"
-            if always_end_queue:
-                return END
-            return "agent"
+
 
         agent_graph = StateGraph(AgentExecState)
         agent_graph.add_node("agent", call_model_node)
@@ -1330,7 +1314,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         agent_graph.add_node("force_end", force_end_node)
         agent_graph.add_edge(START, "agent")
         agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-        agent_graph.add_conditional_edges("tools", after_tools_edge, ["agent", END])
+        agent_graph.add_edge("tools", "agent")     # Sempre volta ao agente para formular resposta final
         agent_graph.add_edge("force_end", "tools")
 
         return {
