@@ -714,7 +714,7 @@ async def retrigger_dispatcher_webhook(log_id: str, db: AsyncSession = Depends(g
         headers["X-API-Key"] = config.api_key
         
     # We trigger the disparador directly using the configured service URL.
-    disparador_url = f"{settings.DISPARADOR_SERVICE_URL}/webhook/trigger/personalizado/{log_entry.webhook_path}"
+    disparador_url = f"{settings.DISPARADOR_SERVICE_URL}/webhook/trigger/personalizado/{log_entry.webhook_path}?retrigger=true"
     
     # We create a new DispatcherWebhookLog for the new re-trigger execution
     new_log = DispatcherWebhookLog(
