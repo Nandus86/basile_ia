@@ -32,6 +32,7 @@
       <v-tab value="entradas">Entradas (Ingress)</v-tab>
       <v-tab value="notificacoes">Notificações</v-tab>
       <v-tab value="disparador">Disparador</v-tab>
+      <v-tab value="gatilhos-disparador">Gatilhos Disparador</v-tab>
       <v-tab value="automacao">Automação</v-tab>
     </v-tabs>
 
@@ -862,6 +863,134 @@
          </v-dialog>
       </v-window-item>
 
+      <v-window-item value="gatilhos-disparador">
+        <v-card class="glass-card">
+          <v-card-title class="d-flex align-center px-6 py-4">
+            <v-icon class="mr-2" color="primary">mdi-webhook</v-icon>
+            <span class="text-white font-weight-medium">Gatilhos do Disparador (Webhooks Recebidos)</span>
+            <v-spacer></v-spacer>
+            <v-btn color="primary" variant="tonal" prepend-icon="mdi-refresh" size="small" @click="fetchGatilhos" :loading="gatilhosLoading">
+              Atualizar
+            </v-btn>
+          </v-card-title>
+          
+          <v-divider></v-divider>
+
+          <v-card-text class="px-6 py-4">
+            <v-row dense>
+              <v-col cols="12" sm="6" md="4">
+                <v-text-field
+                  v-model="gatilhosSearchPath"
+                  prepend-inner-icon="mdi-magnify"
+                  placeholder="Buscar Path (ex: minha-campanha)..."
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  @keyup.enter="fetchGatilhos"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" sm="6" md="4">
+                <v-select
+                  v-model="gatilhosStatusFilter"
+                  :items="[
+                    { title: 'Todos', value: null },
+                    { title: 'Sucesso', value: 'success' },
+                    { title: 'Pendente', value: 'pending' },
+                    { title: 'Erro', value: 'failed' },
+                    { title: 'Erro de Validação', value: 'validation_error' },
+                    { title: 'Não Autorizado', value: 'unauthorized' }
+                  ]"
+                  item-title="title"
+                  item-value="value"
+                  label="Status"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  @update:model-value="fetchGatilhos"
+                ></v-select>
+              </v-col>
+            </v-row>
+          </v-card-text>
+
+          <v-divider></v-divider>
+
+          <v-data-table
+            :headers="[
+              { title: 'Data/Hora', key: 'created_at', width: '180px' },
+              { title: 'Webhook Path', key: 'webhook_path' },
+              { title: 'Contatos', key: 'contact_count', align: 'center', width: '110px' },
+              { title: 'Código HTTP', key: 'status_code', align: 'center', width: '120px' },
+              { title: 'Duração', key: 'duration_ms', align: 'center', width: '110px' },
+              { title: 'Status', key: 'status', align: 'center', width: '150px' },
+              { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '120px' }
+            ]"
+            :items="gatilhosLogs"
+            :loading="gatilhosLoading"
+            hover
+            hide-default-footer
+            class="bg-transparent"
+          >
+            <template v-slot:item.created_at="{ item }">
+              <span class="text-body-2">{{ formatDate(item.created_at) }}</span>
+            </template>
+
+            <template v-slot:item.webhook_path="{ item }">
+              <v-chip variant="outlined" color="primary" size="small">
+                /webhook/{{ item.webhook_path }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.contact_count="{ item }">
+              <v-chip size="x-small" color="info" variant="flat">
+                {{ item.contact_count }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.status_code="{ item }">
+              <v-chip v-if="item.status_code" :color="item.status_code < 400 ? 'success' : 'error'" size="x-small" variant="tonal">
+                {{ item.status_code }}
+              </v-chip>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
+
+            <template v-slot:item.duration_ms="{ item }">
+              <span v-if="item.duration_ms" class="text-body-2">
+                <v-icon size="12" class="mr-1">mdi-timer-outline</v-icon>
+                {{ item.duration_ms }} ms
+              </span>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
+
+            <template v-slot:item.status="{ item }">
+              <v-chip :color="getGatilhoStatusColor(item.status)" size="small" variant="tonal">
+                <v-icon start size="12">{{ getGatilhoStatusIcon(item.status) }}</v-icon>
+                {{ getGatilhoStatusLabel(item.status) }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.actions="{ item }">
+              <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-eye" @click="openGatilhoDetails(item)">
+                Ver
+              </v-btn>
+            </template>
+
+            <template v-slot:bottom>
+              <div class="d-flex align-center justify-end pa-4 border-t" style="gap: 16px;">
+                <v-pagination
+                  v-model="gatilhosPage"
+                  :length="Math.ceil(gatilhosTotal / gatilhosItemsPerPage) || 1"
+                  density="compact"
+                  total-visible="5"
+                  active-color="primary"
+                ></v-pagination>
+              </div>
+            </template>
+          </v-data-table>
+        </v-card>
+      </v-window-item>
+
       <v-window-item value="automacao">
         <!-- Selector and Action Bar -->
         <v-card class="glass-card mb-6">
@@ -1274,7 +1403,116 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    
+
+    <!-- Dialog de Detalhes do Gatilho do Disparador -->
+    <v-dialog v-model="gatilhosDialog" max-width="950" scrollable>
+      <v-card class="glass-card" style="background: #0D1117 !important" v-if="selectedGatilhoLog">
+        <v-card-title class="d-flex align-center pa-5 border-b">
+          <v-icon class="mr-2" size="24" :color="getGatilhoStatusColor(selectedGatilhoLog.status)">
+            {{ getGatilhoStatusIcon(selectedGatilhoLog.status) }}
+          </v-icon>
+          <div>
+            <span class="text-subtitle-1 font-weight-bold text-white">Log do Gatilho: {{ selectedGatilhoLog.id.substring(0, 8) }}</span>
+            <div class="text-caption text-medium-emphasis mt-n1">
+              Recebido em {{ formatDate(selectedGatilhoLog.created_at) }} • Duração: {{ selectedGatilhoLog.duration_ms || 0 }} ms
+            </div>
+          </div>
+          <v-spacer />
+          <v-chip :color="getGatilhoStatusColor(selectedGatilhoLog.status)" size="small" class="mr-3" variant="flat">
+            {{ getGatilhoStatusLabel(selectedGatilhoLog.status) }}
+          </v-chip>
+          <v-btn icon variant="text" size="small" @click="gatilhosDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-tabs v-model="gatilhoDetailTab" color="primary" class="border-b">
+          <v-tab value="general">Geral / Resposta</v-tab>
+          <v-tab value="raw">Payload Recebido (Request)</v-tab>
+        </v-tabs>
+
+        <v-card-text class="pa-5" style="max-height: 650px; overflow-y: auto;">
+          <!-- TAB: GERAL -->
+          <div v-if="gatilhoDetailTab === 'general'">
+            <v-row>
+              <v-col cols="12" md="6">
+                <div class="text-caption text-medium-emphasis mb-1">Path do Webhook</div>
+                <div class="text-body-2 font-weight-bold text-white">/webhook/{{ selectedGatilhoLog.webhook_path }}</div>
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="text-caption text-medium-emphasis mb-1">Quantidade de Contatos</div>
+                <div class="text-body-2 font-weight-bold text-white">{{ selectedGatilhoLog.contact_count }} contatos</div>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <v-row>
+              <v-col cols="12" sm="6">
+                <div class="text-caption text-medium-emphasis mb-1">Código de Resposta HTTP</div>
+                <v-chip v-if="selectedGatilhoLog.status_code" :color="selectedGatilhoLog.status_code < 400 ? 'success' : 'error'" size="small">
+                  {{ selectedGatilhoLog.status_code }}
+                </v-chip>
+                <div v-else class="text-body-2 text-medium-emphasis">—</div>
+              </v-col>
+              <v-col cols="12" sm="6">
+                <div class="text-caption text-medium-emphasis mb-1">Status Final</div>
+                <v-chip :color="getGatilhoStatusColor(selectedGatilhoLog.status)" size="small" variant="flat">
+                  {{ getGatilhoStatusLabel(selectedGatilhoLog.status) }}
+                </v-chip>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Error message if any -->
+            <div v-if="selectedGatilhoLog.error_message" class="mb-4">
+              <h4 class="text-subtitle-2 font-weight-bold text-error mb-2">Mensagem de Erro</h4>
+              <v-alert type="error" variant="tonal" class="text-caption">
+                <pre style="white-space: pre-wrap; font-family: monospace;">{{ selectedGatilhoLog.error_message }}</pre>
+              </v-alert>
+            </div>
+
+            <!-- Disparador Response Body if any -->
+            <div>
+              <h4 class="text-subtitle-2 font-weight-bold text-white mb-2">Resposta do Disparador</h4>
+              <v-sheet rounded class="code-sheet pa-4" v-if="selectedGatilhoLog.response_payload">
+                <pre>{{ formatJSON(selectedGatilhoLog.response_payload) }}</pre>
+              </v-sheet>
+              <div v-else class="text-medium-emphasis font-italic text-body-2">Nenhuma resposta gravada.</div>
+            </div>
+          </div>
+
+          <!-- TAB: RAW REQUEST -->
+          <div v-else-if="gatilhoDetailTab === 'raw'">
+            <div class="d-flex justify-space-between align-center mb-2">
+              <span class="text-caption text-medium-emphasis">Exibindo payload recebido cru da requisição</span>
+              <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedGatilhoLog.request_payload)">
+                Copiar Payload
+              </v-btn>
+            </div>
+            <v-sheet rounded class="code-sheet pa-4">
+              <pre>{{ formatJSON(selectedGatilhoLog.request_payload) }}</pre>
+            </v-sheet>
+          </div>
+        </v-card-text>
+
+        <v-card-actions class="pa-4 border-t">
+          <v-btn
+            color="success"
+            variant="flat"
+            prepend-icon="mdi-send-clock"
+            :loading="retriggeringGatilho"
+            @click="retriggerGatilho(selectedGatilhoLog.id)"
+          >
+            Re-disparar (Nova Chamada)
+          </v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="gatilhosDialog = false" :disabled="retriggeringGatilho">Fechar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="3000" location="bottom right">
       {{ snackbar.text }}
     </v-snackbar>
@@ -1309,6 +1547,20 @@ const ingressStatusFilter = ref(null)
 const ingressDialog = ref(false)
 const selectedIngressLog = ref(null)
 const ingressDetailTab = ref('general')
+
+// Gatilhos Disparador State
+const gatilhosLogs = ref([])
+const gatilhosTotal = ref(0)
+const gatilhosPage = ref(1)
+const gatilhosItemsPerPage = ref(20)
+const gatilhosLoading = ref(false)
+const gatilhosSearchPath = ref('')
+const gatilhosStatusFilter = ref(null)
+const gatilhosDialog = ref(false)
+const selectedGatilhoLog = ref(null)
+const gatilhoDetailTab = ref('general')
+const retriggeringGatilho = ref(false)
+
 
 // Debounce utility for search inputs
 let _debounceTimer = null
@@ -2225,6 +2477,96 @@ const getIngressStatusIcon = (status) => {
   }[status] || 'mdi-help-circle'
 }
 
+// ── Gatilhos Disparador Functions ──
+const fetchGatilhos = async () => {
+  gatilhosLoading.value = true
+  try {
+    const skip = (gatilhosPage.value - 1) * gatilhosItemsPerPage.value
+    let url = `/tracking/dispatcher-webhooks?skip=${skip}&limit=${gatilhosItemsPerPage.value}`
+
+    const statusVal = gatilhosStatusFilter.value
+    if (statusVal && statusVal !== 'null' && String(statusVal).trim() !== '') {
+      url += `&status=${encodeURIComponent(statusVal)}`
+    }
+
+    const pathVal = gatilhosSearchPath.value
+    if (pathVal && pathVal !== 'null' && String(pathVal).trim() !== '') {
+      url += `&path=${encodeURIComponent(pathVal)}`
+    }
+
+    const { data } = await axiosInstance.get(url)
+    gatilhosLogs.value = data.items || []
+    gatilhosTotal.value = data.total || 0
+  } catch (e) {
+    showSnackbar('Erro ao carregar logs de gatilhos do disparador', 'error')
+  } finally {
+    gatilhosLoading.value = false
+  }
+}
+
+const openGatilhoDetails = async (log) => {
+  try {
+    const { data } = await axiosInstance.get(`/tracking/dispatcher-webhooks/${log.id}`)
+    selectedGatilhoLog.value = data
+    gatilhoDetailTab.value = 'general'
+    gatilhosDialog.value = true
+  } catch (e) {
+    showSnackbar('Erro ao carregar detalhes do gatilho', 'error')
+  }
+}
+
+const retriggerGatilho = async (logId) => {
+  retriggeringGatilho.value = true
+  try {
+    const { data } = await axiosInstance.post(`/tracking/dispatcher-webhooks/${logId}/retrigger`)
+    if (data.success) {
+      showSnackbar(`Re-disparo realizado com sucesso! Status: ${data.status_code}`, 'success')
+    } else {
+      showSnackbar(`Re-disparo retornou status ${data.status_code}`, 'warning')
+    }
+    // Refresh logs list to show the new re-triggered log entry
+    await fetchGatilhos()
+  } catch (e) {
+    showSnackbar(e.response?.data?.detail || 'Erro ao re-disparar gatilho', 'error')
+  } finally {
+    retriggeringGatilho.value = false
+  }
+}
+
+const getGatilhoStatusColor = (status) => {
+  return {
+    'success': 'success',
+    'pending': 'warning',
+    'failed': 'error',
+    'validation_error': 'deep-orange',
+    'unauthorized': 'error'
+  }[status] || 'grey'
+}
+
+const getGatilhoStatusIcon = (status) => {
+  return {
+    'success': 'mdi-check-circle',
+    'pending': 'mdi-clock-outline',
+    'failed': 'mdi-alert-circle',
+    'validation_error': 'mdi-alert-circle-outline',
+    'unauthorized': 'mdi-lock-alert'
+  }[status] || 'mdi-help-circle'
+}
+
+const getGatilhoStatusLabel = (status) => {
+  return {
+    'success': 'SUCESSO',
+    'pending': 'PENDENTE',
+    'failed': 'FALHOU',
+    'validation_error': 'VALIDAÇÃO',
+    'unauthorized': 'NÃO AUTORIZADO'
+  }[status] || (status ? status.toUpperCase() : '—')
+}
+
+watch(gatilhosPage, () => {
+  fetchGatilhos()
+})
+
 watch(ingressSearchPath, () => {
   clearTimeout(_debounceTimer)
   _debounceTimer = setTimeout(() => {
@@ -2247,6 +2589,8 @@ watch(activeTab, (newTab) => {
     fetchWorkflows()
   } else if (newTab === 'entradas') {
     fetchIngressLogs()
+  } else if (newTab === 'gatilhos-disparador') {
+    fetchGatilhos()
   }
 })
 
@@ -2271,6 +2615,7 @@ onMounted(() => {
   fetchDisparadorData()
   fetchWorkflows()
   fetchIngressLogs()
+  fetchGatilhos()
   connectSSE()
 })
 

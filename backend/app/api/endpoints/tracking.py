@@ -620,3 +620,157 @@ async def stream_job_updates(request: Request):
             "X-Accel-Buffering": "no",
         }
     )
+
+# ─────────────────────────────────────────────────
+# Dispatcher Incoming Webhook Logs (Dashboard)
+# ─────────────────────────────────────────────────
+
+from app.models.dispatcher_webhook_log import DispatcherWebhookLog
+from app.schemas.dispatcher_webhook_log import DispatcherWebhookLogSchema
+import time
+import httpx
+from app.config import settings
+
+@router.get("/dispatcher-webhooks")
+async def get_dispatcher_webhook_logs(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    status: Optional[str] = None,
+    path: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get paginated and filtered logs of incoming dispatcher webhooks."""
+    query = select(DispatcherWebhookLog)
+    if status:
+        query = query.where(DispatcherWebhookLog.status == status)
+    if path:
+        query = query.where(DispatcherWebhookLog.webhook_path.ilike(f"%{path}%"))
+        
+    count_query = select(func.count()).select_from(query.subquery())
+    total_res = await db.execute(count_query)
+    total = total_res.scalar_one()
+    
+    query = query.order_by(desc(DispatcherWebhookLog.created_at)).offset(skip).limit(limit)
+    res = await db.execute(query)
+    logs = res.scalars().all()
+    
+    items = []
+    for log in logs:
+        item = DispatcherWebhookLogSchema.model_validate(log)
+        # Exclude large payloads for list performance
+        item.request_payload = None
+        item.response_payload = None
+        items.append(item)
+        
+    return {
+        "items": items,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
+
+@router.get("/dispatcher-webhooks/{log_id}")
+async def get_dispatcher_webhook_log_detail(log_id: str, db: AsyncSession = Depends(get_db)):
+    """Get detail (including payloads) for a specific dispatcher webhook log."""
+    import uuid as uuid_mod
+    try:
+        uuid_id = uuid_mod.UUID(log_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid log ID format")
+        
+    query = select(DispatcherWebhookLog).where(DispatcherWebhookLog.id == uuid_id)
+    res = await db.execute(query)
+    log_entry = res.scalar_one_or_none()
+    
+    if not log_entry:
+        raise HTTPException(status_code=404, detail="Dispatcher webhook log not found")
+        
+    return DispatcherWebhookLogSchema.model_validate(log_entry)
+
+@router.post("/dispatcher-webhooks/{log_id}/retrigger")
+async def retrigger_dispatcher_webhook(log_id: str, db: AsyncSession = Depends(get_db)):
+    """Retrigger a saved dispatcher webhook payload by issuing a new request internally."""
+    import uuid as uuid_mod
+    try:
+        uuid_id = uuid_mod.UUID(log_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid log ID format")
+        
+    query = select(DispatcherWebhookLog).where(DispatcherWebhookLog.id == uuid_id)
+    res = await db.execute(query)
+    log_entry = res.scalar_one_or_none()
+    
+    if not log_entry:
+        raise HTTPException(status_code=404, detail="Log entry not found")
+        
+    # Find api key configured for this path in dispatcher_configs
+    from app.models.dispatcher_config import DispatcherConfig
+    config_query = select(DispatcherConfig).where(DispatcherConfig.path == log_entry.webhook_path)
+    config_res = await db.execute(config_query)
+    config = config_res.scalar_one_or_none()
+    
+    headers = {}
+    if config and config.api_key:
+        headers["X-API-Key"] = config.api_key
+        
+    # We trigger the disparador directly using the configured service URL.
+    disparador_url = f"{settings.DISPARADOR_SERVICE_URL}/webhook/trigger/personalizado/{log_entry.webhook_path}"
+    
+    # We create a new DispatcherWebhookLog for the new re-trigger execution
+    new_log = DispatcherWebhookLog(
+        webhook_path=log_entry.webhook_path,
+        status="pending",
+        request_payload=log_entry.request_payload,
+        contact_count=log_entry.contact_count
+    )
+    db.add(new_log)
+    await db.commit()
+    await db.refresh(new_log)
+    
+    start_time = time.time()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(disparador_url, json=log_entry.request_payload, headers=headers)
+            duration_ms = int((time.time() - start_time) * 1000)
+            
+            try:
+                response_data = resp.json()
+            except Exception:
+                response_data = {"text": resp.text}
+                
+            new_log.status_code = resp.status_code
+            new_log.duration_ms = duration_ms
+            new_log.response_payload = response_data
+            
+            if resp.status_code >= 400:
+                if resp.status_code == 422:
+                    new_log.status = "validation_error"
+                elif resp.status_code == 403:
+                    new_log.status = "unauthorized"
+                else:
+                    new_log.status = "failed"
+                
+                error_msg = None
+                if isinstance(response_data, dict):
+                    error_msg = response_data.get("detail") or response_data.get("message")
+                if not error_msg:
+                    error_msg = str(response_data)
+                new_log.error_message = error_msg
+            else:
+                new_log.status = "success"
+                
+            await db.commit()
+            return {
+                "success": resp.status_code < 400,
+                "new_log_id": str(new_log.id),
+                "status_code": resp.status_code,
+                "response": response_data
+            }
+        except Exception as e:
+            duration_ms = int((time.time() - start_time) * 1000)
+            new_log.status = "failed"
+            new_log.status_code = 500
+            new_log.error_message = str(e)
+            new_log.duration_ms = duration_ms
+            await db.commit()
+            raise HTTPException(status_code=500, detail=f"Failed to communicate with disparador: {e}")
