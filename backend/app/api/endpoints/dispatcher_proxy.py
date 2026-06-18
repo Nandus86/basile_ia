@@ -36,72 +36,10 @@ async def _proxy(method: str, path: str, request: Request, body_json: dict = Non
         return JSONResponse(content=content, status_code=resp.status_code)
 
 @router.post("/webhook/{path:path}")
-async def proxy_webhook(path: str, request: Request, db: AsyncSession = Depends(get_db)):
-    """Proxy incoming webhook payloads to the Disparador service and log the capture."""
+async def proxy_webhook(path: str, request: Request):
+    """Proxy incoming webhook payloads to the Disparador service without intercepting or logging."""
     body_json = await request.json()
-    
-    # Extract contact count
-    contact_count = 0
-    if isinstance(body_json, dict) and "contacts" in body_json:
-        contacts = body_json["contacts"]
-        if isinstance(contacts, list):
-            contact_count = len(contacts)
-            
-    # Create initial log entry
-    log_entry = DispatcherWebhookLog(
-        webhook_path=path,
-        status="pending",
-        request_payload=body_json,
-        contact_count=contact_count
-    )
-    db.add(log_entry)
-    await db.commit()
-    await db.refresh(log_entry)
-    
-    start_time = time.time()
-    try:
-        # Proxy to disparador (note: we proxy to trigger/personalizado/path internally)
-        proxy_response = await _proxy("POST", f"/webhook/trigger/personalizado/{path}", request, body_json)
-        duration_ms = int((time.time() - start_time) * 1000)
-        
-        status_code = proxy_response.status_code
-        response_data = None
-        try:
-            response_data = json.loads(proxy_response.body.decode('utf-8'))
-        except Exception:
-            response_data = {"text": proxy_response.body.decode('utf-8', errors='replace')}
-            
-        log_entry.status_code = status_code
-        log_entry.duration_ms = duration_ms
-        log_entry.response_payload = response_data
-        
-        if status_code >= 400:
-            if status_code == 422:
-                log_entry.status = "validation_error"
-            elif status_code == 403:
-                log_entry.status = "unauthorized"
-            else:
-                log_entry.status = "failed"
-            
-            error_msg = None
-            if isinstance(response_data, dict):
-                error_msg = response_data.get("detail") or response_data.get("message")
-            if not error_msg:
-                error_msg = str(response_data)
-            log_entry.error_message = error_msg
-        else:
-            log_entry.status = "success"
-            
-        await db.commit()
-        return proxy_response
-    except Exception as e:
-        duration_ms = int((time.time() - start_time) * 1000)
-        log_entry.status = "failed"
-        log_entry.status_code = 500
-        log_entry.error_message = str(e)
-        log_entry.duration_ms = duration_ms
-        await db.commit()
-        raise
+    return await _proxy("POST", f"/webhook/trigger/personalizado/{path}", request, body_json)
 
 # ── Dashboard GET routes ──────────────────────────────────────────────
 
