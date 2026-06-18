@@ -20,10 +20,13 @@ from pydantic import ValidationError
 from fastapi import Request
 import time
 
+from fastapi import Query
+
 @router.post("/trigger/personalizado/{path:path}", response_model=DispatchAcceptedResponse)
 async def receive_dispatch(
     path: str, 
     request: Request,
+    retrigger: bool = Query(False),
     x_api_key: str = Header(None, alias="X-API-Key"),
     db: AsyncSession = Depends(get_db)
 ):
@@ -67,22 +70,23 @@ async def receive_dispatch(
 
         # Idempotency Lock: Prevent external systems from sending duplicate requests
         campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
-        is_new_request = await disparador_redis.client.set(f"disp:idempotency:{campaign_key}", "1", nx=True, ex=604800) # 7 days TTL
-        if not is_new_request:
-            logger.warning(f"[Webhook] Duplicate request blocked for {campaign_key}. Returning success to stop external retries.")
-            response_data = DispatchAcceptedResponse(
-                service_id=payload.service_id,
-                campaign_key=campaign_key,
-                run_id="duplicate_ignored",
-                queued_count=0,
-                status="ignored_duplicate"
-            )
-            log_entry.status = "success"
-            log_entry.status_code = 200
-            log_entry.response_payload = response_data.model_dump()
-            log_entry.duration_ms = int((time.time() - start_time) * 1000)
-            await db.commit()
-            return response_data
+        if not retrigger:
+            is_new_request = await disparador_redis.client.set(f"disp:idempotency:{campaign_key}", "1", nx=True, ex=604800) # 7 days TTL
+            if not is_new_request:
+                logger.warning(f"[Webhook] Duplicate request blocked for {campaign_key}. Returning success to stop external retries.")
+                response_data = DispatchAcceptedResponse(
+                    service_id=payload.service_id,
+                    campaign_key=campaign_key,
+                    run_id="duplicate_ignored",
+                    queued_count=0,
+                    status="ignored_duplicate"
+                )
+                log_entry.status = "success"
+                log_entry.status_code = 200
+                log_entry.response_payload = response_data.model_dump()
+                log_entry.duration_ms = int((time.time() - start_time) * 1000)
+                await db.commit()
+                return response_data
         
         # Queue ID filter
         allowlist = config.queue_id_allowlist or []
