@@ -3275,6 +3275,65 @@ async def process_message_task(
             global_memory_enabled = agent_config.get("config", {}).get("memory_enabled", True)
             vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False) and global_memory_enabled
 
+            # ── Fast Path Greeting Check ──
+            if agent_config and not (context_data or {}).get("formulation_only", False) and (context_data or {}).get("outbound_mode") != "ai_formulated":
+                import re
+                normalized_msg = re.sub(r'[^\w\s]', '', message.lower()).strip()
+                normalized_msg = re.sub(r'\s+', ' ', normalized_msg)
+                greetings_set = {
+                    "oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", 
+                    "ola bom dia", "olá bom dia", "oi bom dia", "oi boa tarde", 
+                    "oi boa noite", "ola boa tarde", "ola boa noite", 
+                    "olá boa tarde", "olá boa noite"
+                }
+                if normalized_msg in greetings_set:
+                    greeting_config = agent_config.get("greeting_config", {"initial": "", "normal": ""})
+                    initial_text = greeting_config.get("initial", "")
+                    normal_text = greeting_config.get("normal", "")
+                    
+                    has_history = False
+                    if stm_enabled:
+                        history = await redis_client.get_conversation(session_id)
+                        if history:
+                            has_history = True
+                    
+                    if not has_history and global_memory_enabled and agent_id and session_id:
+                        has_history = await _check_mtm_has_history(db, agent_id, session_id)
+                    
+                    response_text = normal_text if has_history else initial_text
+                    if not response_text:
+                        response_text = "Olá! Como posso ajudar você hoje?"
+                    
+                    # Save to memory (STM & MTM)
+                    if stm_enabled:
+                        await redis_client.add_message(
+                            session_id=session_id, role="user", content=message, ttl_seconds=stm_ttl_seconds,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant", content=response_text, ttl_seconds=stm_ttl_seconds,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                    if agent_id and session_id:
+                        await _save_mtm_message(db, agent_id, session_id, "user", message)
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", response_text)
+                    
+                    processing_time = (time.time() - start_time) * 1000
+                    response_data = {
+                        "status": "completed",
+                        "response": response_text,
+                        "agent_used": f"{agent_config.get('name', 'Agent')} (Greeting Bypass)",
+                        "processing_time_ms": processing_time,
+                    }
+                    
+                    if monitor:
+                        monitor.log_progress("Interação de saudação resolvida pelo atalho rápido.")
+                        
+                    if callback_url:
+                        from app.worker.tasks import _send_callback
+                        await _send_callback(callback_url, response_data)
+                    return response_data
+
             # STM: load history
             history = []
             history_source = "NONE"
