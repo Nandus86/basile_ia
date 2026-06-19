@@ -4071,6 +4071,7 @@ async def process_message_task(
                 print(f"[Task] ✅ {agent_used} responded on try {retry_count+1}")
 
                 # Strip internal metadata tags that may leak into the response
+                import re
                 _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
                 output_text = _ctx_re.sub('', output_text).strip()
                 if isinstance(final_result, str):
