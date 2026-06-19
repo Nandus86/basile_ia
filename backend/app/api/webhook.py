@@ -749,7 +749,59 @@ async def process_message_stream(
                 
                 # Check for bypass mode (similar to production)
                 if agent_config.get("bypass_llm", False):
-                     yield f"data: {json.dumps({'type': 'chunk', 'data': f'[Bypass Mode] Mensagem: {message}'}, ensure_ascii=False)}\n\n"
+                     wf_result = None
+                     try:
+                         from app.services.workflow_engine import WorkflowEngine
+                         from sqlalchemy.orm import selectinload
+                         from sqlalchemy import select as sa_select
+                         from app.models.agent import Agent as AgentModel
+                         
+                         agent_obj_result = await db.execute(
+                             sa_select(AgentModel)
+                             .options(selectinload(AgentModel.workflows))
+                             .where(AgentModel.id == agent_id)
+                         )
+                         agent_with_wf = agent_obj_result.scalar_one_or_none()
+                         
+                         if agent_with_wf and agent_with_wf.workflows:
+                             active_workflows = [w for w in agent_with_wf.workflows if w.is_active]
+                             if active_workflows:
+                                 wf = active_workflows[0]
+                                 engine = WorkflowEngine(db)
+                                 trigger_data = (context_data or {}).copy()
+                                 trigger_data["message"] = message
+                                 trigger_data["session_id"] = session_id
+                                 
+                                 result_ctx = await engine.execute(
+                                     workflow_id=wf.id,
+                                     trigger_data=trigger_data,
+                                     trigger_type="bypass_auto_trigger",
+                                 )
+                                 
+                                 wf_result = result_ctx.get('result')
+                                 if isinstance(wf_result, dict):
+                                     if "result" in wf_result:
+                                         wf_result = wf_result["result"]
+                                     elif "saida" in wf_result:
+                                         saida_val = wf_result["saida"]
+                                         if isinstance(saida_val, dict) and "result" in saida_val:
+                                             wf_result = saida_val["result"]
+                                         else:
+                                             wf_result = saida_val
+
+                                 if wf_result is not None:
+                                     if isinstance(wf_result, (dict, list)):
+                                         wf_result = json.dumps(wf_result, ensure_ascii=False, indent=2)
+                                     else:
+                                         wf_result = str(wf_result)
+                                 else:
+                                     wf_result = f"Automação '{wf.name}' executada com sucesso."
+                     except Exception as e:
+                         print(f"[Stream] ❌ Error executing workflow during bypass: {e}")
+                         wf_result = f"Erro na automação: {str(e)}"
+                     
+                     output_text = wf_result if wf_result is not None else message
+                     yield f"data: {json.dumps({'type': 'chunk', 'data': output_text}, ensure_ascii=False)}\n\n"
                      yield f"data: {json.dumps({'type': 'final', 'data': 'completed'}, ensure_ascii=False)}\n\n"
                      return
 
