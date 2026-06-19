@@ -3302,7 +3302,32 @@ async def process_message_task(
                     
                     response_text = normal_text if has_history else initial_text
                     if not response_text:
-                        response_text = "Olá! Como posso ajudar você hoje?"
+                        # 1. Extrair os dados do payload
+                        ai_params = (context_data or {}).get("ai_params", {})
+                        church_data = (context_data or {}).get("church", {})
+                        member_data = (context_data or {}).get("member", {})
+                        global_data = (context_data or {}).get("global", {})
+                        
+                        # Valores base
+                        saudacao = ai_params.get("greeting") or "Olá"
+                        agente_nome = ai_params.get("name") or agent_config.get("name", "Assistente")
+                        igreja_nome = church_data.get("church_name") or "nossa igreja"
+                        
+                        # Limpar e pegar o primeiro nome do membro
+                        nome_completo = member_data.get("fullname") or member_data.get("name") or global_data.get("name") or ""
+                        nome_formatado = ""
+                        if nome_completo.strip():
+                            primeiro_nome = nome_completo.strip().split()[0].capitalize()
+                            import re
+                            primeiro_nome = re.sub(r'[^\w\s]', '', primeiro_nome)
+                            if primeiro_nome:
+                                nome_formatado = f" {primeiro_nome}"
+                        
+                        # 2. Montar a resposta dinâmica
+                        if not has_history:
+                            response_text = f"{saudacao}{nome_formatado}! Sou {agente_nome}, assistente da {igreja_nome} e estou aqui para lhe ajudar na comunicação e conexão com a nossa igreja. Me conta, qual o assunto você gostaria de tratar?"
+                        else:
+                            response_text = f"{saudacao}{nome_formatado}! Me conta, qual o assunto você gostaria de tratar?"
                     
                     # Save to memory (STM & MTM)
                     if stm_enabled:
