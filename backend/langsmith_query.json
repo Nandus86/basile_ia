@@ -1,0 +1,651 @@
+{
+  "runs": [
+    {
+      "name": "Agent: Sistema - General Orch",
+      "inputs": {
+        "messages": [
+          {
+            "content": "# SYSTEM\n- Fale apenas sobre assuntos referentes à igreja, incluindo a história da igreja.\n- Todos os usuários têm acesso às informações básicas da igreja (História da igreja, solicitações e pedidos).\n- Não emita opiniões pessoais. Seja neutro e educado.\n- Se o assunto fugir do escopo destas instruções, encerre o atendimento educadamente.\n- Refira-se a este software unicamente como \"Sistema da Igreja\". É estritamente proibido mencionar o nome real do sistema interno (Basiléia).\n- Confie apenas nas informações das ferramentas. Se não souber, pergunte. Se a ferramenta não retornar dados, não invente resultados em hipótese nenhuma.\n- SEMPRE que solicitarem um aniversário, verifique em metrics_report.\n- Antes de mudar um nome, SEMPRE solicite a confirmação do usuário.\n\n## ROLE (PAPEL)\nVocê é o **Agente Orquestrador (Roteador)**.\n- Sua função principal é classificar a intenção do usuário, validar suas permissões, selecionar e acionar o especialista correspondente.\n- **Regra Crítica**: Você **NÃO** deve responder diretamente ao usuário final, EXCETO durante o \"Fluxo de Usuário Não Cadastrado\". Toda resposta comum deve vir de um especialista e ser entregue via `executar_BasileIA_Resposta_Final`.\n\n---\n\n## COMO LER O CONTEXTO\nNo final deste prompt existe uma seção chamada **\"Dados de Contexto (Context Data)\"** com um JSON. Todos os dados do usuário, da igreja e das permissões estão lá. Sempre que precisar de um dado, consulte esse JSON usando os caminhos indicados abaixo.\n\n### Campos principais do contexto:\n| Dado | Caminho no JSON |\n|---|---|\n| Nome da Igreja | `church.church_name` |\n| Nome do Assistente | `ai_params.name` |\n| Nome do Usuário | `member.name` |\n| Função/Cargo do Usuário | `member.role` |\n| Versão da Bíblia | `ai_params.bible_version` |\n| Idioma de Preferência | `church.preferredLanguage` |\n| Rótulo para \"Célula\" | `ai_params.label_cell` |\n| Perfil de papel do membro | `member_fin.role_profile` |\n| Permissões do membro | `member_fin.permissions` (objeto com campos booleanos) |\n\n---\n\n## ⚡ FLUXO DE USUÁRIO NÃO CADASTRADO (PRIORIDADE MÁXIMA)\n**Condição de Ativação**: Se o valor de `member.name` nos Dados de Contexto contiver a palavra `\"WhatsApp\"`:\n1. **Exceção**: Se o usuário perguntar apenas o endereço da igreja ou os horários de cultos, você pode responder diretamente a essa informação sem exigir o cadastro.\n2. **Bloqueio**: Para qualquer outra solicitação, **PARE** todo o processamento normal. Não responda às solicitações da mensagem original até que o cadastro do nome seja concluído.\n3. **Fluxo de Cadastro**:\n   - Peça o nome do usuário (ex: *\"Para continuarmos, poderia me falar seu nome, por favor?\"*). **NÃO** peça \"nome completo\" e **NUNCA** diga que é para cadastrar no sistema.\n   - Se o usuário fornecer múltiplos nomes, peça para escolher apenas um.\n   - Confirme perguntando exatamente: *\"Seu nome é [nome]?\"*\n   - Se a resposta for \"sim\" ou confirmação, acione o especialista `consultar_BasileIA_Agente_de_Usuario` para salvar o nome.\n   - Envie o resultado final para `executar_BasileIA_Resposta_Final`.\n\n---\n\n## 🔑 MATRIZ DE ACESSO E PERMISSÕES (VERIFICAÇÃO DE SEGURANÇA)\n\n**COMO VERIFICAR PERMISSÕES**: Leia o objeto `member_fin.permissions` nos Dados de Contexto (JSON no final deste prompt). Cada campo dentro desse objeto é um booleano (`true` ou `false`). Verifique se o campo necessário existe e é `true`.\n\nAntes de acionar um especialista que exige permissão, valide conforme as regras abaixo:\n\n### Visitantes da Igreja (`visitor_action`)\n- **Permissão necessária**: O campo `member_fin.permissions.register_visitor` OU o campo `member_fin.permissions.edit_visitor` deve ser `true` nos Dados de Contexto.\n- **Se aprovado**: Acione `consultar_BasileIA_Agente_de_Visitante`.\n- **Se negado**: Informe que o usuário não tem permissão para esta ação.\n\n### Sistema Financeiro (`finance_action`)\n- **O que pertence aqui**: Apenas ações financeiras **administrativas** (registrar entradas/saídas, lançar despesas, conciliação, relatórios de caixa).\n- **Permissão necessária**: O campo `member_fin.permissions.financial_system` deve ser `true` nos Dados de Contexto.\n- **Se aprovado**: Acione `HTTP Financeiro manage_financial`.\n- **Se negado**: Informe que o usuário não tem permissão para ações financeiras administrativas.\n- **🚨 EXCEÇÃO IMPORTANTE**: Pedir o PIX ou dados bancários da igreja para dízimos, ofertas ou doações **NÃO é finance_action**. Isso é `church_info` (acesso livre para todos). Nunca exija permissão financeira para fornecer dados de PIX/conta bancária da igreja.\n\n### Relatórios (`metrics_report`)\n- **Permissão necessária**: O campo `member_fin.permissions.reports` deve ser `true` nos Dados de Contexto.\n- **Se aprovado**: Acione `consultar_BasileIA_Agente_de_Relatorios`.\n- **Se negado**: Informe que o usuário não tem permissão para acessar relatórios.\n\n### Ações de Células (`cell_action`)\n- **Nomenclatura**: Esta igreja usa um nome personalizado para \"célula\". Leia o campo `ai_params.label_cell` nos Dados de Contexto e use sempre esse termo nas suas respostas.\n- **Liderança**: Se o campo `member_fin.role_profile` nos Dados de Contexto contiver a palavra `leader`, trate o usuário como Líder de Célula (liberando funções de líder). Caso contrário, trate como participante comum.\n- **Rota**: Acione `consultar_BasileIA_Agente_de_Celulas_Orquestrador`. (Não exige permissão específica).\n\n---\n\n## 🎯 CLASSIFICAÇÃO DE INTENÇÕES E ROTAS\n\nClassifique a mensagem do usuário em um dos domínios abaixo e siga a rota descrita:\n\n- **`consentimento`**: Pedidos para não receber mais mensagens automáticas da igreja.\n  - *Rota*: Acionar `consultar_Consentimento`. Retorne uma resposta vazia `\"\"`, pois a automação do agente enviará a mensagem de saída.\n\n- **`church_info`**: Endereço, horários de culto, história da igreja, pastores cadastrados, e **o PIX/dados bancários da igreja para dízimos e ofertas**. *(Nota: Batismo é informação de igreja, não evento).*\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Informacao_Igreja`. (Acesso livre para todos os usuários).\n\n- **`event_query`**: Informações sobre eventos da igreja.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Eventos_Orquestrador`. (Se pedir todos ou mensagem vazia, use a ação de listar todos).\n\n- **`course_query`**: Informações sobre cursos da igreja.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Curso`. (Se pedir todos ou mensagem vazia, use a ação de listar todos).\n\n- **`help_request`**: Pedidos de oração, agendamento de atendimentos ou solicitações de ajuda.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Solicitacoes` (trate pedidos de oração como 'help_request' abrindo solicitação).\n\n- **`user_data_query`**: Consulta de dados cadastrais do próprio usuário.\n  - *Rota*: Acionar `HTTP Usuarios get_user_data`.\n\n- **`user_data_update`**: Alteração de dados cadastrais.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Usuario` (exige confirmação antes de alterar nomes).\n\n- **`finance_action`**: Registrar entradas/saídas, gerenciar fluxo de caixa ou consultar relatórios de despesas/receitas, fazer lançamentos financeiros.\n  - *Observação*: pode ser que o usuário solicite via transcrição de áudio, e pode ficar algo parecido com: 'Lance no dia 6 do 5, R$12,00, na conta ESPECI, oferta.' mas quer dizer: 'Inserir no dia 06 de maio, R$12,00, na conta ESPECI, oferta.\"; se chegar palavras de gatilhos como: lançar/lance, inserir/insira, e outros gatinhos financeiros, deve ser chamada a rota.\n  - *Rota*: Acionar `HTTP Financeiro manage_financial` (exige permissão `member_fin.permissions.financial_system = true`).\n\n---\n\n## 🛡️ REGRAS CRÍTICAS DE EXECUÇÃO\n\n1. **Apenas Um Especialista**: É proibido chamar mais de um especialista por turno.\n2. **Bloqueio de Domínio**: Após identificar a intenção, você não pode trocar de domínio (ex: de evento para curso) na mesma interação.\n3. **Sem Ação Automática**: Nunca execute cadastros ou alterações no banco de dados sem a confirmação explícita (\"sim\") do usuário.\n4. **Suficiência**: Se você já tem informações suficientes no contexto atual, não acione novas ferramentas.\n5. **Saída Obrigatória**: O envio da resposta final deve ser sempre realizado através da ferramenta `executar_BasileIA_Resposta_Final`.\n6. **Comando de Escape**: Se a mensagem contiver \"falar com humano\" ou \"assunto interno:\", não chame nenhum especialista e envie resposta vazia.\n7. **Versículos**: Ao citar versículos bíblicos, leia o campo `ai_params.bible_version` e o campo `church.preferredLanguage` nos Dados de Contexto e utilize obrigatoriamente essa versão e esse idioma.\n\n---\n\n## 🔧 ADMINISTRAÇÃO\nSe a mensagem contiver o código `{ADMIN_BASILE}`:\n- Trate como um comando de treinamento.\n- Salve/aplique a memória no agente correto.\n\n\n## Diretrizes de Formatação e Resposta\n1. Você verá metadados temporais no histórico de mensagens como `[CONTEXTO_TEMPORAL: ...]`. Use essas informações APENAS para cronologia interna da conversa.\n2. NUNCA inclua esses carimbos de data, horários ou quaisquer prefixos de metadados de tempo no início ou em qualquer parte de sua resposta final.\nSua resposta deve ser natural e focada apenas no conteúdo solicitado pelo usuário.\n\n## 🎯 Como as Skills Funcionam\n\nVocê não tem acesso às skills por padrão. Quando o usuário solicitar uma ação, \no sistema injetará automaticamente o FLUXO DE EXECUÇÃO necessário.\n\nSiga as etapas do fluxo NA ORDEM EXATA, sem pular. Se uma etapa tem {{ $HITL }},\nvocê DEVE aguardar a resposta do usuário antes de continuar para a próxima etapa.\n\n\n## Regra de Encerramento Subentendido\nCaso a mensagem atual do usuário seja EXCLUSIVAMENTE um agradecimento final, despedida ou negação de mais ajuda (ex: 'não, era só isso, obrigado', 'tchau', 'valeu'), e NÃO contenha nenhuma nova solicitação, você DEVE responder EXATAMENTE E APENAS com o código: `[FIM_DE_INTERACAO]`.\n\n## Atenção aos Metadados Temporais\nAs mensagens no histórico contêm o prefixo `[CONTEXTO_TEMPORAL: ...]`. Este prefixo NÃO faz parte do conteúdo da mensagem e NUNCA deve ser incluído na sua resposta.\n\n## Data e Hora Local do Sistema\nAbaixo estão os dados temporais deste exato momento. Use isso para calcular prazos, responder se é dia/noite ou comparar com as datas gravadas nas memórias (que também possuem timestamp).\n- Data/Hora legível: Thursday, 18/06/2026 10:50:35 (Fuso: America/Sao_Paulo)\n- Timestamp ISO: 2026-06-18T10:50:35.842572-03:00\n- Última interação detectada: 18/06/2026 10:46:23 (há 0h e 4min)\n- **DIRETRIZ DE SAUDAÇÃO**: 🚨 REGRA CRÍTICA DE SAUDAÇÃO: ÚLTIMA INTERAÇÃO HÁ MENOS DE 12H. **NÃO SAUDE O USUÁRIO**. Vá direto ao ponto, sem 'Paz do Senhor', 'Olá', 'Tudo bem?' ou 'Como posso ajudar?'.\n\n\n## Continuidade do Atendimento\n\nEste contato foi atendido anteriormente pelo agente \"Sistema - General Orch\".\nAgentes que já participaram desta sessão: Sistema - General Orch.\nConsidere este histórico para manter a fluidez do atendimento.\n\n\n## ⚠️ Correções e Preferências do Usuário (PRIORIDADE MÁXIMA)\n\nAs seguintes correções e preferências foram feitas PELO PRÓPRIO USUÁRIO. NUNCA repita os erros corrigidos abaixo. Respeite as preferências SEMPRE:\n\n- ⚠️ CORREÇÃO: Lembrar: O usuário cumprimentou com \"boa tarde\", indicando que já não é mais de manhã. Ajustar cumprimentos de acordo com a hora local.\n- ⚠️ CORREÇÃO: Lembrar: O usuário está pedindo a data atual. Responder diretamente à pergunta sobre o dia.\n- ⚠️ CORREÇÃO: Lembrar: O usuário se chama Fernando. Não usar \"senhor\" ao se referir a ele.\n- ⚠️ CORREÇÃO: Lembrar: O usuário se chama Fernando. Sempre usar o nome correto ao se dirigir a ele.\n- ⚠️ CORREÇÃO: Lembrar: O usuário se chama Fernando. Sempre usar o nome correto ao se dirigir a ele.\n- 💡 PREFERÊNCIA: PREFERÊNCIA: O usuário se chama Fernando.\n- 💡 PREFERÊNCIA: PREFERÊNCIA: \"Prefere comunicação mais humana.\"\n- 💡 PREFERÊNCIA: PREFERÊNCIA: \"Prefere registrar em outro dia.\"\n\n\n## Inteligência e Memória Histórica do Contato\n\nAbaixo estão informações e peculiaridades qualitativas deste usuário, adquiridas em interações anteriores. A data entre colchetes indica quando o fato foi registrado. Utilize isso para personalizar ativamente o engajamento de maneira natural:\n\n- [01/06/2026] Fernando tem um padrão de comunicação que inclui saudações como \"boa tarde\", \"bom dia\" e \"boa noite\".\n- [11/06/2026] Costuma responder de madrugada.\n- [29/05/2026] Seu nome é Fernando Dias de Oliveira\n- [08/06/2026] Costuma responder de madrugada\n- [08/06/2026] Costuma responder de madrugada\n\n\n## 🔧 Auto-Aprendizado do Agente (Lições Anteriores)\n\nEm interações passadas, você cometeu os erros abaixo e aprendeu a corrigi-los. NÃO repita esses erros:\n\n- 🔧 AUTO-CORREÇÃO: NÃO incluir saudações iniciais. O agente desejou um bom dia indevidamente.\n- 🔧 AUTO-CORREÇÃO: NÃO encerrar o atendimento com uma saudação ou desejo pessoal. O agente desejou uma boa tarde, o que é inadequado.\n- 🔧 AUTO-CORREÇÃO: NÃO emitir opiniões pessoais. O agente fez uma despedida inadequada ao desejar \"um bom dia\".\n- 🔧 AUTO-CORREÇÃO: NÃO usar saudações ou desejos após o encerramento do atendimento. O agente desejou \"dias abençoados\" indevidamente.\n- 🔧 AUTO-CORREÇÃO: NÃO emitir opiniões pessoais. O agente fez uma saudação e desejou um \"excelente dia\", o que é uma violação das regras.\n\n\n## Agentes Especialistas Disponíveis\n\nVocê tem acesso a agentes especialistas que podem ser acionados como ferramentas. Use-os quando a solicitação do usuário exigir uma especialidade que eles possuem.\nAgentes disponíveis: consultar_BasileIA_Agente_de_Solicita_o, consultar_BasileIA_Agente_de_Visitante, consultar_BasileIA_Agente_de_Curso, consultar_BasileIA_Agente_de_Relatorios, consultar_BasileIA_Agente_de_Usuario, consultar_BasileIA_Agente_de_Celulas_Orquestrador, consultar_BasileIA_Agente_de_Eventos_Orquestrador, consultar_BasileIA_Agente_de_Informacao_Igreja, consultar_Consentimento, consultar_Agente_Gestor, consultar_BasileIA_Resposta_Final\n\nDIRETRIZES DE ORQUESTRAÇÃO (OBRIGATÓRIO):\n1. ANÁLISE: Antes de chamar um especialista, avalie se a solicitação realmente requer expertise externa.\n2. INSTRUÇÃO CLARA: Ao acionar um especialista, envie uma instrução técnica e direta do que ele deve resolver. Inclua contexto relevante.\n3. PASSTHROUGH (REGRA CRÍTICA): Quando um especialista retornar uma resposta, ela JÁ ESTÁ formatada como mensagem final para o usuário. USE-A DIRETAMENTE. NÃO reescreva, não resuma, não adapte mensagens que já estão prontas. Apenas adapte o tom se ESTRITAMENTE necessário para manter coerência.\n4. HIERARQUIA: Você é o COORDENADOR. Os especialistas reportam a VOCÊ, não ao usuário final. Você é responsável pela qualidade da resposta final.\n5. NÃO REDUNDÂNCIA: Se você já possui informação suficiente na conversa ou no contexto, NÃO acione especialistas desnecessariamente.\n\n\n⏹️ TOOLS OBRIGATÓRIAS NO FINAL:\n- Você DEVE chamar a tool 'consultar_BasileIA_Resposta_Final' NO FINAL, imediatamente antes da resposta final ao usuário.\n\n## Automações Disponíveis\n\nVocê tem acesso a workflows de automação que executam pipelines de tarefas sem IA.\nAutomações: automacao_Consentimento_response\n\nDIRETRIZES DE AUTOMAÇÃO:\n1. Use automações para tarefas repetitivas que não precisam de análise ou criatividade.\n2. O payload deve ser um JSON string válido com os dados necessários.\n3. Os dados do contexto atual são mesclados automaticamente.\n\n\n## ESTADO DA CONVERSA: RECENTE (Fluxo Contínuo)\nInteração detectada na memória de curto prazo (Redis). REGRA ABSOLUTA: **NÃO USE SAUDAÇÕES**. Não utilize 'Paz do Senhor', 'Olá', 'Tudo bem?' ou qualquer cumprimento inicial. A conversa já está em andamento. Responda diretamente ao que foi solicitado.\n\n\n## Dados de Contexto (Context Data)\n\nO esquema esperado (Input Schema) é:\n{\n  \"ai_params\": {\n    \"type\": \"object\",\n    \"description\": \"Informações da Assistente Virtual\"\n  },\n  \"church\": {\n    \"type\": \"object\",\n    \"description\": \"Dados da Igreja\",\n    \"properties\": {\n      \"church_name\": {\n        \"type\": \"string\",\n        \"description\": \"Nome da igreja\"\n      }\n    }\n  },\n  \"member\": {\n    \"type\": \"object\",\n    \"description\": \"Dados do membro\",\n    \"properties\": {\n      \"fullname\": {\n        \"type\": \"string\",\n        \"description\": \"Nome completo do membro\"\n      },\n      \"role\": {\n        \"type\": \"string\",\n        \"description\": \"Função do membro na igreja\"\n      },\n      \"preferredLanguage\": {\n        \"type\": \"string\",\n        \"description\": \"Idioma OBRIGATÓRIO para o atendimento\"\n      }\n    }\n  },\n  \"member_fin\": {\n    \"type\": \"object\",\n    \"description\": \"Dados financeiros do membro\",\n    \"properties\": {\n      \"permissions\": {\n        \"type\": \"object\",\n        \"description\": \"Permissões do membro\",\n        \"properties\": {\n          \"register_member\": {\n            \"type\": \"boolean\"\n          },\n          \"edit_member\": {\n            \"type\": \"boolean\"\n          },\n          \"register_visitor\": {\n            \"type\": \"boolean\"\n          },\n          \"edit_visitor\": {\n            \"type\": \"boolean\"\n          },\n          \"reports\": {\n            \"type\": \"boolean\"\n          },\n          \"financial_system\": {\n            \"type\": \"boolean\"\n          }\n        }\n      },\n      \"permission_levels\": {\n        \"type\": \"array\",\n        \"description\": \"Níveis de permissão do membro\"\n      },\n      \"role_profile\": {\n        \"type\": \"string\",\n        \"description\": \"Perfil de papel do membro\"\n      }\n    }\n  }\n}\n\nOs seguintes dados foram fornecidos no contexto atual:\n{\n  \"ai_params\": {\n    \"_id\": \"6900140b37566ec5a70cc819\",\n    \"name\": \"Eva\",\n    \"pastors\": \"Vinicius\",\n    \"user_id\": \"68ff5a3c4177621d0b00faa8\",\n    \"greeting\": \"Paz do senhor\",\n    \"created_at\": \"2025-10-28T00:53:31.335000Z\",\n    \"label_cell\": \"Casa de Paz\",\n    \"updated_at\": \"2026-04-16T17:18:18.089000Z\",\n    \"description\": \"\",\n    \"disable_bot\": false,\n    \"bank_details\": \"Agradecemos a sua generosidade para realizar ofertas ou dízimos enviar no PIX: 74747474\",\n    \"bible_version\": \"King James\",\n    \"church_history\": \"A igreja nasceu em um momento onde Deus ....\",\n    \"social_projects\": \"Não temos\"\n  },\n  \"church\": {\n    \"church_name\": \"Igreja do Teste BASILÉIA\"\n  },\n  \"member\": {\n    \"fullname\": \"Fernando Dias de Oliveira\",\n    \"role\": \"member\"\n  },\n  \"member_fin\": {\n    \"permissions\": {\n      \"register_visitor\": true,\n      \"edit_visitor\": true,\n      \"reports\": true,\n      \"financial_system\": true\n    },\n    \"permission_levels\": [\n      \"network_manager\",\n      \"cell_manager\",\n      \"leader\",\n      \"member\"\n    ]\n  }\n}\n\nUse esses dados conforme necessário para ferramentas MCP e para basear suas respostas.\nNão preencha tags {{ $fromAI }} no texto da resposta ao usuário, em vez disso, utilize-os para completar argumentos nas ferramentas que solicitar.\n\n\n## Modo de Execução (Determinístico)\n- Modo resolvido deste turno: balanced\n- Você deve obedecer os limites de execução.\n\n\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: Skill Basileia Config.\n\n## Árvore de Ferramentas / MCPs Disponíveis\n- **execute_HTTP_Usu_rios_-_get_user_data**: Obtém os dados de cadastro do usuário.\n- **execute_HTTP_Usu_rios_-_register_visitant_qrcode**: Auto cadastra membro visitante via qr-code.\n- **execute_HTTP_Cursos_-_get_all_courses**: Obtém os dados de cadastro do usuário.\n- **execute_HTTP_Eventos_-_list_all_events**: Obtem os eventos criados pela igreja, esta tool não exibe se o membro esta inscrito ou não nos eventos. Não invente resposta.\n- **execute_HTTP_Financeiro_-_manage_financial**: Este MCP é responsável por se comunicar com o sistema financeiro.\n- **pesquisar_bases_globais**: Pesquisa global nas bases de informação associadas a este agente. Use para buscar em todas as bases vinculadas em uma única consulta.\n- **pesquisar_courses**: Pesquisa na base de informação 'Cursos'. Use esta ferramenta UMA VEZ para buscar informações relevantes. Descreva claramente o que deseja encontrar. NÃO repita a mesma busca.\n- **pesquisar_eventos**: Pesquisa na base de informação 'Eventos'. Use esta ferramenta UMA VEZ para buscar informações relevantes. Descreva claramente o que deseja encontrar. NÃO repita a mesma busca.\n- **consultar_BasileIA_Agente_de_Solicita_o**: Consulta o agente especialista 'BasileIA - Agente de Solicitação' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas solicitações do Sistema Basiléia. FERRAMENTAS: HTTP Solicitações - register_solicitation, HTTP Solicitações - get_all_solicitation, HTTP Solicitações - get_solicitation, HTTP Solicitações - update_solicitation, HTTP Solicitações - get_all_solicitation_responsible, HTTP Solicitações - remove_solicitation, HTTP Solicitações - update_status_served, HTTP Solicitações - list_solicitation_types. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Visitante**: Consulta o agente especialista 'BasileIA - Agente de Visitante' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelo gerenciamento dos Visitantes. Utilizar sempre que um membro líder ou responsável necessitar cadastrar ou verificar um visitante na igreja. Chamar este agente quando houver alguma relação com registro ou pesquisa de visitantes.. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Curso**: Consulta o agente especialista 'BasileIA - Agente de Curso' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelos cursos das igrejas via Sistema Basiléia. CAPACIDADES: Skill de Cursos: This capability retrieves a list of available courses. [Usa: Get All Courses, Course Subscribe, Check Course Registration, Remove Course Registration, Examples (Optional)] | FERRAMENTAS: HTTP Cursos - course_subscribe, HTTP Cursos - remove_course_registration, HTTP Cursos - check_course_registration, HTTP Cursos - get_all_courses. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Relatorios**: Consulta o agente especialista 'BasileIA - Agente de Relatorios' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelos relatórios das igrejas via Sistema Basiléia.. CAPACIDADES: Skill de Relatórios: Retorna a quantidade total de membros da igreja. [Usa: Obter Quantidade de Membros da Igreja, Obter Quantidade de Visitantes da Igreja, Consultar Aniversariantes, Obter Taxa de Presença de Evento, Obter Taxa de Presença de Curso, Obter Taxa de Presença de Célula, Obter Número de Membros da Célula, Obter Número de Visitantes da Célula, Obter Membros Recentes, Obter Visitantes Recentes]. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Usuario**: Consulta o agente especialista 'BasileIA - Agente de Usuario' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelos usuários/membros das igrejas via Sistema Basiléia. Este agente é para usuários em primeira pessoa, ou seja, quando for a ação para o próprio usuário.. CAPACIDADES: Skill de Usuario: This capability retrieves the logged-in user's registration data without requiring leader permission. [Usa: get_user_data, update_user_data_member, update_user_data_visitant, update_user_data_contact]. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Celulas_Orquestrador**: Consulta o agente especialista 'BasileIA - Agente de Celulas - Orquestrador' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas Células ou Grupos da Igreja. FERRAMENTAS: HTTP Celulas - cell_near_residence_member, HTTP Celulas - cell_near_residence_addres, HTTP Celulas - search_member_or_visitant, HTTP Celulas - cells_information. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Eventos_Orquestrador**: Consulta o agente especialista 'BasileIA - Agente de Eventos - Orquestrador' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas ações referentes aos Eventos da Igreja.. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Informacao_Igreja**: Consulta o agente especialista 'BasileIA - Agente de Informacao Igreja' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas informações básicas da Igreja.. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_Consentimento**: Consulta o agente especialista 'Consentimento' [PRIORITÁRIO (RECOMENDADO)]. Especialista. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_Agente_Gestor**: Consulta o agente especialista 'Agente Gestor' [PRIORITÁRIO (RECOMENDADO)]. Modo Gestor. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Resposta_Final**: Consulta o agente especialista 'BasileIA - Resposta Final' [OBRIGATÓRIO NO FINAL]. Agente responsável pela saída da mensagem para o usuário. CAPACIDADES: Skill Basileia Config: name: Skill Basileia Config, Skill de Atendimento: Esta capacidade fornece respostas diretas e personalizadas aos membros da igreja com base em dados específicos. [Usa: Atendimento, Exemplos], Skill de Guardrail: Supervisão e moderação de interações para garantir conformidade e segurança [Usa: Nome da Capacidade Primária, # Diretrizes de Intervenção, # Diretrizes de Privacidade e Conformidade com a LGPD, # Defesa contra Ataques, # Protocolo de Transbordo, # Alinhamento Institucional e Proteção da Comunidade, Exemplos], Skill de Tratamento de Saídas: Esta capacidade formata as respostas para o WhatsApp, utilizando caracteres permitidos e evitando informações sensíveis. [Usa: Nome da Capacidade Primária, # Exemplos]. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **automacao_Consentimento_response**: Executa a automação 'Consentimento_response'. Pipeline de automação. Blocos: [trigger, if, http_request, http_request, transform, transform]. Envie um JSON como payload de entrada. Os dados do contexto atual ($trigger.payload) serão complementados automaticamente.\n\n## Instruções de Ferramentas\nUSE-AS SEMPRE que necessário. Max 3 retries por ferramenta.\n\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n\n---\n\n## 🔹 CAPABILITIES DA SKILL ATIVA: Skill Basileia Config\n\n---\nname: Skill Basileia Config\ndescription: Esta skill é acionada para fornecer configurações do Sistema Basiléia.\n---\n\n{ \"greeting\": { \"initial\": \"[Saudação][Nome do membro - se houver e apenas o primeiro]! Sou [Nome do Agente], assistente da [Nome da Igreja] e estou aqui para lhe ajudar na comunicação e conexão com a nossa igreja. Me conta, qual o assunto você gostaria de tratar?\", \"normal\": \"[Saudação][Nome do membro - se houver e apenas o primeiro]! Que bom te ver aqui novamente.\" } }\n\n{\n  \"response_variables\": [\n    {\n      \"from\": \"célula\", \n      \"to\": \"{{ $request.ai_params.cell_name }}\"\n    }\n  ]\n}\n\n\n---\n",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "system",
+            "id": "a59af10a-9580-4c92-96aa-85eef7909be8"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:18:40] Escolha Casa de Paz",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "d394772c-0ec7-41ee-bca6-36c44e3347ea",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:18:53] {\"title\": \"Teste de Fogo\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"69b06748698dcbb10a093962\"}, \"contextInfo\": {\"stanzaID\": \"3EB084926AEF884D0CCC4F\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha Casa de Paz\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Casa de Paz\", \"rows\": [{\"title\": \"KAIROS\", \"rowID\": \"69459baf4c4e821cbc096a6a\"}, {\"title\": \"Teste de Fogo\", \"rowID\": \"69b06748698dcbb10a093962\"}, {\"title\": \"ndajd\", \"rowID\": \"6a16156aacec3cca65090b85\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "b63c692c-2edc-44b1-bf49-a698a8bf42d8"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:18:53] *📋 LISTA DE PRESENÇA*\n\n*👥 Membros:*\n1. Anthony Comercial\n2. Anthony Pessoal\n3. Comercial Tasi\n4. Everton Cícero\n5. Fernando Dias de Oliveira\n6. José da Silva\n7. Laudino\n\n*👤 Visitantes:*\n1. Caraboco\n2. Elton Fernandes da Silva\n3. Ferrerezi\n4. Jonas\n5. João das Neves\n6. Manuelzinho\n7. Silvestre Show\n8. Terezinha de Teste",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "b40a1c62-f80f-437d-8136-d0bf4592d5bc",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:19:31] {\"title\": \"Voltar ao início\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"voltar\"}, \"contextInfo\": {\"stanzaID\": \"3EB0EE42C8973A799FC64B\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"title\": \"*📋 LISTA DE PRESENÇA*\", \"description\": \"\\n*👥 Membros:*\\n1. Anthony Comercial\\n2. Anthony Pessoal\\n3. Comercial Tasi\\n4. Everton Cícero\\n5. Fernando Dias de Oliveira\\n6. José da Silva\\n7. Laudino\\n\\n*👤 Visitantes:*\\n1. Caraboco\\n2. Elton Fernandes da Silva\\n3. Ferrerezi\\n4. Jonas\\n5. João das Neves\\n6. Manuelzinho\\n7. Silvestre Show\\n8. Terezinha de Teste\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar ao início\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "8ba7c9cb-f9e0-474d-972b-bebbbf324969"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:19:31] *Modo Casa de Paz*",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "ab386a5e-c293-40c5-a577-e1c8c5202f0e",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:21:49] {\"title\": \"Registrar Presença\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"registrar\"}, \"contextInfo\": {\"stanzaID\": \"3EB0A496F3ADC2FF3B9B5A\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"*Modo Casa de Paz*\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Ação\", \"rows\": [{\"title\": \"Registrar Presença\", \"rowID\": \"registrar\"}, {\"title\": \"Listar Membros e Visitantes\", \"rowID\": \"listar_membros\"}, {\"title\": \"Adicionar - Membro\", \"rowID\": \"adicionar_membro\"}, {\"title\": \"Adicionar - Visitante\", \"rowID\": \"adicionar_visitante\"}, {\"title\": \"Remover - Membro ou Visitante\", \"rowID\": \"remover\"}, {\"title\": \"Informações Gerais\", \"rowID\": \"informacoes_celula\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Sair\", \"rowID\": \"Sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "ab6c6eee-21e5-422b-ae0f-4917e7a0242f"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:21:49] Em qual dia gostaria de registrar a presença?",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "ac5e1cab-737c-4b70-add7-433debb4a3f4",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:04] {\"title\": \"13/06/2026\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"2026-06-13\"}, \"contextInfo\": {\"stanzaID\": \"3EB09D16D60452FF41B272\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Em qual dia gostaria de registrar a presença?\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Data\", \"rows\": [{\"title\": \"18/06/2026\", \"rowID\": \"2026-06-18\"}, {\"title\": \"17/06/2026\", \"rowID\": \"2026-06-17\"}, {\"title\": \"16/06/2026\", \"rowID\": \"2026-06-16\"}, {\"title\": \"15/06/2026\", \"rowID\": \"2026-06-15\"}, {\"title\": \"14/06/2026\", \"rowID\": \"2026-06-14\"}, {\"title\": \"13/06/2026\", \"rowID\": \"2026-06-13\"}, {\"title\": \"12/06/2026\", \"rowID\": \"2026-06-12\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "badcc4db-a470-4e6c-a735-00e4db261862"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:04] Escolha Casa de Paz",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "07de08ac-2192-4c0b-82e7-2d97c590e781",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:29] {\"title\": \"Teste de Fogo\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"69b06748698dcbb10a093962\"}, \"contextInfo\": {\"stanzaID\": \"3EB03BF0CD8D5224D3E4B5\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha Casa de Paz\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Casa de Paz\", \"rows\": [{\"title\": \"KAIROS\", \"rowID\": \"69459baf4c4e821cbc096a6a\"}, {\"title\": \"Teste de Fogo\", \"rowID\": \"69b06748698dcbb10a093962\"}, {\"title\": \"ndajd\", \"rowID\": \"6a16156aacec3cca65090b85\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "45891c00-443e-41ff-bbea-123477bd757c"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:29] Escolha uma das opções:",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "01a7a2c2-07fe-493f-a791-321408f0f7b6",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:08] {\"title\": \"Registrar ausentes\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"lista_ausentes\"}, \"contextInfo\": {\"stanzaID\": \"3EB0D718F489394BCC7D71\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha uma das opções:\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Registrar\", \"rows\": [{\"title\": \"Todos estiveram presentes\", \"rowID\": \"todos\"}, {\"title\": \"Registrar ausentes\", \"rowID\": \"lista_ausentes\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "04fbb2bc-b18c-4286-8bf1-8670171f7111"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:08] Escolha uma das opções:",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "f9cd5718-1738-4d41-8b40-6f41d7775de2",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:48] {\"title\": \"Registrar\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"registrar\"}, \"contextInfo\": {\"stanzaID\": \"3EB02D3BA3AA108FAFD957\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha uma das opções:\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Registrar\", \"rows\": [{\"title\": \"Registrar\", \"rowID\": \"registrar\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "282fcb50-e974-4087-a809-138c08dc8600"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:48] Cadastro de presença da célula adicionado com sucesso!",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "c33f5a91-6dc8-4fa5-9705-8efe0e0c87d4",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 08:17:43] {\"title\": \"Registrar\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"registrar\"}, \"contextInfo\": {\"stanzaID\": \"3EB02D3BA3AA108FAFD957\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha uma das opções:\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Registrar\", \"rows\": [{\"title\": \"Registrar\", \"rowID\": \"registrar\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "3bf81944-29e0-4d5e-b05e-3511b4bff7c1"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 08:17:43] {\"_branch\": \"default\", \"_legacy_target\": null, \"_all_matches\": [], \"mode\": \"first_match\"}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "e2d4b861-0274-4a9b-bb62-6ddb82b33f30",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:13:50] modo lista de presença",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "be4473dd-7e45-446a-9604-aeb90eb37ed2"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:13:50] *Modo Casa de Paz*",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "8edb45e4-6814-496b-9cd1-065442b9458b",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:46:23] {\"title\": \"Sair\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"Sair\"}, \"contextInfo\": {\"stanzaID\": \"3EB01FD725F3A2384ED4E7\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"messageContextInfo\": {}, \"listMessage\": {\"title\": \"\", \"description\": \"*Modo Casa de Paz*\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Ação\", \"rows\": [{\"title\": \"Registrar Presença\", \"description\": \"\", \"rowID\": \"registrar\"}, {\"title\": \"Listar Membros e Visitantes\", \"description\": \"\", \"rowID\": \"listar_membros\"}, {\"title\": \"Adicionar - Membro\", \"description\": \"\", \"rowID\": \"adicionar_membro\"}, {\"title\": \"Adicionar - Visitante\", \"description\": \"\", \"rowID\": \"adicionar_visitante\"}, {\"title\": \"Remover - Membro ou Visitante\", \"description\": \"\", \"rowID\": \"remover\"}, {\"title\": \"Informações Gerais\", \"description\": \"\", \"rowID\": \"informacoes_celula\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Sair\", \"description\": \"\", \"rowID\": \"Sair\"}]}], \"footerText\": \"\"}}}, \"description\": \"\"}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "e8303190-bab7-4a90-ad2d-ba82be94f943"
+          },
+          {
+            "content": "olá. bom dia",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "ff9c0b09-9ef5-4aa1-b285-7cecaf5b9fe8"
+          }
+        ]
+      },
+      "inputs_preview": null,
+      "run_type": "chain",
+      "start_time": "2026-06-18T13:50:39.705670",
+      "end_time": "2026-06-18T13:50:54.817406",
+      "extra": {
+        "metadata": {
+          "agent_id": "3e290904-8860-43f9-81eb-544620071562",
+          "agent_name": "Sistema - General Orch",
+          "has_tools": true,
+          "ls_integration": "langgraph",
+          "ls_run_depth": 0,
+          "model": "qwen/qwen3.5-flash-02-23"
+        },
+        "runtime": {
+          "langchain_core_version": "1.4.7",
+          "langchain_version": "1.3.9",
+          "library": "langchain-core",
+          "library_version": "1.4.7",
+          "platform": "Linux-5.15.0-179-generic-x86_64-with-glibc2.41",
+          "py_implementation": "CPython",
+          "runtime": "python",
+          "runtime_version": "3.11.15",
+          "sdk": "langsmith-py",
+          "sdk_version": "0.8.16"
+        }
+      },
+      "error": null,
+      "execution_order": 1,
+      "serialized": null,
+      "outputs": {
+        "messages": [
+          {
+            "content": "# SYSTEM\n- Fale apenas sobre assuntos referentes à igreja, incluindo a história da igreja.\n- Todos os usuários têm acesso às informações básicas da igreja (História da igreja, solicitações e pedidos).\n- Não emita opiniões pessoais. Seja neutro e educado.\n- Se o assunto fugir do escopo destas instruções, encerre o atendimento educadamente.\n- Refira-se a este software unicamente como \"Sistema da Igreja\". É estritamente proibido mencionar o nome real do sistema interno (Basiléia).\n- Confie apenas nas informações das ferramentas. Se não souber, pergunte. Se a ferramenta não retornar dados, não invente resultados em hipótese nenhuma.\n- SEMPRE que solicitarem um aniversário, verifique em metrics_report.\n- Antes de mudar um nome, SEMPRE solicite a confirmação do usuário.\n\n## ROLE (PAPEL)\nVocê é o **Agente Orquestrador (Roteador)**.\n- Sua função principal é classificar a intenção do usuário, validar suas permissões, selecionar e acionar o especialista correspondente.\n- **Regra Crítica**: Você **NÃO** deve responder diretamente ao usuário final, EXCETO durante o \"Fluxo de Usuário Não Cadastrado\". Toda resposta comum deve vir de um especialista e ser entregue via `executar_BasileIA_Resposta_Final`.\n\n---\n\n## COMO LER O CONTEXTO\nNo final deste prompt existe uma seção chamada **\"Dados de Contexto (Context Data)\"** com um JSON. Todos os dados do usuário, da igreja e das permissões estão lá. Sempre que precisar de um dado, consulte esse JSON usando os caminhos indicados abaixo.\n\n### Campos principais do contexto:\n| Dado | Caminho no JSON |\n|---|---|\n| Nome da Igreja | `church.church_name` |\n| Nome do Assistente | `ai_params.name` |\n| Nome do Usuário | `member.name` |\n| Função/Cargo do Usuário | `member.role` |\n| Versão da Bíblia | `ai_params.bible_version` |\n| Idioma de Preferência | `church.preferredLanguage` |\n| Rótulo para \"Célula\" | `ai_params.label_cell` |\n| Perfil de papel do membro | `member_fin.role_profile` |\n| Permissões do membro | `member_fin.permissions` (objeto com campos booleanos) |\n\n---\n\n## ⚡ FLUXO DE USUÁRIO NÃO CADASTRADO (PRIORIDADE MÁXIMA)\n**Condição de Ativação**: Se o valor de `member.name` nos Dados de Contexto contiver a palavra `\"WhatsApp\"`:\n1. **Exceção**: Se o usuário perguntar apenas o endereço da igreja ou os horários de cultos, você pode responder diretamente a essa informação sem exigir o cadastro.\n2. **Bloqueio**: Para qualquer outra solicitação, **PARE** todo o processamento normal. Não responda às solicitações da mensagem original até que o cadastro do nome seja concluído.\n3. **Fluxo de Cadastro**:\n   - Peça o nome do usuário (ex: *\"Para continuarmos, poderia me falar seu nome, por favor?\"*). **NÃO** peça \"nome completo\" e **NUNCA** diga que é para cadastrar no sistema.\n   - Se o usuário fornecer múltiplos nomes, peça para escolher apenas um.\n   - Confirme perguntando exatamente: *\"Seu nome é [nome]?\"*\n   - Se a resposta for \"sim\" ou confirmação, acione o especialista `consultar_BasileIA_Agente_de_Usuario` para salvar o nome.\n   - Envie o resultado final para `executar_BasileIA_Resposta_Final`.\n\n---\n\n## 🔑 MATRIZ DE ACESSO E PERMISSÕES (VERIFICAÇÃO DE SEGURANÇA)\n\n**COMO VERIFICAR PERMISSÕES**: Leia o objeto `member_fin.permissions` nos Dados de Contexto (JSON no final deste prompt). Cada campo dentro desse objeto é um booleano (`true` ou `false`). Verifique se o campo necessário existe e é `true`.\n\nAntes de acionar um especialista que exige permissão, valide conforme as regras abaixo:\n\n### Visitantes da Igreja (`visitor_action`)\n- **Permissão necessária**: O campo `member_fin.permissions.register_visitor` OU o campo `member_fin.permissions.edit_visitor` deve ser `true` nos Dados de Contexto.\n- **Se aprovado**: Acione `consultar_BasileIA_Agente_de_Visitante`.\n- **Se negado**: Informe que o usuário não tem permissão para esta ação.\n\n### Sistema Financeiro (`finance_action`)\n- **O que pertence aqui**: Apenas ações financeiras **administrativas** (registrar entradas/saídas, lançar despesas, conciliação, relatórios de caixa).\n- **Permissão necessária**: O campo `member_fin.permissions.financial_system` deve ser `true` nos Dados de Contexto.\n- **Se aprovado**: Acione `HTTP Financeiro manage_financial`.\n- **Se negado**: Informe que o usuário não tem permissão para ações financeiras administrativas.\n- **🚨 EXCEÇÃO IMPORTANTE**: Pedir o PIX ou dados bancários da igreja para dízimos, ofertas ou doações **NÃO é finance_action**. Isso é `church_info` (acesso livre para todos). Nunca exija permissão financeira para fornecer dados de PIX/conta bancária da igreja.\n\n### Relatórios (`metrics_report`)\n- **Permissão necessária**: O campo `member_fin.permissions.reports` deve ser `true` nos Dados de Contexto.\n- **Se aprovado**: Acione `consultar_BasileIA_Agente_de_Relatorios`.\n- **Se negado**: Informe que o usuário não tem permissão para acessar relatórios.\n\n### Ações de Células (`cell_action`)\n- **Nomenclatura**: Esta igreja usa um nome personalizado para \"célula\". Leia o campo `ai_params.label_cell` nos Dados de Contexto e use sempre esse termo nas suas respostas.\n- **Liderança**: Se o campo `member_fin.role_profile` nos Dados de Contexto contiver a palavra `leader`, trate o usuário como Líder de Célula (liberando funções de líder). Caso contrário, trate como participante comum.\n- **Rota**: Acione `consultar_BasileIA_Agente_de_Celulas_Orquestrador`. (Não exige permissão específica).\n\n---\n\n## 🎯 CLASSIFICAÇÃO DE INTENÇÕES E ROTAS\n\nClassifique a mensagem do usuário em um dos domínios abaixo e siga a rota descrita:\n\n- **`consentimento`**: Pedidos para não receber mais mensagens automáticas da igreja.\n  - *Rota*: Acionar `consultar_Consentimento`. Retorne uma resposta vazia `\"\"`, pois a automação do agente enviará a mensagem de saída.\n\n- **`church_info`**: Endereço, horários de culto, história da igreja, pastores cadastrados, e **o PIX/dados bancários da igreja para dízimos e ofertas**. *(Nota: Batismo é informação de igreja, não evento).*\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Informacao_Igreja`. (Acesso livre para todos os usuários).\n\n- **`event_query`**: Informações sobre eventos da igreja.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Eventos_Orquestrador`. (Se pedir todos ou mensagem vazia, use a ação de listar todos).\n\n- **`course_query`**: Informações sobre cursos da igreja.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Curso`. (Se pedir todos ou mensagem vazia, use a ação de listar todos).\n\n- **`help_request`**: Pedidos de oração, agendamento de atendimentos ou solicitações de ajuda.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Solicitacoes` (trate pedidos de oração como 'help_request' abrindo solicitação).\n\n- **`user_data_query`**: Consulta de dados cadastrais do próprio usuário.\n  - *Rota*: Acionar `HTTP Usuarios get_user_data`.\n\n- **`user_data_update`**: Alteração de dados cadastrais.\n  - *Rota*: Acionar `consultar_BasileIA_Agente_de_Usuario` (exige confirmação antes de alterar nomes).\n\n- **`finance_action`**: Registrar entradas/saídas, gerenciar fluxo de caixa ou consultar relatórios de despesas/receitas, fazer lançamentos financeiros.\n  - *Observação*: pode ser que o usuário solicite via transcrição de áudio, e pode ficar algo parecido com: 'Lance no dia 6 do 5, R$12,00, na conta ESPECI, oferta.' mas quer dizer: 'Inserir no dia 06 de maio, R$12,00, na conta ESPECI, oferta.\"; se chegar palavras de gatilhos como: lançar/lance, inserir/insira, e outros gatinhos financeiros, deve ser chamada a rota.\n  - *Rota*: Acionar `HTTP Financeiro manage_financial` (exige permissão `member_fin.permissions.financial_system = true`).\n\n---\n\n## 🛡️ REGRAS CRÍTICAS DE EXECUÇÃO\n\n1. **Apenas Um Especialista**: É proibido chamar mais de um especialista por turno.\n2. **Bloqueio de Domínio**: Após identificar a intenção, você não pode trocar de domínio (ex: de evento para curso) na mesma interação.\n3. **Sem Ação Automática**: Nunca execute cadastros ou alterações no banco de dados sem a confirmação explícita (\"sim\") do usuário.\n4. **Suficiência**: Se você já tem informações suficientes no contexto atual, não acione novas ferramentas.\n5. **Saída Obrigatória**: O envio da resposta final deve ser sempre realizado através da ferramenta `executar_BasileIA_Resposta_Final`.\n6. **Comando de Escape**: Se a mensagem contiver \"falar com humano\" ou \"assunto interno:\", não chame nenhum especialista e envie resposta vazia.\n7. **Versículos**: Ao citar versículos bíblicos, leia o campo `ai_params.bible_version` e o campo `church.preferredLanguage` nos Dados de Contexto e utilize obrigatoriamente essa versão e esse idioma.\n\n---\n\n## 🔧 ADMINISTRAÇÃO\nSe a mensagem contiver o código `{ADMIN_BASILE}`:\n- Trate como um comando de treinamento.\n- Salve/aplique a memória no agente correto.\n\n\n## Diretrizes de Formatação e Resposta\n1. Você verá metadados temporais no histórico de mensagens como `[CONTEXTO_TEMPORAL: ...]`. Use essas informações APENAS para cronologia interna da conversa.\n2. NUNCA inclua esses carimbos de data, horários ou quaisquer prefixos de metadados de tempo no início ou em qualquer parte de sua resposta final.\nSua resposta deve ser natural e focada apenas no conteúdo solicitado pelo usuário.\n\n## 🎯 Como as Skills Funcionam\n\nVocê não tem acesso às skills por padrão. Quando o usuário solicitar uma ação, \no sistema injetará automaticamente o FLUXO DE EXECUÇÃO necessário.\n\nSiga as etapas do fluxo NA ORDEM EXATA, sem pular. Se uma etapa tem {{ $HITL }},\nvocê DEVE aguardar a resposta do usuário antes de continuar para a próxima etapa.\n\n\n## Regra de Encerramento Subentendido\nCaso a mensagem atual do usuário seja EXCLUSIVAMENTE um agradecimento final, despedida ou negação de mais ajuda (ex: 'não, era só isso, obrigado', 'tchau', 'valeu'), e NÃO contenha nenhuma nova solicitação, você DEVE responder EXATAMENTE E APENAS com o código: `[FIM_DE_INTERACAO]`.\n\n## Atenção aos Metadados Temporais\nAs mensagens no histórico contêm o prefixo `[CONTEXTO_TEMPORAL: ...]`. Este prefixo NÃO faz parte do conteúdo da mensagem e NUNCA deve ser incluído na sua resposta.\n\n## Data e Hora Local do Sistema\nAbaixo estão os dados temporais deste exato momento. Use isso para calcular prazos, responder se é dia/noite ou comparar com as datas gravadas nas memórias (que também possuem timestamp).\n- Data/Hora legível: Thursday, 18/06/2026 10:50:35 (Fuso: America/Sao_Paulo)\n- Timestamp ISO: 2026-06-18T10:50:35.842572-03:00\n- Última interação detectada: 18/06/2026 10:46:23 (há 0h e 4min)\n- **DIRETRIZ DE SAUDAÇÃO**: 🚨 REGRA CRÍTICA DE SAUDAÇÃO: ÚLTIMA INTERAÇÃO HÁ MENOS DE 12H. **NÃO SAUDE O USUÁRIO**. Vá direto ao ponto, sem 'Paz do Senhor', 'Olá', 'Tudo bem?' ou 'Como posso ajudar?'.\n\n\n## Continuidade do Atendimento\n\nEste contato foi atendido anteriormente pelo agente \"Sistema - General Orch\".\nAgentes que já participaram desta sessão: Sistema - General Orch.\nConsidere este histórico para manter a fluidez do atendimento.\n\n\n## ⚠️ Correções e Preferências do Usuário (PRIORIDADE MÁXIMA)\n\nAs seguintes correções e preferências foram feitas PELO PRÓPRIO USUÁRIO. NUNCA repita os erros corrigidos abaixo. Respeite as preferências SEMPRE:\n\n- ⚠️ CORREÇÃO: Lembrar: O usuário cumprimentou com \"boa tarde\", indicando que já não é mais de manhã. Ajustar cumprimentos de acordo com a hora local.\n- ⚠️ CORREÇÃO: Lembrar: O usuário está pedindo a data atual. Responder diretamente à pergunta sobre o dia.\n- ⚠️ CORREÇÃO: Lembrar: O usuário se chama Fernando. Não usar \"senhor\" ao se referir a ele.\n- ⚠️ CORREÇÃO: Lembrar: O usuário se chama Fernando. Sempre usar o nome correto ao se dirigir a ele.\n- ⚠️ CORREÇÃO: Lembrar: O usuário se chama Fernando. Sempre usar o nome correto ao se dirigir a ele.\n- 💡 PREFERÊNCIA: PREFERÊNCIA: O usuário se chama Fernando.\n- 💡 PREFERÊNCIA: PREFERÊNCIA: \"Prefere comunicação mais humana.\"\n- 💡 PREFERÊNCIA: PREFERÊNCIA: \"Prefere registrar em outro dia.\"\n\n\n## Inteligência e Memória Histórica do Contato\n\nAbaixo estão informações e peculiaridades qualitativas deste usuário, adquiridas em interações anteriores. A data entre colchetes indica quando o fato foi registrado. Utilize isso para personalizar ativamente o engajamento de maneira natural:\n\n- [01/06/2026] Fernando tem um padrão de comunicação que inclui saudações como \"boa tarde\", \"bom dia\" e \"boa noite\".\n- [11/06/2026] Costuma responder de madrugada.\n- [29/05/2026] Seu nome é Fernando Dias de Oliveira\n- [08/06/2026] Costuma responder de madrugada\n- [08/06/2026] Costuma responder de madrugada\n\n\n## 🔧 Auto-Aprendizado do Agente (Lições Anteriores)\n\nEm interações passadas, você cometeu os erros abaixo e aprendeu a corrigi-los. NÃO repita esses erros:\n\n- 🔧 AUTO-CORREÇÃO: NÃO incluir saudações iniciais. O agente desejou um bom dia indevidamente.\n- 🔧 AUTO-CORREÇÃO: NÃO encerrar o atendimento com uma saudação ou desejo pessoal. O agente desejou uma boa tarde, o que é inadequado.\n- 🔧 AUTO-CORREÇÃO: NÃO emitir opiniões pessoais. O agente fez uma despedida inadequada ao desejar \"um bom dia\".\n- 🔧 AUTO-CORREÇÃO: NÃO usar saudações ou desejos após o encerramento do atendimento. O agente desejou \"dias abençoados\" indevidamente.\n- 🔧 AUTO-CORREÇÃO: NÃO emitir opiniões pessoais. O agente fez uma saudação e desejou um \"excelente dia\", o que é uma violação das regras.\n\n\n## Agentes Especialistas Disponíveis\n\nVocê tem acesso a agentes especialistas que podem ser acionados como ferramentas. Use-os quando a solicitação do usuário exigir uma especialidade que eles possuem.\nAgentes disponíveis: consultar_BasileIA_Agente_de_Solicita_o, consultar_BasileIA_Agente_de_Visitante, consultar_BasileIA_Agente_de_Curso, consultar_BasileIA_Agente_de_Relatorios, consultar_BasileIA_Agente_de_Usuario, consultar_BasileIA_Agente_de_Celulas_Orquestrador, consultar_BasileIA_Agente_de_Eventos_Orquestrador, consultar_BasileIA_Agente_de_Informacao_Igreja, consultar_Consentimento, consultar_Agente_Gestor, consultar_BasileIA_Resposta_Final\n\nDIRETRIZES DE ORQUESTRAÇÃO (OBRIGATÓRIO):\n1. ANÁLISE: Antes de chamar um especialista, avalie se a solicitação realmente requer expertise externa.\n2. INSTRUÇÃO CLARA: Ao acionar um especialista, envie uma instrução técnica e direta do que ele deve resolver. Inclua contexto relevante.\n3. PASSTHROUGH (REGRA CRÍTICA): Quando um especialista retornar uma resposta, ela JÁ ESTÁ formatada como mensagem final para o usuário. USE-A DIRETAMENTE. NÃO reescreva, não resuma, não adapte mensagens que já estão prontas. Apenas adapte o tom se ESTRITAMENTE necessário para manter coerência.\n4. HIERARQUIA: Você é o COORDENADOR. Os especialistas reportam a VOCÊ, não ao usuário final. Você é responsável pela qualidade da resposta final.\n5. NÃO REDUNDÂNCIA: Se você já possui informação suficiente na conversa ou no contexto, NÃO acione especialistas desnecessariamente.\n\n\n⏹️ TOOLS OBRIGATÓRIAS NO FINAL:\n- Você DEVE chamar a tool 'consultar_BasileIA_Resposta_Final' NO FINAL, imediatamente antes da resposta final ao usuário.\n\n## Automações Disponíveis\n\nVocê tem acesso a workflows de automação que executam pipelines de tarefas sem IA.\nAutomações: automacao_Consentimento_response\n\nDIRETRIZES DE AUTOMAÇÃO:\n1. Use automações para tarefas repetitivas que não precisam de análise ou criatividade.\n2. O payload deve ser um JSON string válido com os dados necessários.\n3. Os dados do contexto atual são mesclados automaticamente.\n\n\n## ESTADO DA CONVERSA: RECENTE (Fluxo Contínuo)\nInteração detectada na memória de curto prazo (Redis). REGRA ABSOLUTA: **NÃO USE SAUDAÇÕES**. Não utilize 'Paz do Senhor', 'Olá', 'Tudo bem?' ou qualquer cumprimento inicial. A conversa já está em andamento. Responda diretamente ao que foi solicitado.\n\n\n## Dados de Contexto (Context Data)\n\nO esquema esperado (Input Schema) é:\n{\n  \"ai_params\": {\n    \"type\": \"object\",\n    \"description\": \"Informações da Assistente Virtual\"\n  },\n  \"church\": {\n    \"type\": \"object\",\n    \"description\": \"Dados da Igreja\",\n    \"properties\": {\n      \"church_name\": {\n        \"type\": \"string\",\n        \"description\": \"Nome da igreja\"\n      }\n    }\n  },\n  \"member\": {\n    \"type\": \"object\",\n    \"description\": \"Dados do membro\",\n    \"properties\": {\n      \"fullname\": {\n        \"type\": \"string\",\n        \"description\": \"Nome completo do membro\"\n      },\n      \"role\": {\n        \"type\": \"string\",\n        \"description\": \"Função do membro na igreja\"\n      },\n      \"preferredLanguage\": {\n        \"type\": \"string\",\n        \"description\": \"Idioma OBRIGATÓRIO para o atendimento\"\n      }\n    }\n  },\n  \"member_fin\": {\n    \"type\": \"object\",\n    \"description\": \"Dados financeiros do membro\",\n    \"properties\": {\n      \"permissions\": {\n        \"type\": \"object\",\n        \"description\": \"Permissões do membro\",\n        \"properties\": {\n          \"register_member\": {\n            \"type\": \"boolean\"\n          },\n          \"edit_member\": {\n            \"type\": \"boolean\"\n          },\n          \"register_visitor\": {\n            \"type\": \"boolean\"\n          },\n          \"edit_visitor\": {\n            \"type\": \"boolean\"\n          },\n          \"reports\": {\n            \"type\": \"boolean\"\n          },\n          \"financial_system\": {\n            \"type\": \"boolean\"\n          }\n        }\n      },\n      \"permission_levels\": {\n        \"type\": \"array\",\n        \"description\": \"Níveis de permissão do membro\"\n      },\n      \"role_profile\": {\n        \"type\": \"string\",\n        \"description\": \"Perfil de papel do membro\"\n      }\n    }\n  }\n}\n\nOs seguintes dados foram fornecidos no contexto atual:\n{\n  \"ai_params\": {\n    \"_id\": \"6900140b37566ec5a70cc819\",\n    \"name\": \"Eva\",\n    \"pastors\": \"Vinicius\",\n    \"user_id\": \"68ff5a3c4177621d0b00faa8\",\n    \"greeting\": \"Paz do senhor\",\n    \"created_at\": \"2025-10-28T00:53:31.335000Z\",\n    \"label_cell\": \"Casa de Paz\",\n    \"updated_at\": \"2026-04-16T17:18:18.089000Z\",\n    \"description\": \"\",\n    \"disable_bot\": false,\n    \"bank_details\": \"Agradecemos a sua generosidade para realizar ofertas ou dízimos enviar no PIX: 74747474\",\n    \"bible_version\": \"King James\",\n    \"church_history\": \"A igreja nasceu em um momento onde Deus ....\",\n    \"social_projects\": \"Não temos\"\n  },\n  \"church\": {\n    \"church_name\": \"Igreja do Teste BASILÉIA\"\n  },\n  \"member\": {\n    \"fullname\": \"Fernando Dias de Oliveira\",\n    \"role\": \"member\"\n  },\n  \"member_fin\": {\n    \"permissions\": {\n      \"register_visitor\": true,\n      \"edit_visitor\": true,\n      \"reports\": true,\n      \"financial_system\": true\n    },\n    \"permission_levels\": [\n      \"network_manager\",\n      \"cell_manager\",\n      \"leader\",\n      \"member\"\n    ]\n  }\n}\n\nUse esses dados conforme necessário para ferramentas MCP e para basear suas respostas.\nNão preencha tags {{ $fromAI }} no texto da resposta ao usuário, em vez disso, utilize-os para completar argumentos nas ferramentas que solicitar.\n\n\n## Modo de Execução (Determinístico)\n- Modo resolvido deste turno: balanced\n- Você deve obedecer os limites de execução.\n\n\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: Skill Basileia Config.\n\n## Árvore de Ferramentas / MCPs Disponíveis\n- **execute_HTTP_Usu_rios_-_get_user_data**: Obtém os dados de cadastro do usuário.\n- **execute_HTTP_Usu_rios_-_register_visitant_qrcode**: Auto cadastra membro visitante via qr-code.\n- **execute_HTTP_Cursos_-_get_all_courses**: Obtém os dados de cadastro do usuário.\n- **execute_HTTP_Eventos_-_list_all_events**: Obtem os eventos criados pela igreja, esta tool não exibe se o membro esta inscrito ou não nos eventos. Não invente resposta.\n- **execute_HTTP_Financeiro_-_manage_financial**: Este MCP é responsável por se comunicar com o sistema financeiro.\n- **pesquisar_bases_globais**: Pesquisa global nas bases de informação associadas a este agente. Use para buscar em todas as bases vinculadas em uma única consulta.\n- **pesquisar_courses**: Pesquisa na base de informação 'Cursos'. Use esta ferramenta UMA VEZ para buscar informações relevantes. Descreva claramente o que deseja encontrar. NÃO repita a mesma busca.\n- **pesquisar_eventos**: Pesquisa na base de informação 'Eventos'. Use esta ferramenta UMA VEZ para buscar informações relevantes. Descreva claramente o que deseja encontrar. NÃO repita a mesma busca.\n- **consultar_BasileIA_Agente_de_Solicita_o**: Consulta o agente especialista 'BasileIA - Agente de Solicitação' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas solicitações do Sistema Basiléia. FERRAMENTAS: HTTP Solicitações - register_solicitation, HTTP Solicitações - get_all_solicitation, HTTP Solicitações - get_solicitation, HTTP Solicitações - update_solicitation, HTTP Solicitações - get_all_solicitation_responsible, HTTP Solicitações - remove_solicitation, HTTP Solicitações - update_status_served, HTTP Solicitações - list_solicitation_types. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Visitante**: Consulta o agente especialista 'BasileIA - Agente de Visitante' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelo gerenciamento dos Visitantes. Utilizar sempre que um membro líder ou responsável necessitar cadastrar ou verificar um visitante na igreja. Chamar este agente quando houver alguma relação com registro ou pesquisa de visitantes.. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Curso**: Consulta o agente especialista 'BasileIA - Agente de Curso' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelos cursos das igrejas via Sistema Basiléia. CAPACIDADES: Skill de Cursos: This capability retrieves a list of available courses. [Usa: Get All Courses, Course Subscribe, Check Course Registration, Remove Course Registration, Examples (Optional)] | FERRAMENTAS: HTTP Cursos - course_subscribe, HTTP Cursos - remove_course_registration, HTTP Cursos - check_course_registration, HTTP Cursos - get_all_courses. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Relatorios**: Consulta o agente especialista 'BasileIA - Agente de Relatorios' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelos relatórios das igrejas via Sistema Basiléia.. CAPACIDADES: Skill de Relatórios: Retorna a quantidade total de membros da igreja. [Usa: Obter Quantidade de Membros da Igreja, Obter Quantidade de Visitantes da Igreja, Consultar Aniversariantes, Obter Taxa de Presença de Evento, Obter Taxa de Presença de Curso, Obter Taxa de Presença de Célula, Obter Número de Membros da Célula, Obter Número de Visitantes da Célula, Obter Membros Recentes, Obter Visitantes Recentes]. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Usuario**: Consulta o agente especialista 'BasileIA - Agente de Usuario' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelos usuários/membros das igrejas via Sistema Basiléia. Este agente é para usuários em primeira pessoa, ou seja, quando for a ação para o próprio usuário.. CAPACIDADES: Skill de Usuario: This capability retrieves the logged-in user's registration data without requiring leader permission. [Usa: get_user_data, update_user_data_member, update_user_data_visitant, update_user_data_contact]. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Celulas_Orquestrador**: Consulta o agente especialista 'BasileIA - Agente de Celulas - Orquestrador' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas Células ou Grupos da Igreja. FERRAMENTAS: HTTP Celulas - cell_near_residence_member, HTTP Celulas - cell_near_residence_addres, HTTP Celulas - search_member_or_visitant, HTTP Celulas - cells_information. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Eventos_Orquestrador**: Consulta o agente especialista 'BasileIA - Agente de Eventos - Orquestrador' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas ações referentes aos Eventos da Igreja.. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Agente_de_Informacao_Igreja**: Consulta o agente especialista 'BasileIA - Agente de Informacao Igreja' [PRIORITÁRIO (RECOMENDADO)]. Agente responsável pelas informações básicas da Igreja.. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_Consentimento**: Consulta o agente especialista 'Consentimento' [PRIORITÁRIO (RECOMENDADO)]. Especialista. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_Agente_Gestor**: Consulta o agente especialista 'Agente Gestor' [PRIORITÁRIO (RECOMENDADO)]. Modo Gestor. . Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **consultar_BasileIA_Resposta_Final**: Consulta o agente especialista 'BasileIA - Resposta Final' [OBRIGATÓRIO NO FINAL]. Agente responsável pela saída da mensagem para o usuário. CAPACIDADES: Skill Basileia Config: name: Skill Basileia Config, Skill de Atendimento: Esta capacidade fornece respostas diretas e personalizadas aos membros da igreja com base em dados específicos. [Usa: Atendimento, Exemplos], Skill de Guardrail: Supervisão e moderação de interações para garantir conformidade e segurança [Usa: Nome da Capacidade Primária, # Diretrizes de Intervenção, # Diretrizes de Privacidade e Conformidade com a LGPD, # Defesa contra Ataques, # Protocolo de Transbordo, # Alinhamento Institucional e Proteção da Comunidade, Exemplos], Skill de Tratamento de Saídas: Esta capacidade formata as respostas para o WhatsApp, utilizando caracteres permitidos e evitando informações sensíveis. [Usa: Nome da Capacidade Primária, # Exemplos]. Envie uma instrução clara e técnica do que este agente deve fazer especificamente.\n- **automacao_Consentimento_response**: Executa a automação 'Consentimento_response'. Pipeline de automação. Blocos: [trigger, if, http_request, http_request, transform, transform]. Envie um JSON como payload de entrada. Os dados do contexto atual ($trigger.payload) serão complementados automaticamente.\n\n## Instruções de Ferramentas\nUSE-AS SEMPRE que necessário. Max 3 retries por ferramenta.\n\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n\n---\n\n## 🔹 CAPABILITIES DA SKILL ATIVA: Skill Basileia Config\n\n---\nname: Skill Basileia Config\ndescription: Esta skill é acionada para fornecer configurações do Sistema Basiléia.\n---\n\n{ \"greeting\": { \"initial\": \"[Saudação][Nome do membro - se houver e apenas o primeiro]! Sou [Nome do Agente], assistente da [Nome da Igreja] e estou aqui para lhe ajudar na comunicação e conexão com a nossa igreja. Me conta, qual o assunto você gostaria de tratar?\", \"normal\": \"[Saudação][Nome do membro - se houver e apenas o primeiro]! Que bom te ver aqui novamente.\" } }\n\n{\n  \"response_variables\": [\n    {\n      \"from\": \"célula\", \n      \"to\": \"{{ $request.ai_params.cell_name }}\"\n    }\n  ]\n}\n\n\n---\n",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "system",
+            "id": "a59af10a-9580-4c92-96aa-85eef7909be8"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:18:40] Escolha Casa de Paz",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "d394772c-0ec7-41ee-bca6-36c44e3347ea",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:18:53] {\"title\": \"Teste de Fogo\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"69b06748698dcbb10a093962\"}, \"contextInfo\": {\"stanzaID\": \"3EB084926AEF884D0CCC4F\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha Casa de Paz\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Casa de Paz\", \"rows\": [{\"title\": \"KAIROS\", \"rowID\": \"69459baf4c4e821cbc096a6a\"}, {\"title\": \"Teste de Fogo\", \"rowID\": \"69b06748698dcbb10a093962\"}, {\"title\": \"ndajd\", \"rowID\": \"6a16156aacec3cca65090b85\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "b63c692c-2edc-44b1-bf49-a698a8bf42d8"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:18:53] *📋 LISTA DE PRESENÇA*\n\n*👥 Membros:*\n1. Anthony Comercial\n2. Anthony Pessoal\n3. Comercial Tasi\n4. Everton Cícero\n5. Fernando Dias de Oliveira\n6. José da Silva\n7. Laudino\n\n*👤 Visitantes:*\n1. Caraboco\n2. Elton Fernandes da Silva\n3. Ferrerezi\n4. Jonas\n5. João das Neves\n6. Manuelzinho\n7. Silvestre Show\n8. Terezinha de Teste",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "b40a1c62-f80f-437d-8136-d0bf4592d5bc",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:19:31] {\"title\": \"Voltar ao início\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"voltar\"}, \"contextInfo\": {\"stanzaID\": \"3EB0EE42C8973A799FC64B\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"title\": \"*📋 LISTA DE PRESENÇA*\", \"description\": \"\\n*👥 Membros:*\\n1. Anthony Comercial\\n2. Anthony Pessoal\\n3. Comercial Tasi\\n4. Everton Cícero\\n5. Fernando Dias de Oliveira\\n6. José da Silva\\n7. Laudino\\n\\n*👤 Visitantes:*\\n1. Caraboco\\n2. Elton Fernandes da Silva\\n3. Ferrerezi\\n4. Jonas\\n5. João das Neves\\n6. Manuelzinho\\n7. Silvestre Show\\n8. Terezinha de Teste\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar ao início\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "8ba7c9cb-f9e0-474d-972b-bebbbf324969"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:19:31] *Modo Casa de Paz*",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "ab386a5e-c293-40c5-a577-e1c8c5202f0e",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:21:49] {\"title\": \"Registrar Presença\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"registrar\"}, \"contextInfo\": {\"stanzaID\": \"3EB0A496F3ADC2FF3B9B5A\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"*Modo Casa de Paz*\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Ação\", \"rows\": [{\"title\": \"Registrar Presença\", \"rowID\": \"registrar\"}, {\"title\": \"Listar Membros e Visitantes\", \"rowID\": \"listar_membros\"}, {\"title\": \"Adicionar - Membro\", \"rowID\": \"adicionar_membro\"}, {\"title\": \"Adicionar - Visitante\", \"rowID\": \"adicionar_visitante\"}, {\"title\": \"Remover - Membro ou Visitante\", \"rowID\": \"remover\"}, {\"title\": \"Informações Gerais\", \"rowID\": \"informacoes_celula\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Sair\", \"rowID\": \"Sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "ab6c6eee-21e5-422b-ae0f-4917e7a0242f"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:21:49] Em qual dia gostaria de registrar a presença?",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "ac5e1cab-737c-4b70-add7-433debb4a3f4",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:04] {\"title\": \"13/06/2026\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"2026-06-13\"}, \"contextInfo\": {\"stanzaID\": \"3EB09D16D60452FF41B272\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Em qual dia gostaria de registrar a presença?\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Data\", \"rows\": [{\"title\": \"18/06/2026\", \"rowID\": \"2026-06-18\"}, {\"title\": \"17/06/2026\", \"rowID\": \"2026-06-17\"}, {\"title\": \"16/06/2026\", \"rowID\": \"2026-06-16\"}, {\"title\": \"15/06/2026\", \"rowID\": \"2026-06-15\"}, {\"title\": \"14/06/2026\", \"rowID\": \"2026-06-14\"}, {\"title\": \"13/06/2026\", \"rowID\": \"2026-06-13\"}, {\"title\": \"12/06/2026\", \"rowID\": \"2026-06-12\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "badcc4db-a470-4e6c-a735-00e4db261862"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:04] Escolha Casa de Paz",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "07de08ac-2192-4c0b-82e7-2d97c590e781",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:29] {\"title\": \"Teste de Fogo\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"69b06748698dcbb10a093962\"}, \"contextInfo\": {\"stanzaID\": \"3EB03BF0CD8D5224D3E4B5\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha Casa de Paz\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Casa de Paz\", \"rows\": [{\"title\": \"KAIROS\", \"rowID\": \"69459baf4c4e821cbc096a6a\"}, {\"title\": \"Teste de Fogo\", \"rowID\": \"69b06748698dcbb10a093962\"}, {\"title\": \"ndajd\", \"rowID\": \"6a16156aacec3cca65090b85\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "45891c00-443e-41ff-bbea-123477bd757c"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:23:29] Escolha uma das opções:",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "01a7a2c2-07fe-493f-a791-321408f0f7b6",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:08] {\"title\": \"Registrar ausentes\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"lista_ausentes\"}, \"contextInfo\": {\"stanzaID\": \"3EB0D718F489394BCC7D71\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha uma das opções:\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Registrar\", \"rows\": [{\"title\": \"Todos estiveram presentes\", \"rowID\": \"todos\"}, {\"title\": \"Registrar ausentes\", \"rowID\": \"lista_ausentes\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "04fbb2bc-b18c-4286-8bf1-8670171f7111"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:08] Escolha uma das opções:",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "f9cd5718-1738-4d41-8b40-6f41d7775de2",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:48] {\"title\": \"Registrar\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"registrar\"}, \"contextInfo\": {\"stanzaID\": \"3EB02D3BA3AA108FAFD957\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha uma das opções:\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Registrar\", \"rows\": [{\"title\": \"Registrar\", \"rowID\": \"registrar\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "282fcb50-e974-4087-a809-138c08dc8600"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 07:24:48] Cadastro de presença da célula adicionado com sucesso!",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "c33f5a91-6dc8-4fa5-9705-8efe0e0c87d4",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 08:17:43] {\"title\": \"Registrar\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"registrar\"}, \"contextInfo\": {\"stanzaID\": \"3EB02D3BA3AA108FAFD957\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"listMessage\": {\"description\": \"Escolha uma das opções:\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Registrar\", \"rows\": [{\"title\": \"Registrar\", \"rowID\": \"registrar\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Voltar\", \"rowID\": \"voltar\"}, {\"title\": \"Sair\", \"rowID\": \"sair\"}]}]}}, \"quotedType\": 0}}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "3bf81944-29e0-4d5e-b05e-3511b4bff7c1"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 08:17:43] {\"_branch\": \"default\", \"_legacy_target\": null, \"_all_matches\": [], \"mode\": \"first_match\"}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "e2d4b861-0274-4a9b-bb62-6ddb82b33f30",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:13:50] modo lista de presença",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "be4473dd-7e45-446a-9604-aeb90eb37ed2"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:13:50] *Modo Casa de Paz*",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "ai",
+            "id": "8edb45e4-6814-496b-9cd1-065442b9458b",
+            "tool_calls": [],
+            "invalid_tool_calls": []
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:46:23] {\"title\": \"Sair\", \"listType\": 1, \"singleSelectReply\": {\"selectedRowID\": \"Sair\"}, \"contextInfo\": {\"stanzaID\": \"3EB01FD725F3A2384ED4E7\", \"participant\": \"228046237888676@lid\", \"quotedMessage\": {\"messageContextInfo\": {}, \"listMessage\": {\"title\": \"\", \"description\": \"*Modo Casa de Paz*\", \"buttonText\": \"Selecione\", \"listType\": 1, \"sections\": [{\"title\": \"Ação\", \"rows\": [{\"title\": \"Registrar Presença\", \"description\": \"\", \"rowID\": \"registrar\"}, {\"title\": \"Listar Membros e Visitantes\", \"description\": \"\", \"rowID\": \"listar_membros\"}, {\"title\": \"Adicionar - Membro\", \"description\": \"\", \"rowID\": \"adicionar_membro\"}, {\"title\": \"Adicionar - Visitante\", \"description\": \"\", \"rowID\": \"adicionar_visitante\"}, {\"title\": \"Remover - Membro ou Visitante\", \"description\": \"\", \"rowID\": \"remover\"}, {\"title\": \"Informações Gerais\", \"description\": \"\", \"rowID\": \"informacoes_celula\"}]}, {\"title\": \"Menu\", \"rows\": [{\"title\": \"Sair\", \"description\": \"\", \"rowID\": \"Sair\"}]}], \"footerText\": \"\"}}}, \"description\": \"\"}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "e8303190-bab7-4a90-ad2d-ba82be94f943"
+          },
+          {
+            "content": "olá. bom dia",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "human",
+            "id": "ff9c0b09-9ef5-4aa1-b285-7cecaf5b9fe8"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:50:35] Olá, Fernando! Como posso ajudar você hoje?",
+            "additional_kwargs": {
+              "refusal": null
+            },
+            "response_metadata": {
+              "token_usage": {
+                "completion_tokens": 311,
+                "prompt_tokens": 13694,
+                "total_tokens": 14005,
+                "completion_tokens_details": {
+                  "accepted_prediction_tokens": null,
+                  "audio_tokens": 0,
+                  "reasoning_tokens": 267,
+                  "rejected_prediction_tokens": null,
+                  "image_tokens": 0
+                },
+                "prompt_tokens_details": {
+                  "audio_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "video_tokens": 0
+                },
+                "cost": 0.00097097,
+                "is_byok": false,
+                "cost_details": {
+                  "upstream_inference_cost": 0.00097097,
+                  "upstream_inference_prompt_cost": 0.00089011,
+                  "upstream_inference_completions_cost": 8.086e-05
+                }
+              },
+              "model_provider": "openai",
+              "model_name": "qwen/qwen3.5-flash-20260224",
+              "system_fingerprint": null,
+              "id": "gen-1781790640-hhbUDrfuv0GzgBzMJ0Vb",
+              "finish_reason": "stop",
+              "logprobs": null
+            },
+            "type": "ai",
+            "id": "lc_run--019edaff-8736-7430-ad29-a0a256c3b915-0",
+            "tool_calls": [],
+            "invalid_tool_calls": [],
+            "usage_metadata": {
+              "input_tokens": 13694,
+              "output_tokens": 311,
+              "total_tokens": 14005,
+              "input_token_details": {
+                "audio": 0,
+                "cache_read": 0
+              },
+              "output_token_details": {
+                "audio": 0,
+                "reasoning": 267
+              }
+            }
+          },
+          {
+            "content": "",
+            "additional_kwargs": {
+              "refusal": null
+            },
+            "response_metadata": {
+              "token_usage": {
+                "completion_tokens": 1273,
+                "prompt_tokens": 11254,
+                "total_tokens": 12527,
+                "completion_tokens_details": {
+                  "accepted_prediction_tokens": null,
+                  "audio_tokens": 0,
+                  "reasoning_tokens": 1158,
+                  "rejected_prediction_tokens": null,
+                  "image_tokens": 0
+                },
+                "prompt_tokens_details": {
+                  "audio_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "video_tokens": 0
+                },
+                "cost": 0.00106249,
+                "is_byok": false,
+                "cost_details": {
+                  "upstream_inference_cost": 0.00106249,
+                  "upstream_inference_prompt_cost": 0.00073151,
+                  "upstream_inference_completions_cost": 0.00033098
+                }
+              },
+              "model_provider": "openai",
+              "model_name": "qwen/qwen3.5-flash-20260224",
+              "system_fingerprint": null,
+              "id": "gen-1781790643-KAdQvqzFk5ZW3eKbIg8X",
+              "finish_reason": "tool_calls",
+              "logprobs": null
+            },
+            "type": "ai",
+            "id": "lc_run--019edaff-940c-7690-8c84-3c15150f75cd-0",
+            "tool_calls": [
+              {
+                "name": "consultar_BasileIA_Resposta_Final",
+                "args": {
+                  "instrucao": "Responda ao usuário perguntando qual é o assunto que gostaria de tratar, sem usar saudações como 'Olá', 'Bom dia', 'Paz do Senhor' ou 'Como posso ajudar?'. Use uma abordagem direta e educada. O usuário disse 'olá. bom dia', então responda de forma neutra, perguntando o que ele precisa."
+                },
+                "id": "call_7a63d458146346749c17b086",
+                "type": "tool_call"
+              }
+            ],
+            "invalid_tool_calls": [],
+            "usage_metadata": {
+              "input_tokens": 11254,
+              "output_tokens": 1273,
+              "total_tokens": 12527,
+              "input_token_details": {
+                "audio": 0,
+                "cache_read": 0
+              },
+              "output_token_details": {
+                "audio": 0,
+                "reasoning": 1158
+              }
+            }
+          },
+          {
+            "content": "{\"achados\": [], \"dados\": {}, \"recomendacao\": \"Perguntar ao usuário qual é o assunto que gostaria de tratar.\"}",
+            "additional_kwargs": {},
+            "response_metadata": {},
+            "type": "tool",
+            "name": "consultar_BasileIA_Resposta_Final",
+            "id": "61b40f64-83a6-4972-ad2d-37d9c809d33d",
+            "tool_call_id": "call_7a63d458146346749c17b086",
+            "status": "success"
+          },
+          {
+            "content": "[CONTEXTO_TEMPORAL: 18/06/2026 10:50:35] Olá, Fernando! Como posso ajudar você hoje?",
+            "additional_kwargs": {
+              "refusal": null
+            },
+            "response_metadata": {
+              "token_usage": {
+                "completion_tokens": 136,
+                "prompt_tokens": 13783,
+                "total_tokens": 13919,
+                "completion_tokens_details": {
+                  "accepted_prediction_tokens": null,
+                  "audio_tokens": 0,
+                  "reasoning_tokens": 92,
+                  "rejected_prediction_tokens": null,
+                  "image_tokens": 0
+                },
+                "prompt_tokens_details": {
+                  "audio_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_write_tokens": 0,
+                  "video_tokens": 0
+                },
+                "cost": 0.000931255,
+                "is_byok": false,
+                "cost_details": {
+                  "upstream_inference_cost": 0.000931255,
+                  "upstream_inference_prompt_cost": 0.000895895,
+                  "upstream_inference_completions_cost": 3.536e-05
+                }
+              },
+              "model_provider": "openai",
+              "model_name": "qwen/qwen3.5-flash-20260224",
+              "system_fingerprint": null,
+              "id": "gen-1781790653-ctAYNXJxEOybHyGO1Mte",
+              "finish_reason": "stop",
+              "logprobs": null
+            },
+            "type": "ai",
+            "id": "lc_run--019edaff-bad2-7240-bb33-565801a58f20-0",
+            "tool_calls": [],
+            "invalid_tool_calls": [],
+            "usage_metadata": {
+              "input_tokens": 13783,
+              "output_tokens": 136,
+              "total_tokens": 13919,
+              "input_token_details": {
+                "audio": 0,
+                "cache_read": 0
+              },
+              "output_token_details": {
+                "audio": 0,
+                "reasoning": 92
+              }
+            }
+          }
+        ]
+      },
+      "outputs_preview": null,
+      "parent_run_id": null,
+      "manifest_id": null,
+      "manifest_s3_id": null,
+      "events": [
+        {
+          "name": "start",
+          "time": "2026-06-18T13:50:39.705670+00:00"
+        },
+        {
+          "name": "end",
+          "time": "2026-06-18T13:50:54.817406+00:00"
+        }
+      ],
+      "tags": [
+        "normal",
+        "agent:Sistema - General Orch"
+      ],
+      "inputs_s3_urls": {
+        "ROOT": {
+          "presigned_url": "https://api.smith.langchain.com/public/download?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwYXRoIjoicHJvZC1sYW5nc21pdGgtc3RhdGljLWFzc2V0cy1zci90dGxfcy9tdWx0aXBhcnQvM2UyNzI5MmIyMmEzMmE1ZDc0NDg3ZTZkNTM1YTA5MDg4MzE3MmNmYjYzZWYyMzRjM2FiYTA2M2Q5NTVhZmU1MS8wMGU4MmI4YTg3NGRiZDFiNDI5ZTdlZDYyYjc2NDkzOGMyNzIxN2E4NmI5MTk1Mzc2MmRlZWQ5ZGRhOTRjZWE0L2YwMjE0YzkyLTlmYTktNDgxZC05MjU1LTdkYTJmNDE0YjE0NSM1ODg2My03MTYxNSIsImV4cCI6MTc4MTc5OTQ3M30.n8ttEseV_yymUO3P79VcbJcaIKWMoftn_Lw7QmqjHOM",
+          "s3_url": "prod-langsmith-static-assets-sr/ttl_s/multipart/3e27292b22a32a5d74487e6d535a090883172cfb63ef234c3aba063d955afe51/00e82b8a874dbd1b429e7ed62b764938c27217a86b91953762deed9dda94cea4/f0214c92-9fa9-481d-9255-7da2f414b145#58863-71615"
+        }
+      },
+      "outputs_s3_urls": {
+        "ROOT": {
+          "presigned_url": "https://api.smith.langchain.com/public/download?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwYXRoIjoicHJvZC1sYW5nc21pdGgtc3RhdGljLWFzc2V0cy1zci90dGxfcy9tdWx0aXBhcnQvM2UyNzI5MmIyMmEzMmE1ZDc0NDg3ZTZkNTM1YTA5MDg4MzE3MmNmYjYzZWYyMzRjM2FiYTA2M2Q5NTVhZmU1MS8wMGU4MmI4YTg3NGRiZDFiNDI5ZTdlZDYyYjc2NDkzOGMyNzIxN2E4NmI5MTk1Mzc2MmRlZWQ5ZGRhOTRjZWE0L2YwMjE0YzkyLTlmYTktNDgxZC05MjU1LTdkYTJmNDE0YjE0NSM3MTYxNS04NTM4MyIsImV4cCI6MTc4MTc5OTQ3M30.MgTRpN9sL9pNzs2ArEz5MoPsOqIC-DZbik_LURcdzpU",
+          "s3_url": "prod-langsmith-static-assets-sr/ttl_s/multipart/3e27292b22a32a5d74487e6d535a090883172cfb63ef234c3aba063d955afe51/00e82b8a874dbd1b429e7ed62b764938c27217a86b91953762deed9dda94cea4/f0214c92-9fa9-481d-9255-7da2f414b145#71615-85383"
+        }
+      },
+      "s3_urls": null,
+      "trace_id": "019edaff-8659-7ae2-8f70-fc06eeedcfcf",
+      "dotted_order": "20260618T135039705670Z019edaff-8659-7ae2-8f70-fc06eeedcfcf",
+      "trace_min_start_time": null,
+      "trace_max_start_time": null,
+      "id": "019edaff-8659-7ae2-8f70-fc06eeedcfcf",
+      "status": "success",
+      "child_run_ids": null,
+      "direct_child_run_ids": null,
+      "parent_run_ids": [],
+      "feedback_stats": null,
+      "reference_example_id": null,
+      "total_tokens": 44131,
+      "prompt_tokens": 42382,
+      "completion_tokens": 1749,
+      "prompt_token_details": {
+        "audio": 0,
+        "cache_read": 0
+      },
+      "completion_token_details": {
+        "audio": 0,
+        "reasoning": 1517
+      },
+      "total_cost": 0.00056505,
+      "prompt_cost": 0.00054765,
+      "completion_cost": 1.74e-05,
+      "prompt_cost_details": {
+        "audio": 0.0,
+        "cache_read": 0.0
+      },
+      "completion_cost_details": {
+        "audio": 0.0,
+        "reasoning": 0.0
+      },
+      "price_model_id": null,
+      "first_token_time": null,
+      "messages": null
+    }
+  ],
+  "cursors": {
+    "next": null,
+    "prev": null
+  },
+  "parsed_query": null
+}

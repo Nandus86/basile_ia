@@ -34,6 +34,7 @@ class MCP(Base):
     query_template = Column(JSON, default=dict)
     response_mapping = Column(JSON, default=dict)
     trigger_keywords = Column(JSON, default=list)
+    always_run_on_startup = Column(Boolean, default=False)
     timeout_seconds = Column(Integer, default=30)  # Timeout for requests
     group_id = Column(UUID(as_uuid=True), ForeignKey("mcp_groups.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True)

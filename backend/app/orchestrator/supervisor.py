@@ -327,6 +327,11 @@ Execute a tarefa acima e retorne o resultado para o orquestrador {primary_name}.
             state["next_action"] = "end"
             state["final_response"] = "Erro: Nenhum agente selecionado."
             return state
+
+        # Inject global trigger results if present in context
+        context_data = state.get("context_data") or {}
+        if "trigger_results" in context_data:
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + f"\n\n## ⚡ Dados Pré-Executados (Automação Global):\n{context_data['trigger_results']}\n\n"
         
         agent_name = agent_config["name"]
         agent_id = agent_config["id"]
