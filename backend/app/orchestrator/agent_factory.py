@@ -191,6 +191,7 @@ class AgentFactory:
             from app.services.mcp_tools import get_tools_for_agent
             # Usamos o context_data ORIGINAL para as ferramentas pre-resolverem seus placeholders {{ $request }}
             # independentemente do input_schema do agente.
+            logger.info(f"[AgentFactory] 🔍 DEBUG get_tools_for_agent context_data keys for '{agent.name}': {list(context_data.keys()) if context_data else 'None'}")
             tools = await get_tools_for_agent(self.db, agent_id, context_data)
             if tools:
                 tool_names = [t.name for t in tools]

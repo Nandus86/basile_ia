@@ -941,6 +941,8 @@ class MCPToolExecutor:
                 }
 
                 logger.info(f"[MCPTool] 🔑 Pre-resolved $request placeholders for MCP '{mcp.name}'")
+                logger.info(f"[MCPTool] 🔍 DEBUG merged_ctx keys: {list(merged_ctx.keys())}, self.context_data keys: {list(self.context_data.keys())}, raw_ctx keys: {list(raw_ctx.keys())}")
+                logger.info(f"[MCPTool] 🔍 DEBUG pre_resolved query_str='{pre_resolved_templates.get('query_str')}' (original='{query_str}')")
         
         try:
             # Discover available tools
