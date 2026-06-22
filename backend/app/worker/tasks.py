@@ -2710,14 +2710,16 @@ async def process_message_task(
     
     if context_data is None:
         context_data = {}
+    
+    # Merge transition_data into context_data directly so that all variables
+    # (like church, member, etc.) are available to workflows and MCP templates.
+    if transition_data:
+        context_data.update(transition_data)
+
     if session_id and "session_id" not in context_data:
         context_data["session_id"] = session_id
 
-    # Mescla transition_data no request context para que templates MCP consigam acessar
-    # os dados que foram roteados para transition_data (ex: church)
     req_context_data = context_data.copy()
-    if transition_data:
-        req_context_data.update(transition_data)
 
     # Set request context for deep services (MCP tools)
     from app.context import set_request_context
