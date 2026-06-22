@@ -429,7 +429,7 @@ Utilize isso para personalizar ativamente o engajamento de maneira natural:
         if agent_id and db:
             try:
                 from app.services.mcp_tools import get_tools_for_agent
-                tools = await get_tools_for_agent(db, agent_id)
+                tools = await get_tools_for_agent(db, agent_id, context_data=state.get("context_data"))
                 if tools:
                     print(f"[Response] 🔧 Loaded {len(tools)} MCP tools for agent {agent_info.get('name', 'unknown')}")
             except Exception as e:
