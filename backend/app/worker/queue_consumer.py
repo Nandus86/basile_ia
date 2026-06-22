@@ -271,8 +271,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         ctx_keys = set(agent.input_schema.keys()) if agent.input_schema else set()
                         trans_keys = set(agent.transition_input_schema.keys()) if agent.transition_input_schema else set()
                         
-                        c_data = context_data or {}
-                        t_data = transition_data or {}
+                        c_data = dict(context_data) if context_data else {}
+                        t_data = dict(transition_data) if transition_data else {}
                         
                         for k, v in payload.items():
                             if k in standard_keys: continue
@@ -284,8 +284,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                 # quanto os subordinados possam buscar o que for necessário em seus próprios schemas
                                 c_data[k] = v
                                 
-                        if c_data: context_data = c_data
-                        if t_data: transition_data = t_data
+                        context_data = c_data
+                        transition_data = t_data
 
                     if agent:
                         logger.info(f"[Consumer] Agent found: {agent.name}")
