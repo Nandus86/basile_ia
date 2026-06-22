@@ -402,14 +402,13 @@
           ></v-alert>
 
           <v-switch
-            v-if="workflow.definition && workflow.definition.settings"
-            v-model="workflow.definition.settings.auto_run"
+            v-model="workflow.always_run_on_startup"
             color="primary"
             label="Executar no Início do Agente (Auto-run / Pre-hook)"
             hint="Se ativado, quando o agente for acionado, este workflow será executado automaticamente ANTES do agente 'pensar', e o resultado será injetado no contexto dele."
             persistent-hint
             class="mb-4"
-            @change="markUnsaved"
+            @update:model-value="markUnsaved"
           ></v-switch>
 
           <v-divider class="mb-4"></v-divider>
@@ -705,6 +704,10 @@ async function loadWorkflow() {
     if (workflow.value.return_direct_payload === undefined || workflow.value.return_direct_payload === null) {
       workflow.value.return_direct_payload = false
     }
+    // Ensure always_run_on_startup has a boolean value
+    if (workflow.value.always_run_on_startup === undefined || workflow.value.always_run_on_startup === null) {
+      workflow.value.always_run_on_startup = false
+    }
     
     const def = workflow.value.definition || {}
     if (def.blocks && def.edges) {
@@ -937,6 +940,7 @@ async function saveDefinition() {
       is_active: workflow.value.is_active,
       trigger_keywords: workflow.value.trigger_keywords || [],
       trigger_match_mode: workflow.value.trigger_match_mode || 'word',
+      always_run_on_startup: workflow.value.always_run_on_startup ?? false,
       return_direct_payload: workflow.value.return_direct_payload ?? false,
       definition
     })

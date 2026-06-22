@@ -1633,7 +1633,7 @@ async def _execute_startup_workflows(
     
     for wf in active_workflows:
         settings = (wf.definition or {}).get("settings", {})
-        if settings.get("auto_run") is True:
+        if settings.get("auto_run") is True or getattr(wf, "always_run_on_startup", False):
             startup_workflows.append(wf)
             
     if not startup_workflows:
