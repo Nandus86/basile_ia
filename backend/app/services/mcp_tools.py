@@ -80,6 +80,13 @@ def _get_value_by_path(data: dict, path: str) -> Any:
     parts = path.split('.')
     current = data
     for part in parts:
+        if isinstance(current, str):
+            try:
+                import json
+                current = json.loads(current)
+            except:
+                pass
+                
         if isinstance(current, dict) and part in current:
             current = current[part]
         elif isinstance(current, list) and part.isdigit():
@@ -113,6 +120,10 @@ def _inject_request_params(text: str, context_data: dict) -> str:
         full_match = match.group(0)
         
         val = _get_value_by_path(context_data, path)
+        
+        # Fallback: if not found at root, check if context_data has a "request" wrapper
+        if val is None and isinstance(context_data.get("request"), dict):
+            val = _get_value_by_path(context_data["request"], path)
         
         if val is None:
             return match.group(0)
