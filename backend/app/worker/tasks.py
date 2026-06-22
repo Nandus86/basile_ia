@@ -2467,16 +2467,19 @@ async def _check_trigger_mcps(
     msg_lower = message.lower()
     triggered_mcps = []
 
-    # Check each MCP for keyword match
+    # Check each MCP for keyword match or startup flag
     for mcp in all_mcps:
         mcp_kws = getattr(mcp, "trigger_keywords", None) or []
+        always_run = getattr(mcp, "always_run_on_startup", False)
+        
         matched_kw = None
         for kw in mcp_kws:
             if kw and kw.lower() in msg_lower:
                 matched_kw = kw
                 break
-        if matched_kw:
-            triggered_mcps.append((mcp, matched_kw))
+                
+        if matched_kw or always_run:
+            triggered_mcps.append((mcp, matched_kw or "STARTUP_AUTO"))
 
     if not triggered_mcps:
         return None
@@ -3166,6 +3169,11 @@ async def process_message_task(
             if not agent_config:
                 # No specific agent → fallback to Supervisor router
                 from app.orchestrator import run_orchestrator_v2
+
+                # Pass trigger_results to the orchestrator via context_data
+                if trigger_results:
+                    context_data = context_data or {}
+                    context_data["trigger_results"] = trigger_results
 
                 # STM: get history
                 history = await redis_client.get_conversation(session_id)
