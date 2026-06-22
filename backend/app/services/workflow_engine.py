@@ -569,6 +569,9 @@ class WorkflowEngine:
         await self.db.commit()
         await self.db.refresh(execution)
 
+        from app.context import get_request_context
+        req_ctx = get_request_context() or {}
+
         # Initialize context
         context: Dict[str, Any] = {
             '$trigger': {'payload': trigger_data},
@@ -577,6 +580,8 @@ class WorkflowEngine:
                 'name': workflow.name,
                 'variables': definition.get('variables', {}),
             },
+            '$request': req_ctx,
+            'request': req_ctx,
         }
         blocks_log: List[Dict[str, Any]] = []
 
@@ -649,6 +654,11 @@ class WorkflowEngine:
                 context[k] = v
             else:
                 context[f'${k}'] = v
+                
+        from app.context import get_request_context
+        req_ctx = get_request_context() or {}
+        context['$request'] = req_ctx
+        context['request'] = req_ctx
 
         # Check for cancel signal ("sair")
         is_cancel = False
