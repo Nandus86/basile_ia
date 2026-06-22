@@ -2713,9 +2713,15 @@ async def process_message_task(
     if session_id and "session_id" not in context_data:
         context_data["session_id"] = session_id
 
+    # Mescla transition_data no request context para que templates MCP consigam acessar
+    # os dados que foram roteados para transition_data (ex: church)
+    req_context_data = context_data.copy()
+    if transition_data:
+        req_context_data.update(transition_data)
+
     # Set request context for deep services (MCP tools)
     from app.context import set_request_context
-    set_request_context(context_data)
+    set_request_context(req_context_data)
 
     agent = None
     agent_config = None
