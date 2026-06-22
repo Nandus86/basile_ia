@@ -868,7 +868,22 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             if dynamic_skills_prompt:
                 full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
                 
-            agent_messages = [SystemMessage(content=full_prompt)] + messages
+            from langchain_core.messages import ToolMessage, AIMessage
+            
+            # Higienização de histórico: remover tool_calls antigas e podar contexto
+            cleaned_messages = []
+            for msg in messages:
+                if isinstance(msg, ToolMessage):
+                    continue
+                if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                    if msg.content:
+                        cleaned_messages.append(AIMessage(content=msg.content))
+                    continue
+                cleaned_messages.append(msg)
+                
+            trimmed_messages = cleaned_messages[-8:] if len(cleaned_messages) > 8 else cleaned_messages
+            
+            agent_messages = [SystemMessage(content=full_prompt)] + trimmed_messages
 
             # --- CUSTOM LANGGRAPH STATE GRAPH ---
             from langgraph.graph import StateGraph, START, END
@@ -1164,7 +1179,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 "run_config": run_config,
                 "full_prompt": system_prompt,
                 "messages": messages,
-                "agent_messages": [SystemMessage(content=system_prompt)] + messages
+                "agent_messages": [SystemMessage(content=system_prompt)] + (messages[-8:] if len(messages) > 8 else messages)
             }
 
         tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
@@ -1256,7 +1271,21 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         if dynamic_skills_prompt:
             full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
             
-        agent_messages = [SystemMessage(content=full_prompt)] + messages
+        from langchain_core.messages import ToolMessage, AIMessage
+        
+        cleaned_messages = []
+        for msg in messages:
+            if isinstance(msg, ToolMessage):
+                continue
+            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+                if msg.content:
+                    cleaned_messages.append(AIMessage(content=msg.content))
+                continue
+            cleaned_messages.append(msg)
+            
+        trimmed_messages = cleaned_messages[-8:] if len(cleaned_messages) > 8 else cleaned_messages
+        
+        agent_messages = [SystemMessage(content=full_prompt)] + trimmed_messages
         llm_with_tools = llm.bind_tools(selected_tools)
         tool_node = ToolNode(selected_tools)
 
