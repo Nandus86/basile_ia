@@ -602,6 +602,9 @@ class MCPToolExecutor:
             req_ctx = get_request_context()
             if req_ctx:
                 context.update(req_ctx)
+                
+            import logging
+            logging.getLogger(__name__).info(f"[MCPTool] FULL CONTEXT DUMP tool={tool_name!r}: {json.dumps(context, default=str, ensure_ascii=False)}")
             
             # Recursively flatten nested context
             flat_context = {}
