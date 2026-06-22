@@ -166,13 +166,19 @@ async def execute_http(mcp: MCP, request_params: dict, timeout: float, variables
     endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
     query_str = json.dumps(getattr(mcp, "query_template", {}) or {})
     
-    # First resolve {{ $request.xxx }} using test variables (if provided)
+    from app.context import get_request_context
+    req_ctx = get_request_context() or {}
+    
+    test_ctx = {}
     if variables:
         test_ctx = _unflatten_dot_paths(variables)
-        endpoint_str = _inject_request_params(endpoint_str, test_ctx)
-        body_str = _inject_request_params(body_str, test_ctx)
-        headers_str = _inject_request_params(headers_str, test_ctx)
-        query_str = _inject_request_params(query_str, test_ctx)
+        
+    merged_ctx = {**req_ctx, **test_ctx}
+
+    endpoint_str = _inject_request_params(endpoint_str, merged_ctx)
+    body_str = _inject_request_params(body_str, merged_ctx)
+    headers_str = _inject_request_params(headers_str, merged_ctx)
+    query_str = _inject_request_params(query_str, merged_ctx)
     
     body_str, _ = _inject_from_ai_params(body_str, request_params)
     headers_str, _ = _inject_from_ai_params(headers_str, request_params)
@@ -264,13 +270,19 @@ async def execute_sse(mcp: MCP, request_params: dict, timeout: float, variables:
     endpoint_str = urllib.parse.unquote(mcp.endpoint or "")
     query_str = json.dumps(getattr(mcp, "query_template", {}) or {})
     
-    # First resolve {{ $request.xxx }} using test variables (if provided)
+    from app.context import get_request_context
+    req_ctx = get_request_context() or {}
+    
+    test_ctx = {}
     if variables:
         test_ctx = _unflatten_dot_paths(variables)
-        endpoint_str = _inject_request_params(endpoint_str, test_ctx)
-        body_str = _inject_request_params(body_str, test_ctx)
-        headers_str = _inject_request_params(headers_str, test_ctx)
-        query_str = _inject_request_params(query_str, test_ctx)
+        
+    merged_ctx = {**req_ctx, **test_ctx}
+
+    endpoint_str = _inject_request_params(endpoint_str, merged_ctx)
+    body_str = _inject_request_params(body_str, merged_ctx)
+    headers_str = _inject_request_params(headers_str, merged_ctx)
+    query_str = _inject_request_params(query_str, merged_ctx)
     
     body_str, _ = _inject_from_ai_params(body_str, request_params)
     headers_str, _ = _inject_from_ai_params(headers_str, request_params)
