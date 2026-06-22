@@ -29,7 +29,7 @@ def _extract_request_paths(text: str) -> set:
     if not text:
         return set()
     # Usa regex específico para $request (não genérico)
-    matches = re.finditer(r'\{\{\s*\$request\.(.*?)\s*\}\}', text)
+    matches = re.finditer(r'\{\{[\s\+]*\$request\.(.*?)[\s\+]*\}\}', text)
     paths = set()
     for m in matches:
         raw = m.group(1).strip()
@@ -49,9 +49,9 @@ def _extract_from_ai_params(text: str) -> dict:
     params = {}
     if not text:
         return params
-    matches = re.finditer(r'\{\{\s*\$fromAI\((.*?)\)\s*\}\}', text)
+    matches = re.finditer(r'\{\{[\s\+]*\$fromAI\((.*?)\)[\s\+]*\}\}', text)
     for m in matches:
-        args_str = m.group(1)
+        args_str = m.group(1).replace('+', ' ')
         try:
             # Safely evaluate arguments without regex guessing
             args = ast.literal_eval(f'({args_str},)')
@@ -145,7 +145,7 @@ def _inject_request_params(text: str, context_data: dict) -> str:
         
         return res
             
-    return re.sub(r'\{\{\s*(?:\$request\.(.+?)|JSONStringify\(\$request\.(.+?)\))\s*\}\}', replacer, text)
+    return re.sub(r'\{\{[\s\+]*(?:\$request\.(.+?)|JSONStringify\(\$request\.(.+?)\))[\s\+]*\}\}', replacer, text)
 
 def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     """Replace {{ $fromAI(...) }} with real values from kwargs"""
@@ -154,7 +154,7 @@ def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
     
     used_args = set()
     def replacer(match):
-        args_str = match.group(1)
+        args_str = match.group(1).replace('+', ' ')
         try:
             args = ast.literal_eval(f'({args_str},)')
             if not args:
@@ -177,7 +177,7 @@ def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
         except:
             return match.group(0)
             
-    result = re.sub(r'\{\{\s*\$fromAI\((.*?)\)\s*\}\}', replacer, text)
+    result = re.sub(r'\{\{[\s\+]*\$fromAI\((.*?)\)[\s\+]*\}\}', replacer, text)
     return result, used_args
 
 
