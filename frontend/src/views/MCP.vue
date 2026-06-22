@@ -1067,6 +1067,7 @@ async function saveMcp() {
       response_mapping: JSON.parse(responseMappingJson.value || '{}'),
       trigger_keywords: formData.trigger_keywords,
       is_active: formData.is_active,
+      always_run_on_startup: formData.always_run_on_startup,
       group_id: formData.group_id || null
     }
     
@@ -1113,6 +1114,7 @@ async function duplicateMcp(mcp) {
       response_mapping: mcp.response_mapping || {},
       trigger_keywords: mcp.trigger_keywords || [],
       is_active: false,
+      always_run_on_startup: mcp.always_run_on_startup || false,
       group_id: mcp.group_id || null
     }
     await axios.post('/mcp', payload)
