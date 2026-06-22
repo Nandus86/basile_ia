@@ -133,6 +133,9 @@ def _inject_request_params(text: str, context_data: dict) -> str:
                 val = _get_value_by_path(wf_ctx["request"], path)
         
         if val is None:
+            if path == "church._id":
+                import logging
+                logging.getLogger(__name__).warning(f"[MCPTool] DEBUG $request.church._id NOT FOUND! Context keys: {list(context_data.keys())}. Has 'church'? {'church' in context_data}")
             return match.group(0)
             
         # Converte para string base
