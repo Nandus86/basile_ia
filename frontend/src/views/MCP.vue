@@ -289,6 +289,21 @@
                   </template>
                 </v-switch>
               </v-col>
+              <v-col cols="12" md="6">
+                <v-switch
+                  v-model="formData.always_run_on_startup"
+                  label="Executar automaticamente no início"
+                  color="primary"
+                  hide-details
+                  density="comfortable"
+                  hint="Se ativo, roda assim que o agente é invocado"
+                  persistent-hint
+                >
+                  <template v-slot:prepend>
+                    <v-icon :color="formData.always_run_on_startup ? 'primary' : 'grey'">mdi-rocket-launch</v-icon>
+                  </template>
+                </v-switch>
+              </v-col>
             </v-row>
             
             <v-textarea
@@ -696,6 +711,7 @@ const formData = reactive({
   trigger_keywords: [],
   timeout_seconds: 30,
   is_active: true,
+  always_run_on_startup: false,
   group_id: null
 })
 const headersJson = ref('{}')
@@ -889,6 +905,7 @@ function resetForm() {
     trigger_keywords: [],
     timeout_seconds: 30,
     is_active: true,
+    always_run_on_startup: false,
     group_id: null
   })
   headersJson.value = '{}'
@@ -1019,6 +1036,7 @@ function openDialog(mcp = null) {
       protocol: mcp.protocol || 'http',
       timeout_seconds: mcp.timeout_seconds || 30,
       is_active: mcp.is_active ?? true,
+      always_run_on_startup: mcp.always_run_on_startup ?? false,
       group_id: mcp.group_id || null
     })
     headersJson.value = JSON.stringify(mcp.headers || {}, null, 2)

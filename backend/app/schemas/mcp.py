@@ -31,6 +31,7 @@ class MCPBase(BaseModel):
     trigger_keywords: List[str] = Field(default_factory=list)
     timeout_seconds: int = Field(default=30, description="Timeout in seconds")
     is_active: bool = True
+    always_run_on_startup: bool = False
     group_id: Optional[UUID] = None
 
 
@@ -53,6 +54,7 @@ class MCPUpdate(BaseModel):
     trigger_keywords: Optional[List[str]] = None
     timeout_seconds: Optional[int] = None
     is_active: Optional[bool] = None
+    always_run_on_startup: Optional[bool] = None
     group_id: Optional[UUID] = None
 
 
