@@ -121,9 +121,16 @@ def _inject_request_params(text: str, context_data: dict) -> str:
         
         val = _get_value_by_path(context_data, path)
         
-        # Fallback: if not found at root, check if context_data has a "request" wrapper
+        # Fallback 1: se não achou na raiz, tenta na wrapper "request" direto
         if val is None and isinstance(context_data.get("request"), dict):
             val = _get_value_by_path(context_data["request"], path)
+            
+        # Fallback 2: se estiver sendo executado via agente dentro de um workflow
+        if val is None and isinstance(context_data.get("_workflow_context"), dict):
+            wf_ctx = context_data["_workflow_context"]
+            val = _get_value_by_path(wf_ctx, path)
+            if val is None and isinstance(wf_ctx.get("request"), dict):
+                val = _get_value_by_path(wf_ctx["request"], path)
         
         if val is None:
             return match.group(0)
