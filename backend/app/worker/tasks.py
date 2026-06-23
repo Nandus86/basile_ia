@@ -2544,7 +2544,7 @@ async def _check_anti_bot_guard(session_id: str, history: list, agent_config: Op
     """
     try:
         # Load config from agent advanced configuration
-        antibot_cfg = agent_config.get("antibot", {}) if agent_config else {}
+        antibot_cfg = agent_config.get("config", {}).get("antibot", agent_config.get("antibot", {})) if agent_config else {}
         if not antibot_cfg.get("enabled", True):
             return False
 
