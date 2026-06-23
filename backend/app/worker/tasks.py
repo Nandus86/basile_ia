@@ -1777,8 +1777,8 @@ async def _build_information_base_tools(
                     )
                     if not results:
                         return "Nenhum resultado encontrado nas bases globais associadas."
-                    lines = [f"- [{r.get('base_code', 'N/A')}] {r['content']}" for r in results]
-                    return f"Resultados das bases globais ({', '.join(_names)}):\n" + "\n".join(lines)
+                    lines = [f"- [{r.get('base_code', 'N/A')}] Conteúdo: {r['content']}\\n  Metadados: {r.get('metadata', '{}')}" for r in results]
+                    return f"Resultados das bases globais ({', '.join(_names)}):\\n" + "\\n".join(lines)
                 except Exception as e:
                     return f"Erro ao pesquisar bases globais: {str(e)}"
 
@@ -1849,8 +1849,8 @@ async def _build_information_base_tools(
                 )
                 if not results:
                     return f"Nenhum resultado encontrado na base '{_bn}'."
-                lines = [f"- {r['content']}" for r in results]
-                return f"Resultados da base '{_bn}':\n" + "\n".join(lines)
+                lines = [f"- Conteúdo: {r['content']}\\n  Metadados: {r.get('metadata', '{}')}" for r in results]
+                return f"Resultados da base '{_bn}':\\n" + "\\n".join(lines)
             except Exception as e:
                 return f"Erro ao pesquisar base '{_bn}': {str(e)}"
 
