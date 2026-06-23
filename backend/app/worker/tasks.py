@@ -2250,6 +2250,7 @@ async def _check_workflow_direct_triggers(
                 "workflow_name": wf.name,
                 "matched_keyword": best_match["keyword"],
                 "store_in_memory": result_ctx.get("store_in_memory", True),
+                "response_config": result_ctx.get("response_config", {}),
             }
             if isinstance(final_result, dict):
                 # Merge all automation fields at root level
@@ -2378,6 +2379,7 @@ async def _check_global_workflow_shortcuts(
                 "workflow_name": wf.name,
                 "matched_keyword": best_match["keyword"],
                 "store_in_memory": result_ctx.get("store_in_memory", True),
+                "response_config": result_ctx.get("response_config", {}),
             }
             if result_ctx.get("status") == "paused":
                 direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
@@ -2934,43 +2936,51 @@ async def process_message_task(
                     
                     # ── Direct Payload Mode ──
                     if isinstance(global_wf_response, dict) and global_wf_response.get("__direct_payload"):
-                        response_text = global_wf_response.get("response", "")
-                        
-                        # Save to history
-                        store_in_mem = global_wf_response.get("store_in_memory", True)
-                        if store_in_mem:
-                            await redis_client.add_message(
-                                session_id=session_id, role="user", content=message, ttl_seconds=86400,
-                                tz_name=_resolve_tz_name(transition_data)
-                            )
-                            if response_text:
+                        response_config = global_wf_response.get("response_config", {})
+                        if response_config.get("saida_direcionada") and response_config.get("bypass_agente") is False and response_config.get("agente_direcionado"):
+                            print(f"[Task] 🔀 Global Workflow requested routing to agent {response_config.get('agente_direcionado')}")
+                            agent_id = str(response_config.get("agente_direcionado"))
+                            if global_wf_response.get("response"):
+                                message = str(global_wf_response.get("response"))
+                            # Continue execution (skip return)
+                        else:
+                            response_text = global_wf_response.get("response", "")
+                            
+                            # Save to history
+                            store_in_mem = global_wf_response.get("store_in_memory", True)
+                            if store_in_mem:
                                 await redis_client.add_message(
-                                    session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                    session_id=session_id, role="user", content=message, ttl_seconds=86400,
                                     tz_name=_resolve_tz_name(transition_data)
                                 )
-                            # Save to MTM (using a dummy fallback agent_id if none provided)
-                            import uuid
-                            _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
-                            await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                            if response_text:
-                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", str(response_text))
-
-                        processing_time = (time.time() - start_time) * 1000
-                        response_data = {
-                            "status": global_wf_response.get("status", "completed"),
-                            "processing_time_ms": processing_time,
-                        }
-                        for k, v in global_wf_response.items():
-                            if k not in ("__direct_payload", "status"):
-                                response_data[k] = v
-                        
-                        response_transition_data = _merge_transition_data(transition_data, context_data)
-                        if response_transition_data:
-                            response_data["transition_data"] = response_transition_data
-                        if callback_url:
-                            from app.worker.tasks import _send_callback
-                            await _send_callback(callback_url, response_data)
-                        return response_data
+                                if response_text:
+                                    await redis_client.add_message(
+                                        session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                        tz_name=_resolve_tz_name(transition_data)
+                                    )
+                                # Save to MTM (using a dummy fallback agent_id if none provided)
+                                import uuid
+                                _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
+                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                                if response_text:
+                                    await _save_mtm_message(db, _save_agent_id, session_id, "assistant", str(response_text))
+    
+                            processing_time = (time.time() - start_time) * 1000
+                            response_data = {
+                                "status": global_wf_response.get("status", "completed"),
+                                "processing_time_ms": processing_time,
+                            }
+                            for k, v in global_wf_response.items():
+                                if k not in ("__direct_payload", "status", "response_config"):
+                                    response_data[k] = v
+                            
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                            return response_data
                     
                     # ── Legacy Mode (string result) ──
                     elif isinstance(global_wf_response, str):

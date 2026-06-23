@@ -862,9 +862,11 @@ class WorkflowEngine:
         t0 = time.time()
         # Find response block to check if we should store in memory
         store_in_memory = True
+        response_config = {}
         for b in blocks.values():
             if b.get('type') == 'response':
                 store_in_memory = b.get('config', {}).get('store_in_memory', True)
+                response_config = b.get('config', {})
                 break
 
         last_output_key = None
@@ -892,6 +894,7 @@ class WorkflowEngine:
                         'status': 'cancelled',
                         'last_block': last_output_key,
                         'store_in_memory': store_in_memory,
+                        'response_config': response_config,
                     }
 
                 block = blocks.get(current_block_id)
@@ -950,6 +953,7 @@ class WorkflowEngine:
                         'context': clean_context,
                         'result': current_result,
                         'store_in_memory': store_in_memory,
+                        'response_config': response_config,
                     }
                 except Exception as e:
                     block_status = "failed"
@@ -1046,6 +1050,7 @@ class WorkflowEngine:
                 'status': 'completed',
                 'last_block': last_output_key,
                 'store_in_memory': store_in_memory,
+                'response_config': response_config,
             }
 
         except WorkflowEarlyResponseException:
@@ -1137,13 +1142,27 @@ class WorkflowEngine:
         if not last_output_key:
             val = context.get('$trigger', {}).get('payload', {})
             logger.info(f"[WorkflowEngine] 📤 Response block fired. No previous block found, outputting trigger payload: {str(val)[:200]}")
-            return val
-            
-        val = context.get(f'${last_output_key}')
-        if val is None:
-            val = context.get(last_output_key)
-            
-        logger.info(f"[WorkflowEngine] 📤 Response block fired. Captured output from previous block '{last_output_key}': {str(val)[:200]}")
+        else:
+            val = context.get(f'${last_output_key}')
+            if val is None:
+                val = context.get(last_output_key)
+            logger.info(f"[WorkflowEngine] 📤 Response block fired. Captured output from previous block '{last_output_key}': {str(val)[:200]}")
+
+        saida_direcionada = config.get('saida_direcionada', False)
+        endpoint_url = config.get('endpoint_url', '')
+        if saida_direcionada and endpoint_url:
+            resolved_url = resolve_template(endpoint_url, context)
+            if resolved_url:
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        if isinstance(val, (dict, list)):
+                            await client.post(resolved_url, json=val)
+                        else:
+                            await client.post(resolved_url, content=str(val), headers={"Content-Type": "text/plain"})
+                    logger.info(f"[WorkflowEngine] 📤 Saída Direcionada: POST successful to '{resolved_url}'")
+                except Exception as e:
+                    logger.error(f"[WorkflowEngine] 📤 Saída Direcionada: POST failed to '{resolved_url}' - Error: {e}")
+
         return val
 
     async def _exec_variables(self, config: Dict[str, Any], context: Dict[str, Any], block_id: str) -> Any:

@@ -620,6 +620,58 @@
           hint="Se desativado, a resposta final deste workflow não será salva no histórico de conversas do banco de dados (MTM) e da memória de curto prazo (Redis)."
           persistent-hint
         ></v-switch>
+
+        <v-switch
+          v-model="config.saida_direcionada"
+          @update:model-value="emitUpdate"
+          label="Saída Direcionada"
+          color="primary"
+          density="compact"
+          class="mb-3"
+          hint="Permite enviar o payload para um webhook ou forçar um desvio de agente."
+          persistent-hint
+        ></v-switch>
+
+        <template v-if="config.saida_direcionada">
+          <v-text-field
+            v-model="config.endpoint_url"
+            label="URL / Path do Endpoint HTTP"
+            placeholder="https://sua-api.com/webhook"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hint="Opcional. Se preenchido, fará um POST com o resultado final para esta URL."
+            persistent-hint
+            @update:model-value="emitUpdate"
+          ></v-text-field>
+
+          <v-switch
+            :model-value="config.bypass_agente !== false"
+            @update:model-value="val => { config.bypass_agente = val; emitUpdate(); }"
+            label="Modo Bypass (Encerrar Fluxo)"
+            color="warning"
+            density="compact"
+            class="mb-3"
+            hint="Se ativado, não chamará nenhum agente do bot ao final deste fluxo."
+            persistent-hint
+          ></v-switch>
+
+          <v-select
+            v-if="config.bypass_agente === false"
+            v-model="config.agente_direcionado"
+            :items="agents"
+            item-title="name"
+            item-value="id"
+            label="Agente Direcionado"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            clearable
+            hint="Substituirá o agente principal. Qual agente deve continuar o fluxo?"
+            persistent-hint
+            @update:model-value="emitUpdate"
+          ></v-select>
+        </template>
       </template>
 
       <!-- ═══ SUB-WORKFLOW ═══ -->
