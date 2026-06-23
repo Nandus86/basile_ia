@@ -34,6 +34,7 @@ from sqlalchemy import select
 
 from app.models.workflow import Workflow
 from app.models.workflow_execution import WorkflowExecution
+from app.models.conversation_message import ConversationMessage
 
 logger = logging.getLogger(__name__)
 
@@ -527,6 +528,51 @@ class WorkflowEngine:
 
     # ── Public API ─────────────────────────────────────────────
 
+    async def _preload_msg_request_context(self, context: Dict[str, Any], blocks: Dict[str, Any]) -> None:
+        """
+        Scan blocks for $msgRequest and proactively fetch the last user and AI message from MTM if needed.
+        This avoids database queries during synchronous variable replacement.
+        """
+        blocks_str = json.dumps(blocks)
+        if "$msgRequest" not in blocks_str:
+            return
+
+        session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+        if not session_id:
+            context['$msgRequest'] = {'User': {'last': ''}, 'AI': {'last': ''}}
+            return
+
+        # Fetch last user message
+        user_msg = ""
+        result_user = await self.db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.session_id == session_id)
+            .where(ConversationMessage.role == 'user')
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        )
+        msg_user = result_user.scalar_one_or_none()
+        if msg_user and msg_user.content:
+            user_msg = msg_user.content
+
+        # Fetch last AI message
+        ai_msg = ""
+        result_ai = await self.db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.session_id == session_id)
+            .where(ConversationMessage.role == 'assistant')
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        )
+        msg_ai = result_ai.scalar_one_or_none()
+        if msg_ai and msg_ai.content:
+            ai_msg = msg_ai.content
+
+        context['$msgRequest'] = {
+            'User': {'last': user_msg},
+            'AI': {'last': ai_msg}
+        }
+
     async def execute(
         self,
         workflow_id: UUID,
@@ -584,6 +630,8 @@ class WorkflowEngine:
             'request': req_ctx,
         }
         blocks_log: List[Dict[str, Any]] = []
+
+        await self._preload_msg_request_context(context, blocks)
 
         try:
             # Find trigger block (entry point)
@@ -778,6 +826,8 @@ class WorkflowEngine:
         
         logger.info(f"[WorkflowEngine] ▶️ Resuming workflow execution {execution_id} at block {next_block_id}")
         
+        await self._preload_msg_request_context(context, blocks)
+
         # Run execution loop starting from the next block
         try:
             return await self._run_execution_loop(
