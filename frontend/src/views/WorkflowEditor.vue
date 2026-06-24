@@ -632,21 +632,37 @@ onUnmounted(() => {
 function copySelectedNodes() {
   const selected = getSelectedNodes.value
   if (!selected.length) return
-  clipboard.value = selected.map(node => ({
+  const dataToCopy = selected.map(node => ({
     type: node.type,
     label: node.label,
     position: { ...node.position },
     data: JSON.parse(JSON.stringify(node.data))
   }))
+  clipboard.value = dataToCopy
+  try {
+    localStorage.setItem('workflow_clipboard', JSON.stringify(dataToCopy))
+  } catch(e) {
+    console.warn("Failed to save to localStorage", e)
+  }
 }
 
 function pasteCopiedNodes() {
-  if (!clipboard.value.length) return
+  let pasteData = clipboard.value
+  if (!pasteData || !pasteData.length) {
+    try {
+      const stored = localStorage.getItem('workflow_clipboard')
+      if (stored) {
+        pasteData = JSON.parse(stored)
+      }
+    } catch(e){}
+  }
+  if (!pasteData || !pasteData.length) return
+
   const newNodes = []
   nodes.value.forEach(n => {
     n.selected = false
   })
-  clipboard.value.forEach(item => {
+  pasteData.forEach(item => {
     const newId = `block_${idCounter++}`
     const newNode = {
       id: newId,
