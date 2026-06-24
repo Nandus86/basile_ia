@@ -119,4 +119,25 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
 
     # Regex que captura {{ $now }}, {{ $now(formato) }}, {{ $now+1D }} ou {{ $now(formato)-3D }}
     pattern = r'\{\{\s*\$now(?:\((.*?)\))?\s*(?:([+-]\s*\d+)\s*([DdHhMmSs]))?\s*\}\}'
-    return re.sub(pattern, replacer, text)
+    text = re.sub(pattern, replacer, text)
+    
+    # Adicionar suporte a {{ $randomNumber(5) }}
+    if "{{ $randomNumber" in text:
+        import random
+        def random_replacer(match):
+            try:
+                length = int(match.group(1))
+                if length < 1:
+                    length = 1
+                elif length > 15:
+                    length = 15
+                lower = 10**(length-1) if length > 1 else 0
+                upper = (10**length) - 1
+                return str(random.randint(lower, upper))
+            except Exception:
+                return ""
+                
+        pattern_random = r'\{\{\s*\$randomNumber\((\d+)\)\s*\}\}'
+        text = re.sub(pattern_random, random_replacer, text)
+
+    return text

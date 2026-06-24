@@ -1607,7 +1607,9 @@ class WorkflowEngine:
         if not isinstance(resolved_code, str):
             resolved_code = code  # fallback if resolve changed type
 
-        # Safe-ish sandbox: expose context, json, re, datetime utilities
+        import random as _random
+
+        # Safe-ish sandbox: expose context, json, re, datetime, random utilities
         sandbox_globals = {
             '__builtins__': {
                 # safe built-ins only
@@ -1624,6 +1626,7 @@ class WorkflowEngine:
             'json': json,
             're': re,
             'datetime': datetime,
+            'random': _random,
             'context': context,
             'ctx': context,
         }
