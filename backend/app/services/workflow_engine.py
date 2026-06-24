@@ -151,9 +151,9 @@ def resolve_template(template: Any, context: Dict[str, Any]) -> Any:
             return [resolve_template(item, context) for item in template]
         return template
 
-    # Resolve global macros ({{ $now }}, {{ $now(format) }}) FIRST,
-    # before context-variable resolution tries to look up $now as a key.
-    if '{{ $now' in template:
+    # Resolve global macros ({{ $now }}, {{ $randomNumber }}) FIRST,
+    # before context-variable resolution tries to look up keys.
+    if '{{ $now' in template or '{{ $randomNumber' in template:
         try:
             from app.utils.macros import resolve_global_macros
             trigger_data = context.get('$trigger', {}).get('payload', {})
