@@ -647,15 +647,21 @@ function copySelectedNodes() {
 }
 
 function pasteCopiedNodes() {
-  let pasteData = clipboard.value
-  if (!pasteData || !pasteData.length) {
-    try {
-      const stored = localStorage.getItem('workflow_clipboard')
-      if (stored) {
-        pasteData = JSON.parse(stored)
-      }
-    } catch(e){}
+  let pasteData = []
+  try {
+    const stored = localStorage.getItem('workflow_clipboard')
+    if (stored) {
+      pasteData = JSON.parse(stored)
+    }
+  } catch(e){
+    console.warn("Failed to read from localStorage", e)
   }
+  
+  // Fallback to local clipboard if localStorage fails or is empty
+  if (!pasteData || !pasteData.length) {
+    pasteData = clipboard.value
+  }
+
   if (!pasteData || !pasteData.length) return
 
   const newNodes = []
