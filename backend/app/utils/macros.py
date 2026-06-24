@@ -65,7 +65,7 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
     if not text or not isinstance(text, str):
         return text
 
-    if "{{ $now" not in text:
+    if "{{ $now" not in text and "{{ $randomNumber" not in text:
         return text
 
     tz_name = get_user_timezone(context_data)
