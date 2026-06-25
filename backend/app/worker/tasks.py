@@ -2875,40 +2875,67 @@ async def process_message_task(
                             else:
                                 response_text = str(final_result)
                         
-                        if response_text and store_in_mem:
-                            await redis_client.add_message(
-                                session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
-                                tz_name=_resolve_tz_name(transition_data)
-                            )
+                        # Determine if we should return directly or pass to AI agent
+                        from sqlalchemy import select as sa_select
+                        from app.models.workflow_execution import WorkflowExecution
+                        from app.models.workflow import Workflow
+                        from uuid import UUID
                         
-                        # Save to MTM
-                        import uuid as _uuid
-                        _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
-                        if store_in_mem:
-                            await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                            if response_text:
-                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+                        is_direct = res_ctx.get("response_config", {}).get("retornar_payload_direto", False)
+                        if not is_direct:
+                            try:
+                                exec_record = await db.scalar(sa_select(WorkflowExecution).where(WorkflowExecution.id == UUID(active_wf_run)))
+                                if exec_record:
+                                    wf_record = await db.scalar(sa_select(Workflow).where(Workflow.id == exec_record.workflow_id))
+                                    if wf_record:
+                                        is_direct = getattr(wf_record, "return_direct_payload", False)
+                            except Exception as db_err:
+                                print(f"[Task] Could not fetch workflow for direct payload check: {db_err}")
+                        
+                        if is_direct:
+                            if response_text and store_in_mem:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
                             
-                        processing_time = (time.time() - start_time) * 1000
-                        response_data = {
-                            "status": res_ctx.get("status", "completed"),
-                            "processing_time_ms": processing_time,
-                            "workflow_name": wf_name,
-                            "is_hitl_pause": False,
-                        }
-                        if isinstance(final_result, dict):
-                            response_data.update(final_result)
+                            # Save to MTM
+                            import uuid as _uuid
+                            _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
+                            if store_in_mem:
+                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                                if response_text:
+                                    await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+                                
+                            processing_time = (time.time() - start_time) * 1000
+                            response_data = {
+                                "status": res_ctx.get("status", "completed"),
+                                "processing_time_ms": processing_time,
+                                "workflow_name": wf_name,
+                                "is_hitl_pause": False,
+                            }
+                            if isinstance(final_result, dict):
+                                response_data.update(final_result)
+                            else:
+                                response_data["response"] = response_text
+                            
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+                                
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                            
+                            await redis_client.delete(f"active_workflow_run:{session_id}")
+                            return response_data
                         else:
-                            response_data["response"] = response_text
-                        
-                        response_transition_data = _merge_transition_data(transition_data, context_data)
-                        if response_transition_data:
-                            response_data["transition_data"] = response_transition_data
+                            print(f"[Task] 🔄 Workflow '{wf_name}' completed. Passing control back to AI agent.")
+                            await redis_client.delete(f"active_workflow_run:{session_id}")
                             
-                        if callback_url:
-                            from app.worker.tasks import _send_callback
-                            await _send_callback(callback_url, response_data)
-                        return response_data
+                            # Inject workflow result into the user's message so the AI agent knows what happened
+                            if response_text:
+                                message = f"{message}\n\n[Sistema: Automação '{wf_name}' foi finalizada com o seguinte resultado: {response_text}]"
                         
                     except Exception as e:
                         print(f"[Task] ❌ Error resuming active workflow {active_wf_run}: {e}")
