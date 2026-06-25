@@ -262,6 +262,55 @@ async def get_staged_queues():
         
     return result
 
+@router.post("/staged/{queue_id}/dispatch")
+async def dispatch_staged_queue(queue_id: str):
+    from app.services.smart_router import execute_routing, _active_timers
+    
+    # Check if the queue exists (has a deadline)
+    deadline_key = f"disp:staged:deadline:global:{queue_id}"
+    exists = await disparador_redis.client.exists(deadline_key)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Queue not found or already dispatched")
+        
+    # Cancel in-memory timer if it exists in this worker
+    timer_key = f"global:{queue_id}"
+    existing = _active_timers.get(timer_key)
+    if existing and not existing.done():
+        existing.cancel()
+        _active_timers.pop(timer_key, None)
+        
+    # Execute routing immediately
+    await execute_routing(queue_id)
+    return {"message": "Queue dispatched successfully"}
+
+@router.delete("/staged/{queue_id}/delete")
+async def delete_staged_queue(queue_id: str):
+    from app.services.smart_router import _active_timers
+    
+    # Cancel in-memory timer if it exists in this worker
+    timer_key = f"global:{queue_id}"
+    existing = _active_timers.get(timer_key)
+    if existing and not existing.done():
+        existing.cancel()
+        _active_timers.pop(timer_key, None)
+        
+    deadline_key = f"disp:staged:deadline:global:{queue_id}"
+    index_key = f"disp:staged:index:global:{queue_id}"
+    
+    await disparador_redis.client.delete(deadline_key)
+    await disparador_redis.client.delete(index_key)
+    
+    # Delete all contacts and meta for this queue
+    cursor = '0'
+    while True:
+        cursor, keys = await disparador_redis.client.scan(cursor, match=f"disp:staged:*:global:{queue_id}:*", count=100)
+        for k in keys:
+            await disparador_redis.client.delete(k)
+        if not cursor or cursor == '0' or cursor == 0:
+            break
+            
+    return {"message": "Queue deleted successfully"}
+
 @router.post("/campaigns/{service_id}/recreate")
 async def recreate_campaign(service_id: str, db: AsyncSession = Depends(get_db)):
     # 1. Get campaign metadata

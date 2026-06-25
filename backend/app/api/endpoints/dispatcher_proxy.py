@@ -63,6 +63,14 @@ async def proxy_campaign_report(service_id: str, request: Request):
 async def proxy_staged_queues(request: Request):
     return await _proxy("GET", "/dashboard/staged", request)
 
+@router.post("/dashboard/staged/{queue_id}/dispatch")
+async def proxy_dispatch_staged_queue(queue_id: str, request: Request):
+    return await _proxy("POST", f"/dashboard/staged/{queue_id}/dispatch", request)
+
+@router.delete("/dashboard/staged/{queue_id}/delete")
+async def proxy_delete_staged_queue(queue_id: str, request: Request):
+    return await _proxy("DELETE", f"/dashboard/staged/{queue_id}/delete", request)
+
 # ── Dashboard POST action routes ─────────────────────────────────────
 
 @router.post("/dashboard/campaigns/{service_id}/pause")

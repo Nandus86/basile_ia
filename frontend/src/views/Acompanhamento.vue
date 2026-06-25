@@ -666,9 +666,19 @@
                     <div class="text-caption d-flex align-center">
                        <v-icon size="14" class="mr-1">mdi-timer-outline</v-icon>
                        Próximo disparo em: 
-                       <span class="font-weight-bold ml-1 text-warning">
+                       <span class="font-weight-bold ml-1 text-warning mr-4">
                           {{ staged.time_remaining_minutes }}m {{ staged.time_remaining_seconds }}s
                        </span>
+                       <v-tooltip text="Disparar Agora" location="top">
+                          <template v-slot:activator="{ props }">
+                             <v-btn v-bind="props" icon="mdi-play-circle" color="success" variant="text" size="small" class="ml-2" @click.stop="dispatchStagedQueue(staged.queue_id)"></v-btn>
+                          </template>
+                       </v-tooltip>
+                       <v-tooltip text="Excluir Fila" location="top">
+                          <template v-slot:activator="{ props }">
+                             <v-btn v-bind="props" icon="mdi-delete" color="error" variant="text" size="small" @click.stop="deleteStagedQueue(staged.queue_id)"></v-btn>
+                          </template>
+                       </v-tooltip>
                     </div>
                   </div>
                 </v-expansion-panel-title>
@@ -1638,6 +1648,26 @@ const fetchDisparadorData = async () => {
        console.error('Failed to fetch staged queue:', e)
     } finally {
        dispLoading.value = false
+    }
+}
+
+const dispatchStagedQueue = async (queue_id) => {
+    try {
+        await axiosInstance.post(`/disparador/dashboard/staged/${queue_id}/dispatch`)
+        snackbar.value = { show: true, text: 'Fila disparada com sucesso!', color: 'success' }
+        await fetchDisparadorData()
+    } catch (e) {
+        snackbar.value = { show: true, text: `Erro ao disparar fila: ${e.response?.data?.detail || e.message}`, color: 'error' }
+    }
+}
+
+const deleteStagedQueue = async (queue_id) => {
+    try {
+        await axiosInstance.delete(`/disparador/dashboard/staged/${queue_id}/delete`)
+        snackbar.value = { show: true, text: 'Fila excluída com sucesso!', color: 'success' }
+        await fetchDisparadorData()
+    } catch (e) {
+        snackbar.value = { show: true, text: `Erro ao excluir fila: ${e.response?.data?.detail || e.message}`, color: 'error' }
     }
 }
 
