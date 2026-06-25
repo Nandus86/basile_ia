@@ -85,9 +85,10 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
     base_now = datetime.now(user_tz)
 
     def replacer(match):
-        fmt = match.group(1)       # O formato (ex: DD/MM/YYYY)
-        math_op = match.group(2)   # O operador e quantidade (ex: +1 ou -3)
-        math_unit = match.group(3) # A unidade (ex: D, H, M, S)
+        is_unix = match.group(1)   # '.unix' ou None
+        fmt = match.group(2)       # O formato (ex: DD/MM/YYYY)
+        math_op = match.group(3)   # O operador e quantidade (ex: +1 ou -3)
+        math_unit = match.group(4) # A unidade (ex: D, H, M, S)
         
         # 1. Aplicar cálculos matemáticos se houver
         target_now = base_now
@@ -107,7 +108,9 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
                 pass
 
         # 2. Formatar o resultado
-        if fmt:
+        if is_unix:
+            return str(int(target_now.timestamp()))
+        elif fmt:
             fmt = fmt.strip()
             fmt_py = _convert_format_to_strftime(fmt)
             try:
@@ -117,8 +120,8 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
         else:
             return target_now.isoformat()
 
-    # Regex que captura {{ $now }}, {{ $now(formato) }}, {{ $now+1D }} ou {{ $now(formato)-3D }}
-    pattern = r'\{\{\s*\$now(?:\((.*?)\))?\s*(?:([+-]\s*\d+)\s*([DdHhMmSs]))?\s*\}\}'
+    # Regex que captura {{ $now }}, {{ $now.unix }}, {{ $now(formato) }}, {{ $now+1D }} ou {{ $now(formato)-3D }}
+    pattern = r'\{\{\s*\$now(\.unix)?(?:\((.*?)\))?\s*(?:([+-]\s*\d+)\s*([DdHhMmSs]))?\s*\}\}'
     text = re.sub(pattern, replacer, text)
     
     # Adicionar suporte a {{ $randomNumber(5) }}
