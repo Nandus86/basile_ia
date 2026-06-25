@@ -622,6 +622,17 @@
         ></v-switch>
 
         <v-switch
+          v-model="config.retornar_payload_direto"
+          @update:model-value="emitUpdate"
+          label="Retornar Payload Direto"
+          color="primary"
+          density="compact"
+          class="mb-3"
+          hint="Se ativado, encerra o fluxo e retorna imediatamente este payload ao webhook/usuário, ignorando o agente."
+          persistent-hint
+        ></v-switch>
+
+        <v-switch
           v-model="config.saida_direcionada"
           @update:model-value="emitUpdate"
           label="Saída Direcionada (Webhook)"

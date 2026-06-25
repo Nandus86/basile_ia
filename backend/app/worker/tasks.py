@@ -1545,7 +1545,7 @@ async def _build_workflow_tools(
                     # Use the clean final result (last block output only)
                     final_result = result_ctx.get('result')
 
-                    is_direct = getattr(_wf, "return_direct_payload", False)
+                    is_direct = getattr(_wf, "return_direct_payload", False) or result_ctx.get('response_config', {}).get('retornar_payload_direto', False)
                     if is_direct:
                         direct_payload = {
                             "__direct_payload": True,
@@ -1656,7 +1656,7 @@ async def _execute_startup_workflows(
             # Use the clean final result (last block output only)
             final_result = exec_result.get('result') or exec_result.get('context', {})
             
-            is_direct = getattr(wf, "return_direct_payload", False)
+            is_direct = getattr(wf, "return_direct_payload", False) or exec_result.get('response_config', {}).get('retornar_payload_direto', False)
             if is_direct:
                 direct_payload = {
                     "__direct_payload": True,
@@ -2111,6 +2111,8 @@ async def _check_collaborator_workflow_shortcuts(
         if result_ctx.get("status") == "paused":
             direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
 
+        is_direct_payload = is_direct_payload or result_ctx.get("response_config", {}).get("retornar_payload_direto", False)
+
         if is_direct_payload:
             # Direct payload mode: merge all fields at root level
             if isinstance(final_result, dict):
@@ -2242,6 +2244,8 @@ async def _check_workflow_direct_triggers(
                     final_result = saida_val
 
         # ── Direct Payload Mode: return dict with all automation fields ──
+        is_direct_payload = is_direct_payload or result_ctx.get("response_config", {}).get("retornar_payload_direto", False)
+        
         if is_direct_payload:
             direct_payload = {
                 "__direct_payload": True,
@@ -2371,6 +2375,8 @@ async def _check_global_workflow_shortcuts(
                     final_result = saida_val
 
         # ── Direct Payload Mode ──
+        is_direct_payload = is_direct_payload or result_ctx.get("response_config", {}).get("retornar_payload_direto", False)
+        
         if is_direct_payload:
             direct_payload = {
                 "__direct_payload": True,
