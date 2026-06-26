@@ -1631,7 +1631,13 @@ async def _execute_startup_workflows(
     active_workflows = [w for w in agent_obj.workflows if w.is_active]
     startup_workflows = []
     
+    resumed_wf_id = context_data.get("__resumed_workflow_id") if isinstance(context_data, dict) else None
+
     for wf in active_workflows:
+        if resumed_wf_id and str(wf.id) == resumed_wf_id:
+            print(f"[Startup Workflow] Skipping {wf.name} because it just resumed and completed.")
+            continue
+            
         settings = (wf.definition or {}).get("settings", {})
         if settings.get("auto_run") is True or getattr(wf, "always_run_on_startup", False):
             startup_workflows.append(wf)
@@ -2882,15 +2888,19 @@ async def process_message_task(
                         from uuid import UUID
                         
                         is_direct = res_ctx.get("response_config", {}).get("retornar_payload_direto", False)
-                        if not is_direct:
-                            try:
-                                exec_record = await db.scalar(sa_select(WorkflowExecution).where(WorkflowExecution.id == UUID(active_wf_run)))
-                                if exec_record:
+                        
+                        try:
+                            exec_record = await db.scalar(sa_select(WorkflowExecution).where(WorkflowExecution.id == UUID(active_wf_run)))
+                            if exec_record:
+                                if context_data is not None and isinstance(context_data, dict):
+                                    context_data["__resumed_workflow_id"] = str(exec_record.workflow_id)
+                                    
+                                if not is_direct:
                                     wf_record = await db.scalar(sa_select(Workflow).where(Workflow.id == exec_record.workflow_id))
                                     if wf_record:
                                         is_direct = getattr(wf_record, "return_direct_payload", False)
-                            except Exception as db_err:
-                                print(f"[Task] Could not fetch workflow for direct payload check: {db_err}")
+                        except Exception as db_err:
+                            print(f"[Task] Could not fetch workflow for direct payload check: {db_err}")
                         
                         if is_direct:
                             if response_text and store_in_mem:
