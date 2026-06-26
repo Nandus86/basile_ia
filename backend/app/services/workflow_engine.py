@@ -860,14 +860,9 @@ class WorkflowEngine:
         is_background: bool = False,
     ) -> Dict[str, Any]:
         t0 = time.time()
-        # Find response block to check if we should store in memory
+        # We will dynamically update response_config when a response block is executed
         store_in_memory = True
         response_config = {}
-        for b in blocks.values():
-            if b.get('type') == 'response':
-                store_in_memory = b.get('config', {}).get('store_in_memory', True)
-                response_config = b.get('config', {})
-                break
 
         last_output_key = None
         # Try to find the last output key from existing context/blocks_log if resuming
@@ -921,6 +916,9 @@ class WorkflowEngine:
 
                 try:
                     block_result = await self._execute_block(block, context, recursion_depth, last_output_key)
+                    if block.get('type') == 'response':
+                        response_config = block.get('config', {})
+                        store_in_memory = response_config.get('store_in_memory', True)
                 except WorkflowPauseException as pe:
                     total_duration = int((time.time() - t0) * 1000)
                     clean_context = {k.lstrip('$'): v for k, v in context.items()}
