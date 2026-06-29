@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import AgentControl from '@/views/AgentControl.vue'
 import QAEval from '@/views/QAEval.vue'
 
 const routes = [
@@ -11,11 +10,6 @@ const routes = [
         path: '',
         name: 'Dashboard',
         component: () => import('@/views/Dashboard.vue')
-      },
-      {
-        path: 'agent-control',
-        name: 'agent-control',
-        component: AgentControl
       },
       {
         path: 'qa-eval',
