@@ -26,7 +26,7 @@ for _mod in ("app.services.mcp_tools", "app.orchestrator.agent_factory",
 # ─────────────────────────────────────────────────────────────────────────────
 
 from app.database import engine, Base
-from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control, backup, auth
+from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control, backup, auth, qa_eval
 from app.api.endpoints import (
     ai_providers,
     webhooks_config,
@@ -126,6 +126,7 @@ app.include_router(agent_groups.router, prefix="/agent-groups", tags=["Agent Gro
 app.include_router(agent_control.router, prefix="/agent-control", tags=["Agent Control"])
 app.include_router(backup.router, prefix="/backup", tags=["Backup"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+app.include_router(qa_eval.router, prefix="/qa-eval", tags=["Q&A Eval"])
 
 
 @app.get("/")

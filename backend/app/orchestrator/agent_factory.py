@@ -1422,6 +1422,108 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
 
         return "Ocorreu um erro ao processar a resposta final."
 
+    @staticmethod
+    def extract_tool_trace(final_messages, agent_config: dict = None) -> Optional[dict]:
+        """Extract tool usage trace from agent execution messages for Q&A Eval.
+        Returns a dict with tool_calls, execution_mode, model, and budget info.
+        """
+        from langchain_core.messages import ToolMessage as _ToolMessage, AIMessage as _AIMessage
+        
+        tool_calls_trace = []
+        for msg in final_messages:
+            if isinstance(msg, _AIMessage) and hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_calls_trace.append({
+                        "name": tc.get("name"),
+                        "args": tc.get("args", {}),
+                    })
+            if isinstance(msg, _ToolMessage):
+                # Match result to the last tool call with same id
+                result_preview = str(msg.content)[:500] if msg.content else ""
+                # Find matching tool call and add result
+                for tc_entry in reversed(tool_calls_trace):
+                    if "result_preview" not in tc_entry:
+                        tc_entry["result_preview"] = result_preview
+                        break
+
+        if not tool_calls_trace:
+            return None
+
+        trace = {
+            "tool_calls": tool_calls_trace,
+        }
+        if agent_config:
+            trace["execution_mode"] = str(agent_config.get("execution_mode", "balanced"))
+            trace["model"] = agent_config.get("model", "unknown")
+        return trace
+
+    async def invoke_agent_with_trace(
+        self,
+        agent_config: Dict[str, Any],
+        messages: List[Any],
+        rag_context: Optional[str] = None,
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
+    ) -> tuple:
+        """Invoke an agent and return (response_text, tool_trace_dict).
+        tool_trace_dict may be None if no tools were used.
+        """
+        prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
+        
+        if not prep["is_react"]:
+            response = await prep["llm"].ainvoke(prep["agent_messages"], config=prep["run_config"])
+            return response.content, None
+
+        from langgraph.errors import GraphRecursionError
+        recursion_limit = max(150, prep["max_retries"] * 10 + 50)
+
+        try:
+            result = await prep["graph"].ainvoke(
+                {"messages": prep["agent_messages"]},
+                config={**prep["run_config"], "recursion_limit": recursion_limit},
+            )
+        except GraphRecursionError as recursion_err:
+            logger.warning(f"[AgentFactory] ⚠️ Recursion limit reached: {recursion_err}")
+            if hasattr(recursion_err, 'args') and len(recursion_err.args) > 1 and 'state' in recursion_err.args[1]:
+                result = recursion_err.args[1]['state']
+            else:
+                try:
+                    response = await prep["llm"].ainvoke([SystemMessage(content=prep["full_prompt"])] + messages, config=prep["run_config"])
+                    return response.content, None
+                except Exception:
+                    return "Desculpe, ocorreu um erro.", None
+
+        final_messages = result.get("messages", [])
+        
+        # Extract tool trace
+        tool_trace = self.extract_tool_trace(final_messages, agent_config)
+
+        # Logging
+        for msg in final_messages:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    logger.info("[AgentFactory] 🛠️ TOOL_CALL agent='%s' tool=%r", prep["name"], tc.get("name"))
+            if isinstance(msg, ToolMessage):
+                logger.info("[AgentFactory] 📨 TOOL_RESULT tool_call_id=%r", msg.tool_call_id)
+
+        logger.info(
+            "[AgentFactory] 📊 execution mode=%s actions=%s stop_reason=%s",
+            prep["resolved_execution_mode"],
+            prep["budget"].actions_used,
+            prep["budget"].stop_reason(),
+        )
+
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                if not (hasattr(msg, "tool_calls") and msg.tool_calls):
+                    return msg.content, tool_trace
+
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                return msg.content, tool_trace
+
+        return "Ocorreu um erro ao processar a resposta final.", tool_trace
+
     async def invoke_agent_stream(
         self,
         agent_config: Dict[str, Any],

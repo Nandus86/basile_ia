@@ -5,7 +5,7 @@ Stores complete conversation history in PostgreSQL for persistent tracking.
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from app.database import Base
 
@@ -18,6 +18,7 @@ class ConversationMessage(Base):
     session_id = Column(String, nullable=False)
     role = Column(String(30), nullable=False)  # "user" | "assistant" | "fromMe" | "supportResponse"
     content = Column(Text, nullable=False)
+    tool_trace = Column(JSONB, nullable=True)  # Tool usage trace for Q&A Eval (new interactions only)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

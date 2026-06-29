@@ -21,4 +21,9 @@ export default [
     icon: mdiRocketLaunchOutline,
     to: { name: 'Disparador' },
   },
+  {
+    title: 'Q&A Eval',
+    icon: mdiChartTimelineVariant,
+    to: { name: 'qa-eval' },
+  },
 ]

@@ -20,6 +20,7 @@ from app.models.conversation_message import ConversationMessage
 from app.models.dispatcher_config import DispatcherConfig
 from app.models.user import User
 from app.models.dispatcher_webhook_log import DispatcherWebhookLog
+from app.models.qa_evaluation import QAEvaluation
 
 __all__ = [
     "APIKey", 
@@ -31,6 +32,7 @@ __all__ = [
     "AIProvider", "WebhookConfig", "JobLog",
     "Skill", "SkillGroup", "InformationBase",
     "VFSKnowledgeBase", "VFSFile", "Workflow", "WorkflowExecution", "ConversationMessage",
-    "DispatcherConfig", "User", "DispatcherWebhookLog"
+    "DispatcherConfig", "User", "DispatcherWebhookLog",
+    "QAEvaluation"
 ]
 

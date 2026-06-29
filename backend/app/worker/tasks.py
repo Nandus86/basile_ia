@@ -907,7 +907,7 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
 # MTM (Medium-Term Memory) helpers — PostgreSQL
 # ─────────────────────────────────────────────────────────────
 
-async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, content: str):
+async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, content: str, tool_trace: dict = None):
     """Save a message to MTM (PostgreSQL) and trigger auto-summarize if needed."""
     try:
         from app.models.conversation_message import ConversationMessage
@@ -920,6 +920,7 @@ async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, conte
             session_id=str(session_id),
             role=role,
             content=content,
+            tool_trace=tool_trace,
         )
         db.add(msg)
         await db.commit()
@@ -4068,10 +4069,11 @@ async def process_message_task(
                         final_result = result_dict if isinstance(result_dict, dict) else {"output": str(result_dict)}
                         agent_used = agent_config["name"]
                         output_text = final_result.get("output", str(final_result))
+                        tool_trace = None  # TODO: support trace for structured
                     else:
                         # Standard text output
-                        response = await asyncio.wait_for(
-                            factory.invoke_agent(
+                        response, tool_trace = await asyncio.wait_for(
+                            factory.invoke_agent_with_trace(
                                 agent_config=agent_config,
                                 messages=messages,
                                 rag_context=rag_context,
@@ -4248,7 +4250,7 @@ async def process_message_task(
                         )
                     # MTM: save assistant response
                     if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
-                        await _save_mtm_message(db, agent_id, session_id, "assistant", output_text)
+                        await _save_mtm_message(db, agent_id, session_id, "assistant", output_text, tool_trace=tool_trace)
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
