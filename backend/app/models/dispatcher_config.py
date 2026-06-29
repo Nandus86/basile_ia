@@ -28,6 +28,8 @@ class DispatcherConfig(Base):
     
     # Agente
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    inject_mtm = Column(Boolean, default=True, nullable=False)
+    
     
     # Janela de horário (HH:mm)
     start_time = Column(String(5), default="08:00")

@@ -42,6 +42,7 @@ const defaultItem = {
   target_endpoint: '',
   timezone_path: '',
   outbound_mode: 'agent',
+  inject_mtm: true,
   ai_formulation_prompt: '',
   is_active: true
 }
@@ -748,6 +749,26 @@ onMounted(() => {
             <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-plus" class="mt-2 mb-4" @click="addRoutingRule">
               Adicionar Regra
             </v-btn>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- MTM Context Mode -->
+            <div class="text-subtitle-1 font-weight-bold mb-1">
+              <v-icon icon="mdi-brain" size="20" class="mr-1"></v-icon>
+              Memória de Longo Prazo (MTM)
+            </div>
+            <div class="text-caption text-medium-emphasis mb-4">
+              Define se o histórico de conversas passadas será injetado automaticamente para o agente.
+            </div>
+
+            <v-switch
+              v-model="editedItem.inject_mtm"
+              color="primary"
+              label="Injetar Contexto de Longo Prazo (MTM)"
+              hint="Se desativado, o agente receberá apenas o histórico curto (STM) deste disparo."
+              persistent-hint
+              class="mb-6"
+            ></v-switch>
 
             <v-divider class="my-4"></v-divider>
 

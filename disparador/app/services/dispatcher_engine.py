@@ -174,6 +174,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "dispatcher_triggers": config.triggers,
         "dispatcher_buttons": config.buttons if config.buttons_enabled else [],
         "dispatcher_image_enabled": config.image_enabled,
+        "mtm_active": getattr(config, "inject_mtm", True),
     }
     effective_transition_data = _build_transition_data(
         base_transition=transition_data,

@@ -27,6 +27,8 @@ class DispatcherConfigBase(BaseModel):
     
     messages_per_batch: int = Field(default=1)
     agent_id: Optional[UUID] = Field(None, description="Specific agent to route to")
+    inject_mtm: bool = Field(default=True, description="Injetar contexto de longo prazo (MTM)")
+    
     
     start_time: str = Field(default="08:00")
     end_time: str = Field(default="22:00")
@@ -70,6 +72,7 @@ class DispatcherConfigUpdate(BaseModel):
     image_enabled: Optional[bool] = None
     messages_per_batch: Optional[int] = None
     agent_id: Optional[UUID] = None
+    inject_mtm: Optional[bool] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     start_delay_seconds: Optional[int] = None
