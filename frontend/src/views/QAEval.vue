@@ -447,7 +447,6 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { qaEvalService } from '@/services/qaEvalService'
 import { agentService } from '@/services/agentService'
-import _debounce from 'lodash/debounce' // Precisa instalar/ter lodash se não houver, ou implementamos manual
 
 // Refs and Data
 const loading = ref(false)
