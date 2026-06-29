@@ -937,6 +937,11 @@ async def process_dynamic_webhook(
     # Resolve target agent
     target_agent_id = str(config.target_agent_id) if config.target_agent_id else request.agent_id
     
+    # Inject MTM active flag from Webhook config
+    c_data = request.context_data or {}
+    c_data["mtm_active"] = getattr(config, "inject_mtm", True)
+    request.context_data = c_data
+    
     if getattr(config, "sync_mode", False):
         # SYNCHRONOUS MODE
         from app.worker.tasks import process_message_task

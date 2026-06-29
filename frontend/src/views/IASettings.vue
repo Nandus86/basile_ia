@@ -301,6 +301,16 @@
                 ></v-switch>
                 
                 <v-switch
+                  v-model="editedWebhook.inject_mtm"
+                  label="Injetar Contexto MTM"
+                  hint="Se ativo, injeta o histórico de conversas passadas (MTM) na chamada do agente."
+                  persistent-hint
+                  color="primary"
+                  density="comfortable"
+                  class="mt-3"
+                ></v-switch>
+                
+                <v-switch
                   v-model="editedWebhook.is_active"
                   label="Webhook Ativo"
                   color="success"
@@ -413,6 +423,7 @@ const editedWebhook = ref({
   access_token: '',
   target_agent_id: null,
   sync_mode: false,
+  inject_mtm: true,
   is_active: true
 })
 

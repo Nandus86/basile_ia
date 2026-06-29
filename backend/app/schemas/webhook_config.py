@@ -13,6 +13,7 @@ class WebhookConfigBase(BaseModel):
     require_token: bool = Field(default=False, description="Require bearer token authentication")
     target_agent_id: Optional[UUID] = Field(None, description="Specific agent to route to, or null for auto-orchestration")
     sync_mode: bool = Field(default=False, description="Whether to run synchronously instead of using queue")
+    inject_mtm: bool = Field(default=True, description="Whether to inject MTM history into agent context")
     is_active: bool = True
 
 class WebhookConfigCreate(WebhookConfigBase):
@@ -26,6 +27,7 @@ class WebhookConfigUpdate(BaseModel):
     access_token: Optional[str] = None
     target_agent_id: Optional[UUID] = None
     sync_mode: Optional[bool] = None
+    inject_mtm: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
