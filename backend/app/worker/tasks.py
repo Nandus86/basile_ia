@@ -991,6 +991,35 @@ async def _check_mtm_has_history(db, agent_id: str, session_id: str) -> bool:
         return False
 
 
+def _build_mtm_query_tool(db, agent_id: str, session_id: str) -> list:
+    """Build a Langchain Tool for querying MTM history on demand."""
+    from langchain_core.tools import StructuredTool
+    from pydantic import BaseModel, Field
+    
+    class MTMQuerySchema(BaseModel):
+        limit: int = Field(default=5, description="Número de mensagens passadas a recuperar. Use valores entre 5 e 20 dependendo de quanto contexto você precisa.")
+        
+    async def _query_mtm(limit: int = 5) -> str:
+        messages = await _load_mtm_fallback(db, agent_id, session_id, limit=limit)
+        if not messages:
+            return "Nenhuma mensagem encontrada no histórico passado para este contato."
+        
+        result_lines = []
+        for m in messages:
+            ts = m.get('timestamp')
+            prefix = f"[{ts}] " if ts else ""
+            role_str = "Usuário" if m['role'] == 'user' else "Assistente"
+            result_lines.append(f"{prefix}{role_str}: {m['content']}")
+        return "\n\n".join(result_lines)
+    
+    return [StructuredTool.from_function(
+        coroutine=_query_mtm,
+        name="consultar_historico_antigo",
+        description="Pesquisa e recupera as mensagens anteriores (MTM) desta mesma conversa/contato. Use esta ferramenta APENAS se o usuário mencionar algo do passado ou perguntar se você lembra de alguma informação discutida antes.",
+        args_schema=MTMQuerySchema,
+    )]
+
+
 async def _auto_summarize_mtm_to_ltm(agent_id: str, session_id: str):
     """Auto-summarize MTM conversation into qualitative LTM facts."""
     try:
@@ -3448,20 +3477,33 @@ async def process_message_task(
             mtm_context_note = ""
             is_first_interaction = False
 
-            # MTM fallback: if no STM history, check PostgreSQL
+            # MTM check: Only inject automatically if mtm_active is True in context_data
             if global_memory_enabled and not history and agent_id and session_id:
-                mtm_history = await _load_mtm_fallback(db, agent_id, session_id, limit=5)
-                if mtm_history:
-                    history = mtm_history
-                    history_source = "MTM"
-                    mtm_context_note = (
-                        "\n\n## Contexto de Conversa Anterior\n\n"
-                        "O usuário já interagiu com você anteriormente. "
-                        "As mensagens abaixo são de uma conversa passada (recuperadas da memória de médio prazo). "
-                        "Use este contexto para manter a continuidade do atendimento.\n"
-                    )
-                    print(f"[MTM] 📋 Loaded {len(mtm_history)} messages from MTM for session {session_id}")
+                mtm_active = (context_data or {}).get("mtm_active", False)
+                if mtm_active:
+                    mtm_limit = int((context_data or {}).get("mtm_limit", 5))
+                    mtm_history = await _load_mtm_fallback(db, agent_id, session_id, limit=mtm_limit)
+                    if mtm_history:
+                        history = mtm_history
+                        history_source = "MTM"
+                        mtm_context_note = (
+                            "\n\n## Contexto de Conversa Anterior\n\n"
+                            "O usuário já interagiu com você anteriormente. "
+                            "As mensagens abaixo são de uma conversa passada (recuperadas da memória de médio prazo). "
+                            "Use este contexto para manter a continuidade do atendimento.\n"
+                        )
+                        print(f"[MTM] 📋 Loaded {len(mtm_history)} messages from MTM for session {session_id} (MTM Active in Disparador)")
+                    else:
+                        has_any = await _check_mtm_has_history(db, agent_id, session_id)
+                        if not has_any:
+                            is_first_interaction = True
+                            mtm_context_note = (
+                                "\n\n## Primeiro Contato\n\n"
+                                "Este é o primeiro contato deste usuário. Não há histórico de conversas anteriores.\n"
+                            )
+                            print(f"[MTM] 🆕 First contact for session {session_id}")
                 else:
+                    # Default: don't load MTM into context, but check if it's first contact to inform agent
                     has_any = await _check_mtm_has_history(db, agent_id, session_id)
                     if not has_any:
                         is_first_interaction = True
@@ -3470,6 +3512,8 @@ async def process_message_task(
                             "Este é o primeiro contato deste usuário. Não há histórico de conversas anteriores.\n"
                         )
                         print(f"[MTM] 🆕 First contact for session {session_id}")
+                    else:
+                        print(f"[MTM] 📉 Contact has previous MTM history but auto-injection is disabled. Use tool to query if needed.")
 
             # MTM: save user message to PostgreSQL
             if agent_id and session_id and not (context_data or {}).get("formulation_only", False) and (context_data or {}).get("outbound_mode") != "ai_formulated":
@@ -3577,6 +3621,19 @@ async def process_message_task(
                 import traceback
                 print(f"[Task] ❌ Error loading information base tools: {e}")
                 traceback.print_exc()
+
+            # [MTM TOOL] Add MTM query tool if memory is enabled
+            if global_memory_enabled and agent_id and session_id:
+                try:
+                    mtm_tool = _build_mtm_query_tool(db, agent_id, session_id)
+                    existing_tools = agent_config.get("tools", []) or []
+                    agent_config["tools"] = existing_tools + mtm_tool
+                    agent_config["has_tools"] = True
+                    print(f"[Task] 🧠 Added MTM query tool to '{agent_config['name']}'")
+                except Exception as e:
+                    import traceback
+                    print(f"[Task] ❌ Error loading MTM query tool: {e}")
+                    traceback.print_exc()
 
             # Enrich prompt (RAG, InfoBases as context if no tools, VectorMemory, Orchestrator, Session Continuity)
             rag_context = await _enrich_agent_prompt(

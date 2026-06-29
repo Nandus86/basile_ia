@@ -615,12 +615,17 @@ class WorkflowEngine:
         await self.db.commit()
         await self.db.refresh(execution)
 
+        trigger_block = self._find_trigger_block(blocks)
+
         from app.context import get_request_context
         req_ctx = get_request_context() or {}
 
         # Initialize context
         context: Dict[str, Any] = {
-            '$trigger': {'payload': trigger_data},
+            '$trigger': {
+                'payload': trigger_data,
+                'config': trigger_block.get('config', {}) if trigger_block else {}
+            },
             '$workflow': {
                 'id': str(workflow_id),
                 'name': workflow.name,
@@ -634,8 +639,6 @@ class WorkflowEngine:
         await self._preload_msg_request_context(context, blocks)
 
         try:
-            # Find trigger block (entry point)
-            trigger_block = self._find_trigger_block(blocks)
             if not trigger_block:
                 raise ValueError("No trigger block found in workflow definition")
 
@@ -1448,6 +1451,12 @@ class WorkflowEngine:
 
         # Inject workflow metadata
         context_data['_workflow_execution'] = True
+        
+        # Pass MTM active flag if webhook trigger is configured to inject MTM
+        trigger_config = context.get('$trigger', {}).get('config', {})
+        if trigger_config.get('inject_mtm'):
+            context_data['mtm_active'] = True
+            
         if config.get('inject_full_context', True):
             context_data['_workflow_context'] = {
                 k.lstrip('$'): v for k, v in context.items()

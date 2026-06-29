@@ -100,6 +100,17 @@
             class="mb-3"
             @update:model-value="emitUpdate"
           ></v-select>
+
+          <v-switch
+            :model-value="config.inject_mtm !== false"
+            @update:model-value="val => { config.inject_mtm = val; emitUpdate(); }"
+            label="Injetar Contexto de Longo Prazo (MTM)"
+            color="primary"
+            density="compact"
+            class="mb-3"
+            hint="Se desativado, o agente receberá apenas o histórico curto (STM) e não o longo prazo."
+            persistent-hint
+          ></v-switch>
         </div>
 
         <!-- Schedule Trigger Configuration -->
