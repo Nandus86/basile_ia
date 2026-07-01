@@ -181,6 +181,7 @@ async def receive_dispatch(
         payload_dict["config_path"] = path
         payload_dict["campaign_key"] = campaign_key
         payload_dict["run_id"] = run_id
+        payload_dict["campaign_total"] = total_contacts
 
         contacts = payload_dict.pop("contacts")
 

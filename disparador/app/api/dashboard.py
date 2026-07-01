@@ -115,6 +115,10 @@ async def retry_dlq(service_id: str):
     if not campaign:
         raise HTTPException(404, "Campaign not found to get config_path")
         
+    payloads = await disparador_redis.get_campaign_payloads(service_id)
+    input_payload = payloads.get("input", {}) if payloads else {}
+    original_message = input_payload.get("message", "DISPARADOR_START")
+        
     # we requeue them as single jobs to disp_jobs
     count = 0
     await disparador_rmq.connect()
@@ -126,7 +130,7 @@ async def retry_dlq(service_id: str):
             "queue_id": "dlq_retry",
             "service_id": service_id,
             "contacts": [contact],
-            "message": "DISPARADOR_START",
+            "message": original_message,
             "callback_url": "",
             "context_data": {},
             "transition_data": {},
@@ -378,6 +382,7 @@ async def recreate_campaign(service_id: str, db: AsyncSession = Depends(get_db))
     batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
     batch_size = min(batch_size, 10) # Cap batch size to prevent MQ timeout
     total_contacts = len(cleaned_contacts)
+    recreate_payload["campaign_total"] = total_contacts
     
     # Keep the same campaign_key so it matches but bypass lock
     if not campaign_key:

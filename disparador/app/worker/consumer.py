@@ -43,6 +43,7 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                 contacts = [single_contact]
                 
             config_path = payload.get("config_path")
+            campaign_total = payload.get("campaign_total")
             
             logger.info(f"[Worker] Processing dispatch message for run_id={run_id}, service_id={service_id}, type_id={type_id}, queue_id={queue_id}. Contacts count: {len(contacts)}")
             for i, c in enumerate(contacts):
@@ -102,6 +103,7 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     message_text=message_text,
                     source_payload=payload,
                     timestamp_create=timestamp_create,
+                    campaign_total=campaign_total,
                 )
             except asyncio.CancelledError:
                 logger.info(f"Task for run {run_id} gracefully cancelled.")

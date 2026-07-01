@@ -164,7 +164,9 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     
     # ProcessRequest Payload
     source_payload = source_payload or {}
-    message_value = message_text or source_payload.get("message") or "DISPARADOR_START"
+    message_value = message_text if message_text is not None else source_payload.get("message")
+    if message_value is None:
+        message_value = "DISPARADOR_START"
     enriched_context = {
         **(context_data or {}),
         **contact, # Injeta todos os campos extras do contato (email, cargo, etc)
@@ -267,7 +269,7 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     lb_delay = random.uniform(0.5, 1.2)
     await asyncio.sleep(lb_delay)
 
-async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, run_id: str, campaign_key: str, message_text: str = None, source_payload: dict = None, timestamp_create: str = None):
+async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, service_id: str, context_data: dict, transition_data: dict, callback_url: str, run_id: str, campaign_key: str, message_text: str = None, source_payload: dict = None, timestamp_create: str = None, campaign_total: int = None):
     import uuid
     for i, c in enumerate(contacts):
         if not (c.get("number") or c.get("phone") or c.get("user_id")):
@@ -279,7 +281,8 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
     if total == 0:
         return
         
-    await disparador_redis.init_campaign(service_id, total, str(config.id), config.path, campaign_key=campaign_key)
+    actual_total = campaign_total if campaign_total is not None else total
+    await disparador_redis.init_campaign(service_id, actual_total, str(config.id), config.path, campaign_key=campaign_key)
     await disparador_redis.set_campaign_contacts(service_id, contacts)
     
     # Save input payload sample
