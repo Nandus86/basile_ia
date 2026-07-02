@@ -99,7 +99,7 @@ def make_json_safe(obj: Any, seen: Optional[set] = None) -> Any:
 # Template resolution
 # ─────────────────────────────────────────────────────────────
 
-_TEMPLATE_RE = re.compile(r'\{\{[\s\+]*(.+?)[\s\+]*\}\}')
+_TEMPLATE_RE = re.compile(r'\{\{[\s\+]*(.+?)[\s\+]*\}\}', re.DOTALL)
 
 
 def _resolve_path(data: Any, path: str) -> Any:
