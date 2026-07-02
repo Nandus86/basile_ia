@@ -697,18 +697,30 @@
 
       <!-- ═══ SUB-WORKFLOW ═══ -->
       <template v-if="block.type === 'sub_workflow'">
-        <v-select
-          v-model="config.workflow_id"
-          :items="workflows.filter(w => w.id !== currentWorkflowId)"
-          item-title="name"
-          item-value="id"
-          label="Selecionar Workflow"
-          variant="outlined"
-          density="compact"
-          class="mb-3"
-          hide-details
-          @update:model-value="emitUpdate"
-        ></v-select>
+        <div class="d-flex align-center mb-3">
+          <v-select
+            v-model="config.workflow_id"
+            :items="workflows.filter(w => w.id !== currentWorkflowId)"
+            item-title="name"
+            item-value="id"
+            label="Selecionar Workflow"
+            variant="outlined"
+            density="compact"
+            hide-details
+            class="flex-grow-1"
+            @update:model-value="emitUpdate"
+          ></v-select>
+          <v-btn
+            v-if="config.workflow_id"
+            icon="mdi-open-in-new"
+            variant="tonal"
+            color="primary"
+            class="ml-2"
+            size="small"
+            title="Abrir Workflow em nova aba"
+            @click="openSubWorkflow(config.workflow_id)"
+          ></v-btn>
+        </div>
 
         <v-select
           v-model="config.payload_mode"
@@ -1179,6 +1191,12 @@ function onTriggerTypeChange(val) {
 
 function emitUpdate() {
   emit('update', props.block)
+}
+
+function openSubWorkflow(workflowId) {
+  if (workflowId) {
+    window.open(`/workflows/${workflowId}`, '_blank')
+  }
 }
 </script>
 
