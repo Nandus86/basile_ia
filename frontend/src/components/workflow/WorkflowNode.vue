@@ -3,6 +3,16 @@
     <div class="node-header">
       <v-icon :color="nodeColor" size="18">{{ nodeIcon }}</v-icon>
       <span class="node-label">{{ label || data.label || 'Bloco' }}</span>
+      <v-btn
+        v-if="data.type === 'sub_workflow' && data.config?.workflow_id"
+        icon="mdi-open-in-new"
+        variant="text"
+        size="x-small"
+        color="grey"
+        class="ml-1"
+        title="Abrir Workflow em nova aba"
+        @click.stop="openSubWorkflow(data.config.workflow_id)"
+      ></v-btn>
       <v-chip v-if="data._status" :color="statusColor" size="x-small" variant="flat" class="ml-1">
         {{ data._status }}
       </v-chip>
@@ -162,6 +172,12 @@ const statusColor = computed(() => {
     default: return 'grey'
   }
 })
+
+const openSubWorkflow = (workflowId) => {
+  if (workflowId) {
+    window.open(`/workflows/${workflowId}`, '_blank')
+  }
+}
 </script>
 
 <style scoped>
