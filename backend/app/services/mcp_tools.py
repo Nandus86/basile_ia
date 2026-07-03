@@ -20,6 +20,7 @@ import logging
 from app.models.mcp import MCP
 from app.models.agent import Agent, CollaborationStatus
 from app.services.mcp_client import MCPClient, execute_mcp_protocol
+from app.api.mcp import log_mcp_execution
 
 logger = logging.getLogger(__name__)
 
@@ -747,6 +748,20 @@ class MCPToolExecutor:
                             f"[MCPTool] ✅ MCP OK  tool={tool_name!r}  "
                             f"elapsed={_elapsed:.0f}ms  response_preview={raw[:500]!r}"
                         )
+                        asyncio.create_task(
+                            log_mcp_execution(
+                                db=self.db,
+                                mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
+                                mcp_name=tool_name,
+                                protocol=protocol,
+                                endpoint=mcp.endpoint or "",
+                                request_params=cleaned_args,
+                                response_data=res_data,
+                                status="success",
+                                error_message=None,
+                                duration_ms=_elapsed
+                            )
+                        )
                         _call_history[kwargs_hash]["last_result"] = raw
                         return raw
                     else:
@@ -754,6 +769,20 @@ class MCPToolExecutor:
                         logger.warning(
                             f"[MCPTool] ❌ MCP ERRO  tool={tool_name!r}  "
                             f"elapsed={_elapsed:.0f}ms  error={err!r}"
+                        )
+                        asyncio.create_task(
+                            log_mcp_execution(
+                                db=self.db,
+                                mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
+                                mcp_name=tool_name,
+                                protocol=protocol,
+                                endpoint=mcp.endpoint or "",
+                                request_params=cleaned_args,
+                                response_data={},
+                                status="failed",
+                                error_message=str(err),
+                                duration_ms=_elapsed
+                            )
                         )
                         return json.dumps({"error": err})
                 
@@ -858,6 +887,20 @@ class MCPToolExecutor:
                         safe_json = _truncate_large_response(filtered_json)
                         
                         final_res = json.dumps(safe_json, indent=2, ensure_ascii=False)
+                        asyncio.create_task(
+                            log_mcp_execution(
+                                db=self.db,
+                                mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
+                                mcp_name=tool_name,
+                                protocol=protocol,
+                                endpoint=endpoint_str,
+                                request_params={"body": body, "query": query},
+                                response_data=safe_json,
+                                status="success",
+                                error_message=None,
+                                duration_ms=_elapsed
+                            )
+                        )
                         _call_history[kwargs_hash]["last_result"] = final_res
                         return final_res
                         
@@ -867,6 +910,20 @@ class MCPToolExecutor:
                     exc_info=True
                 )
                 err_res = json.dumps({"error": str(e)})
+                asyncio.create_task(
+                    log_mcp_execution(
+                        db=self.db,
+                        mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
+                        mcp_name=tool_name,
+                        protocol=protocol,
+                        endpoint=endpoint_str if 'endpoint_str' in locals() else (mcp.endpoint or ""),
+                        request_params={"body": body, "query": query} if 'body' in locals() and 'query' in locals() else final_args,
+                        response_data={},
+                        status="failed",
+                        error_message=str(e),
+                        duration_ms=0.0
+                    )
+                )
                 _call_history[kwargs_hash]["last_result"] = err_res
                 return err_res
         
