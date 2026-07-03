@@ -20,7 +20,6 @@ import logging
 from app.models.mcp import MCP
 from app.models.agent import Agent, CollaborationStatus
 from app.services.mcp_client import MCPClient, execute_mcp_protocol
-from app.api.mcp import log_mcp_execution
 
 logger = logging.getLogger(__name__)
 
@@ -580,6 +579,7 @@ class MCPToolExecutor:
         
         async def execute_tool(**kwargs) -> str:
             from app.context import get_request_context
+            from app.api.mcp import log_mcp_execution
             import os
             import hashlib
             
