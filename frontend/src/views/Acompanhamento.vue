@@ -1794,7 +1794,7 @@ const fetchMcpLogs = async () => {
   mcpLoading.value = true
   try {
     const skip = (mcpPage.value - 1) * mcpItemsPerPage.value
-    let url = `/api/mcp/logs/history?skip=${skip}&limit=${mcpItemsPerPage.value}`
+    let url = `/mcp/logs/history?skip=${skip}&limit=${mcpItemsPerPage.value}`
     if (mcpStatusFilter.value) {
       url += `&status_filter=${mcpStatusFilter.value}`
     }
