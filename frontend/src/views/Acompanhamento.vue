@@ -34,6 +34,7 @@
       <v-tab value="disparador">Disparador</v-tab>
       <v-tab value="gatilhos-disparador">Gatilhos Disparador</v-tab>
       <v-tab value="automacao">Automação</v-tab>
+      <v-tab value="mcp">Integrações MCP</v-tab>
     </v-tabs>
 
     <v-window v-model="activeTab">
@@ -1163,7 +1164,203 @@
           <div class="text-body-1">Selecione uma automação acima para acompanhar seus logs de execução.</div>
         </div>
       </v-window-item>
+
+      <v-window-item value="mcp">
+        <v-card class="glass-card">
+          <v-card-title class="d-flex align-center px-6 py-4">
+            <v-icon class="mr-2" color="deep-purple">mdi-api</v-icon>
+            <span class="text-white font-weight-medium">Logs de Integrações MCP</span>
+            <v-spacer></v-spacer>
+            <v-btn color="deep-purple" variant="tonal" prepend-icon="mdi-refresh" size="small" @click="fetchMcpLogs" :loading="mcpLoading">
+              Atualizar
+            </v-btn>
+          </v-card-title>
+          
+          <v-divider></v-divider>
+
+          <v-card-text class="px-6 py-4">
+            <v-row dense>
+              <v-col cols="12" sm="6" md="4">
+                <v-select
+                  v-model="mcpStatusFilter"
+                  :items="['success', 'failed']"
+                  label="Status"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  @update:model-value="fetchMcpLogs"
+                ></v-select>
+              </v-col>
+            </v-row>
+          </v-card-text>
+
+          <v-divider></v-divider>
+
+          <v-data-table
+            :headers="[
+              { title: 'Data/Hora', key: 'created_at', width: '180px' },
+              { title: 'MCP', key: 'mcp_name' },
+              { title: 'Protocolo', key: 'protocol', width: '100px', align: 'center' },
+              { title: 'Endpoint / Tool', key: 'endpoint' },
+              { title: 'Duração', key: 'duration_ms', align: 'center', width: '110px' },
+              { title: 'Status', key: 'status', align: 'center', width: '120px' },
+              { title: 'Ações', key: 'actions', sortable: false, align: 'center', width: '100px' }
+            ]"
+            :items="mcpLogs"
+            :loading="mcpLoading"
+            hover
+            hide-default-footer
+            class="bg-transparent"
+          >
+            <template v-slot:item.created_at="{ item }">
+              <span class="text-body-2">{{ formatDate(item.created_at) }}</span>
+            </template>
+
+            <template v-slot:item.mcp_name="{ item }">
+              <span class="text-body-2 font-weight-medium">{{ item.mcp_name || item.mcp_id?.substring(0, 8) || '—' }}</span>
+            </template>
+
+            <template v-slot:item.protocol="{ item }">
+              <v-chip size="x-small" variant="outlined" color="primary">
+                {{ (item.protocol || '—').toUpperCase() }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.endpoint="{ item }">
+              <span class="text-caption text-truncate d-inline-block" style="max-width: 250px;" :title="item.endpoint">
+                {{ item.endpoint || '—' }}
+              </span>
+            </template>
+
+            <template v-slot:item.duration_ms="{ item }">
+              <span v-if="item.duration_ms" class="text-body-2">
+                <v-icon size="12" class="mr-1">mdi-timer-outline</v-icon>
+                {{ Math.round(item.duration_ms) }} ms
+              </span>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
+
+            <template v-slot:item.status="{ item }">
+              <v-chip :color="item.status === 'success' ? 'success' : 'error'" size="small" variant="tonal">
+                <v-icon start size="12">{{ item.status === 'success' ? 'mdi-check-circle' : 'mdi-alert-circle' }}</v-icon>
+                {{ (item.status || 'unknown').toUpperCase() }}
+              </v-chip>
+            </template>
+
+            <template v-slot:item.actions="{ item }">
+              <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-eye" @click="openMcpLogDetails(item)">
+                Ver
+              </v-btn>
+            </template>
+
+            <template v-slot:bottom>
+              <div class="d-flex align-center justify-end pa-4 border-t" style="gap: 16px;">
+                <v-pagination
+                  v-model="mcpPage"
+                  :length="Math.ceil(mcpTotal / mcpItemsPerPage) || 1"
+                  density="compact"
+                  total-visible="5"
+                  active-color="primary"
+                  @update:model-value="fetchMcpLogs"
+                ></v-pagination>
+              </div>
+            </template>
+          </v-data-table>
+        </v-card>
+      </v-window-item>
     </v-window>
+
+    <!-- Dialog de Detalhes do Log do MCP -->
+    <v-dialog v-model="mcpDialog" max-width="950" scrollable>
+      <v-card class="glass-card" style="background: #0D1117 !important" v-if="selectedMcpLog">
+        <v-card-title class="d-flex align-center pa-5 border-b">
+          <v-icon class="mr-2" size="24" :color="selectedMcpLog.status === 'success' ? 'success' : 'error'">
+            {{ selectedMcpLog.status === 'success' ? 'mdi-api' : 'mdi-alert-circle' }}
+          </v-icon>
+          <div>
+            <span class="text-subtitle-1 font-weight-bold text-white">Log MCP: {{ selectedMcpLog.mcp_name || selectedMcpLog.id.substring(0, 8) }}</span>
+            <div class="text-caption text-medium-emphasis mt-n1">
+              Data: {{ formatDate(selectedMcpLog.created_at) }} • Duração: {{ Math.round(selectedMcpLog.duration_ms || 0) }} ms
+            </div>
+          </div>
+          <v-spacer />
+          <v-chip :color="selectedMcpLog.status === 'success' ? 'success' : 'error'" size="small" class="mr-3" variant="flat">
+            {{ (selectedMcpLog.status || 'unknown').toUpperCase() }}
+          </v-chip>
+          <v-btn icon variant="text" size="small" @click="mcpDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-tabs v-model="mcpDetailTab" color="primary" class="border-b">
+          <v-tab value="general">Geral / Erro</v-tab>
+          <v-tab value="request">Requisição (Entrada)</v-tab>
+          <v-tab value="response">Resposta (Saída)</v-tab>
+        </v-tabs>
+
+        <v-card-text class="pa-5" style="max-height: 650px; overflow-y: auto;">
+          <!-- TAB: GERAL -->
+          <div v-if="mcpDetailTab === 'general'">
+            <v-row>
+              <v-col cols="12" md="6">
+                <div class="text-caption text-medium-emphasis mb-1">Protocolo</div>
+                <div class="text-body-2 font-weight-bold text-white">{{ (selectedMcpLog.protocol || '—').toUpperCase() }}</div>
+              </v-col>
+              <v-col cols="12" md="6">
+                <div class="text-caption text-medium-emphasis mb-1">Endpoint ou Tool Name</div>
+                <div class="text-body-2 font-weight-bold text-white">{{ selectedMcpLog.endpoint || '—' }}</div>
+              </v-col>
+            </v-row>
+
+            <v-divider class="my-4"></v-divider>
+
+            <!-- Error message if any -->
+            <div v-if="selectedMcpLog.error_message" class="mb-4">
+              <h4 class="text-subtitle-2 font-weight-bold text-error mb-2">Mensagem de Erro</h4>
+              <v-alert type="error" variant="tonal" class="text-caption">
+                <pre style="white-space: pre-wrap; font-family: monospace;">{{ selectedMcpLog.error_message }}</pre>
+              </v-alert>
+            </div>
+            <div v-else-if="selectedMcpLog.status === 'success'" class="text-medium-emphasis font-italic text-body-2">
+              Execução concluída com sucesso sem erros.
+            </div>
+          </div>
+
+          <!-- TAB: REQUEST PAYLOAD -->
+          <div v-else-if="mcpDetailTab === 'request'">
+            <div class="d-flex justify-space-between align-center mb-2">
+              <span class="text-caption text-medium-emphasis">Payload de Entrada / Parâmetros</span>
+              <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedMcpLog.request_params)">
+                Copiar
+              </v-btn>
+            </div>
+            <v-sheet rounded class="code-sheet pa-4">
+              <pre>{{ formatJSON(selectedMcpLog.request_params) }}</pre>
+            </v-sheet>
+          </div>
+
+          <!-- TAB: RESPONSE PAYLOAD -->
+          <div v-else-if="mcpDetailTab === 'response'">
+            <div class="d-flex justify-space-between align-center mb-2">
+              <span class="text-caption text-medium-emphasis">Payload de Retorno do MCP</span>
+              <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedMcpLog.response_data)">
+                Copiar
+              </v-btn>
+            </div>
+            <v-sheet rounded class="code-sheet pa-4" v-if="selectedMcpLog.response_data">
+              <pre>{{ formatJSON(selectedMcpLog.response_data) }}</pre>
+            </v-sheet>
+            <div v-else class="text-medium-emphasis font-italic text-body-2">Nenhuma resposta registrada (possível falha antes de obter resposta).</div>
+          </div>
+        </v-card-text>
+
+        <v-card-actions class="pa-4 border-t">
+          <v-spacer />
+          <v-btn variant="text" @click="mcpDialog = false">Fechar</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- Dialog de Detalhes da Execução da Automação -->
     <v-dialog v-model="wfDrawer" max-width="950" scrollable>
@@ -1580,6 +1777,42 @@ function debouncedFetchLogs(delay = 400) {
     page.value = 1
     fetchLogs()
   }, delay)
+}
+
+// MCP Logs State
+const mcpLogs = ref([])
+const mcpTotal = ref(0)
+const mcpPage = ref(1)
+const mcpItemsPerPage = ref(20)
+const mcpLoading = ref(false)
+const mcpStatusFilter = ref(null)
+const mcpDialog = ref(false)
+const selectedMcpLog = ref(null)
+const mcpDetailTab = ref('general')
+
+const fetchMcpLogs = async () => {
+  mcpLoading.value = true
+  try {
+    const skip = (mcpPage.value - 1) * mcpItemsPerPage.value
+    let url = `/api/mcp/logs/history?skip=${skip}&limit=${mcpItemsPerPage.value}`
+    if (mcpStatusFilter.value) {
+      url += `&status_filter=${mcpStatusFilter.value}`
+    }
+    const response = await axiosInstance.get(url)
+    mcpLogs.value = response.data.items
+    mcpTotal.value = response.data.total
+  } catch (error) {
+    console.error('Erro ao buscar logs do MCP:', error)
+    snackbar.value = { show: true, text: 'Erro ao buscar logs do MCP', color: 'error' }
+  } finally {
+    mcpLoading.value = false
+  }
+}
+
+const openMcpLogDetails = (item) => {
+  selectedMcpLog.value = item
+  mcpDetailTab.value = 'general'
+  mcpDialog.value = true
 }
 
 // Workflows / Automações state
@@ -2621,6 +2854,8 @@ watch(activeTab, (newTab) => {
     fetchIngressLogs()
   } else if (newTab === 'gatilhos-disparador') {
     fetchGatilhos()
+  } else if (newTab === 'mcp') {
+    fetchMcpLogs()
   }
 })
 
@@ -2646,6 +2881,7 @@ onMounted(() => {
   fetchWorkflows()
   fetchIngressLogs()
   fetchGatilhos()
+  fetchMcpLogs()
   connectSSE()
 })
 

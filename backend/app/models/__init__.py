@@ -4,6 +4,7 @@ from app.models.agent import Agent, AgentCollaborator, AccessLevel, Collaboratio
 from app.models.agent_group import AgentGroup
 from app.models.mcp import MCP
 from app.models.mcp_group import MCPGroup
+from app.models.mcp_log import MCPExecutionLog
 from app.models.agent_config import AgentConfig, PendingApproval
 from app.models.document import Document, DocumentStatus, DocumentType
 from app.models.emotional_profile import EmotionalProfile, DEFAULT_EMOTIONAL_PROFILES
@@ -25,7 +26,7 @@ from app.models.qa_evaluation import QAEvaluation
 __all__ = [
     "APIKey", 
     "Agent", "AgentCollaborator", "AccessLevel", "CollaborationStatus", "AgentGroup",
-    "MCP", "MCPGroup",
+    "MCP", "MCPGroup", "MCPExecutionLog",
     "AgentConfig", "PendingApproval",
     "Document", "DocumentStatus", "DocumentType",
     "EmotionalProfile", "DEFAULT_EMOTIONAL_PROFILES",

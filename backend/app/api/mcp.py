@@ -12,6 +12,28 @@ import time
 import json
 import asyncio
 
+async def log_mcp_execution(mcp_id, mcp_name, protocol, endpoint, request_params, response_data, status_str, duration_ms, error_message=None):
+    try:
+        from app.database import AsyncSessionLocal
+        from app.models.mcp_log import MCPExecutionLog
+        async with AsyncSessionLocal() as db:
+            log_entry = MCPExecutionLog(
+                mcp_id=mcp_id,
+                mcp_name=mcp_name,
+                protocol=protocol,
+                endpoint=endpoint,
+                request_params=request_params,
+                response_data=response_data,
+                status=status_str,
+                error_message=error_message,
+                duration_ms=duration_ms
+            )
+            db.add(log_entry)
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to log MCP execution: {e}")
+
 from app.database import get_db
 from app.models.mcp import MCP
 from app.schemas.mcp import (
@@ -489,6 +511,17 @@ async def execute_mcp(
         
         execution_time = (time.time() - start_time) * 1000
         
+        asyncio.create_task(log_mcp_execution(
+            mcp_id=mcp.id,
+            mcp_name=mcp.name,
+            protocol=protocol,
+            endpoint=mcp.endpoint or action,
+            request_params=request.params,
+            response_data=result_data,
+            status_str="success",
+            duration_ms=execution_time
+        ))
+        
         return MCPExecuteResponse(
             success=True,
             result=result_data,
@@ -498,6 +531,25 @@ async def execute_mcp(
         
     except Exception as e:
         execution_time = (time.time() - start_time) * 1000
+        
+        # We need mcp from the outer scope, which might be None if it failed early
+        mcp_id_val = mcp.id if 'mcp' in locals() and mcp else mcp_id
+        mcp_name_val = mcp.name if 'mcp' in locals() and mcp else str(mcp_id)
+        protocol_val = mcp.protocol if 'mcp' in locals() and mcp else "unknown"
+        endpoint_val = mcp.endpoint if 'mcp' in locals() and mcp else "unknown"
+        
+        asyncio.create_task(log_mcp_execution(
+            mcp_id=mcp_id_val,
+            mcp_name=mcp_name_val,
+            protocol=protocol_val,
+            endpoint=endpoint_val,
+            request_params=request.params,
+            response_data=None,
+            status_str="failed",
+            duration_ms=execution_time,
+            error_message=str(e)
+        ))
+        
         return MCPExecuteResponse(
             success=False,
             error=str(e),
@@ -698,6 +750,20 @@ async def call_mcp_tool(
         # [Log de Saída]
         logger.info(f"[MCP API] 📦 SAÍDA (TOOL CALL) tool={request.tool_name}: {json.dumps(mcp_result.get('result'), ensure_ascii=False)[:1000]}")
         
+        status_str = "success" if mcp_result.get("success", False) else "failed"
+        
+        asyncio.create_task(log_mcp_execution(
+            mcp_id=mcp.id,
+            mcp_name=mcp.name,
+            protocol=protocol,
+            endpoint=f"tool:{request.tool_name}",
+            request_params=request.arguments,
+            response_data=mcp_result.get("result"),
+            status_str=status_str,
+            duration_ms=execution_time,
+            error_message=mcp_result.get("error")
+        ))
+        
         return MCPExecuteResponse(
             success=mcp_result.get("success", False),
             result=mcp_result.get("result"),
@@ -708,8 +774,63 @@ async def call_mcp_tool(
         
     except Exception as e:
         execution_time = (time.time() - start_time) * 1000
+        
+        mcp_id_val = mcp.id if 'mcp' in locals() and mcp else mcp_id
+        mcp_name_val = mcp.name if 'mcp' in locals() and mcp else str(mcp_id)
+        protocol_val = mcp.protocol if 'mcp' in locals() and mcp else "unknown"
+        
+        asyncio.create_task(log_mcp_execution(
+            mcp_id=mcp_id_val,
+            mcp_name=mcp_name_val,
+            protocol=protocol_val,
+            endpoint=f"tool:{request.tool_name}" if 'request' in locals() else "unknown_tool",
+            request_params=request.arguments if 'request' in locals() else {},
+            response_data=None,
+            status_str="failed",
+            duration_ms=execution_time,
+            error_message=str(e)
+        ))
+        
         return MCPExecuteResponse(
             success=False,
             error=str(e),
             execution_time_ms=execution_time
         )
+
+from app.schemas.mcp_log import MCPExecutionLogList
+from app.models.mcp_log import MCPExecutionLog
+from sqlalchemy import desc
+
+@router.get("/logs/history", response_model=MCPExecutionLogList)
+async def get_mcp_logs(
+    skip: int = 0,
+    limit: int = 100,
+    status_filter: Optional[str] = None,
+    mcp_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get MCP execution logs with pagination"""
+    query = select(MCPExecutionLog)
+    
+    if status_filter:
+        query = query.where(MCPExecutionLog.status == status_filter)
+    
+    if mcp_id:
+        query = query.where(MCPExecutionLog.mcp_id == mcp_id)
+        
+    query = query.order_by(desc(MCPExecutionLog.created_at))
+    query = query.offset(skip).limit(limit)
+    
+    result = await db.execute(query)
+    logs = result.scalars().all()
+    
+    count_query = select(MCPExecutionLog)
+    if status_filter:
+        count_query = count_query.where(MCPExecutionLog.status == status_filter)
+    if mcp_id:
+        count_query = count_query.where(MCPExecutionLog.mcp_id == mcp_id)
+        
+    count_result = await db.execute(count_query)
+    total = len(count_result.scalars().all())
+    
+    return MCPExecutionLogList(items=logs, total=total)
