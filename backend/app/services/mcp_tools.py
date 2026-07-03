@@ -750,14 +750,13 @@ class MCPToolExecutor:
                         )
                         asyncio.create_task(
                             log_mcp_execution(
-                                db=self.db,
                                 mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
                                 mcp_name=tool_name,
                                 protocol=protocol,
                                 endpoint=mcp.endpoint or "",
                                 request_params=cleaned_args,
                                 response_data=res_data,
-                                status="success",
+                                status_str="success",
                                 error_message=None,
                                 duration_ms=_elapsed
                             )
@@ -772,14 +771,13 @@ class MCPToolExecutor:
                         )
                         asyncio.create_task(
                             log_mcp_execution(
-                                db=self.db,
                                 mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
                                 mcp_name=tool_name,
                                 protocol=protocol,
                                 endpoint=mcp.endpoint or "",
                                 request_params=cleaned_args,
                                 response_data={},
-                                status="failed",
+                                status_str="failed",
                                 error_message=str(err),
                                 duration_ms=_elapsed
                             )
@@ -889,14 +887,13 @@ class MCPToolExecutor:
                         final_res = json.dumps(safe_json, indent=2, ensure_ascii=False)
                         asyncio.create_task(
                             log_mcp_execution(
-                                db=self.db,
                                 mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
                                 mcp_name=tool_name,
                                 protocol=protocol,
                                 endpoint=endpoint_str,
                                 request_params={"body": body, "query": query},
                                 response_data=safe_json,
-                                status="success",
+                                status_str="success",
                                 error_message=None,
                                 duration_ms=_elapsed
                             )
@@ -912,14 +909,13 @@ class MCPToolExecutor:
                 err_res = json.dumps({"error": str(e)})
                 asyncio.create_task(
                     log_mcp_execution(
-                        db=self.db,
                         mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
                         mcp_name=tool_name,
                         protocol=protocol,
                         endpoint=endpoint_str if 'endpoint_str' in locals() else (mcp.endpoint or ""),
                         request_params={"body": body, "query": query} if 'body' in locals() and 'query' in locals() else final_args,
                         response_data={},
-                        status="failed",
+                        status_str="failed",
                         error_message=str(e),
                         duration_ms=0.0
                     )
