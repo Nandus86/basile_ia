@@ -354,22 +354,120 @@
 
       <!-- ═══ AGENT ═══ -->
       <template v-if="block.type === 'agent'">
-        <v-select
-          v-model="config.agent_id"
-          :items="agents"
-          item-title="name"
-          item-value="id"
-          label="Agente"
-          variant="outlined"
+        <!-- Mode Toggle: Existing vs Inline -->
+        <v-btn-toggle
+          v-model="agentMode"
+          mandatory
           density="compact"
-          class="mb-3"
-          clearable
-          hide-details
-          @update:model-value="emitUpdate"
-        ></v-select>
-        <v-alert v-if="!config.agent_id" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
-          Selecione um agente para executar neste bloco.
-        </v-alert>
+          color="primary"
+          class="mb-3 w-100"
+          divided
+          variant="outlined"
+        >
+          <v-btn value="existing" size="small" class="flex-grow-1">
+            <v-icon start size="16">mdi-account-check</v-icon>
+            Agente Existente
+          </v-btn>
+          <v-btn value="inline" size="small" class="flex-grow-1">
+            <v-icon start size="16">mdi-pencil-plus</v-icon>
+            Agente da Automação
+          </v-btn>
+        </v-btn-toggle>
+
+        <!-- Existing Agent Mode -->
+        <template v-if="agentMode === 'existing'">
+          <v-select
+            v-model="config.agent_id"
+            :items="agents"
+            item-title="name"
+            item-value="id"
+            label="Agente"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            clearable
+            hide-details
+            @update:model-value="emitUpdate"
+          ></v-select>
+          <v-alert v-if="!config.agent_id" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
+            Selecione um agente para executar neste bloco.
+          </v-alert>
+        </template>
+
+        <!-- Inline Agent Mode -->
+        <template v-if="agentMode === 'inline'">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            <v-icon start size="14">mdi-information</v-icon>
+            Crie um agente simples diretamente para esta automação. Ele não será salvo na lista de agentes do sistema.
+          </v-alert>
+          <v-text-field
+            v-model="inlineAgent.name"
+            label="Nome do Agente"
+            placeholder="Formatador de Dados"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hide-details
+            @update:model-value="onInlineAgentChange"
+          ></v-text-field>
+          <v-textarea
+            v-model="inlineAgent.system_prompt"
+            label="System Prompt"
+            placeholder="Você é um assistente que formata dados recebidos do workflow..."
+            variant="outlined"
+            density="compact"
+            rows="8"
+            class="mb-3 monospace-field"
+            hint="Instrução principal do agente. O contexto do workflow será injetado automaticamente."
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          ></v-textarea>
+          <v-row dense class="mb-1">
+            <v-col cols="12">
+              <v-combobox
+                v-model="inlineAgent.model"
+                :items="inlineModelOptions"
+                label="Modelo"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onInlineAgentChange"
+              ></v-combobox>
+            </v-col>
+          </v-row>
+          <v-row dense class="mb-3">
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="inlineAgent.temperature"
+                label="Temperatura"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onInlineAgentChange"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="inlineAgent.max_tokens"
+                label="Max Tokens"
+                type="number"
+                min="100"
+                max="128000"
+                step="100"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onInlineAgentChange"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+        </template>
+
+        <!-- Common fields (both modes) -->
         <v-textarea
           v-model="config.message_template"
           label="Mensagem para o Agente"
@@ -998,6 +1096,56 @@ const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-ci
 const config = computed(() => {
   if (!props.block.config) props.block.config = {}
   return props.block.config
+})
+
+// ── Inline Agent helpers ──────────────────────────────────────────────────
+const agentMode = ref(config.value.inline_agent ? 'inline' : 'existing')
+
+const inlineAgent = ref({
+  name: config.value.inline_agent?.name || '',
+  system_prompt: config.value.inline_agent?.system_prompt || '',
+  model: config.value.inline_agent?.model || 'gpt-4o-mini',
+  temperature: config.value.inline_agent?.temperature ?? 0.7,
+  max_tokens: config.value.inline_agent?.max_tokens ?? 2000,
+})
+
+const inlineModelOptions = [
+  'gpt-4o-mini',
+  'gpt-4o',
+  'gpt-4-turbo',
+  'gpt-3.5-turbo',
+]
+
+function onInlineAgentChange() {
+  config.value.inline_agent = { ...inlineAgent.value }
+  emitUpdate()
+}
+
+watch(agentMode, (newMode) => {
+  if (newMode === 'inline') {
+    // Clear agent_id when switching to inline
+    config.value.agent_id = null
+    // Ensure inline_agent config exists
+    if (!config.value.inline_agent) {
+      config.value.inline_agent = { ...inlineAgent.value }
+    }
+  } else {
+    // Clear inline_agent when switching to existing
+    config.value.inline_agent = null
+  }
+  emitUpdate()
+})
+
+// Sync when block changes (e.g. user clicks a different agent block)
+watch(() => props.block.id, () => {
+  agentMode.value = config.value.inline_agent ? 'inline' : 'existing'
+  inlineAgent.value = {
+    name: config.value.inline_agent?.name || '',
+    system_prompt: config.value.inline_agent?.system_prompt || '',
+    model: config.value.inline_agent?.model || 'gpt-4o-mini',
+    temperature: config.value.inline_agent?.temperature ?? 0.7,
+    max_tokens: config.value.inline_agent?.max_tokens ?? 2000,
+  }
 })
 
 // ── MCP block helpers ─────────────────────────────────────────────────────

@@ -1422,7 +1422,13 @@ class WorkflowEngine:
         }
 
     async def _exec_agent(self, config: Dict[str, Any], context: Dict[str, Any]) -> Any:
-        """Invoke a Basile AI agent within the workflow."""
+        """Invoke a Basile AI agent within the workflow.
+        
+        Supports two modes:
+          1. Existing agent: uses agent_id to load from DB and invoke via process_message_task
+          2. Inline agent: uses config.inline_agent to make a direct LLM call (no DB, no RAG, no memory)
+        """
+        inline_agent = config.get('inline_agent')
         agent_id = resolve_template(config.get('agent_id', ''), context)
         message_template = config.get('message_template', '')
         context_mapping = config.get('context_mapping', {})
@@ -1430,14 +1436,6 @@ class WorkflowEngine:
             config.get('session_id_source', 'workflow_auto'),
             context
         )
-        use_structured = config.get('use_structured_output', False)
-        user_access_level = resolve_template(
-            config.get('user_access_level', 'normal'),
-            context
-        )
-
-        if not agent_id:
-            raise ValueError("Agent block: 'agent_id' is required")
 
         # Resolve message
         message = resolve_template(message_template, context)
@@ -1451,7 +1449,88 @@ class WorkflowEngine:
 
         # Inject workflow metadata
         context_data['_workflow_execution'] = True
-        
+
+        # ── Inline Agent Mode ──────────────────────────────────────────
+        if inline_agent and not agent_id:
+            inline_name = inline_agent.get('name', 'Agente Inline')
+            inline_system_prompt = inline_agent.get('system_prompt', '')
+            inline_model = inline_agent.get('model', 'gpt-4o-mini')
+            inline_temperature = float(inline_agent.get('temperature', 0.7))
+            inline_max_tokens = int(inline_agent.get('max_tokens', 2000))
+
+            if not inline_system_prompt:
+                raise ValueError("Inline agent block: 'system_prompt' is required")
+
+            logger.info(f"[WorkflowEngine] 🤖 Invoking INLINE agent '{inline_name}' (model={inline_model}) with message: {message[:100]}...")
+
+            # Inject workflow context into system prompt
+            workflow_context_str = ""
+            if config.get('inject_full_context', True):
+                wf_ctx = {
+                    k.lstrip('$'): v for k, v in context.items()
+                    if k not in ('$workflow',)
+                }
+                if wf_ctx:
+                    try:
+                        workflow_context_str = (
+                            "\n\n## Contexto do Workflow\n"
+                            "Os dados abaixo foram coletados pelos blocos anteriores do workflow:\n"
+                            f"```json\n{json.dumps(wf_ctx, ensure_ascii=False, default=str)[:8000]}\n```\n"
+                        )
+                    except Exception:
+                        workflow_context_str = ""
+
+            full_system_prompt = inline_system_prompt + workflow_context_str
+
+            try:
+                from langchain_openai import ChatOpenAI
+                from langchain_core.messages import SystemMessage, HumanMessage
+                from app.config import settings
+
+                # Determine provider (OpenRouter vs OpenAI)
+                is_openrouter = "/" in inline_model
+                llm_kwargs = {
+                    "model": inline_model,
+                    "temperature": inline_temperature,
+                    "max_tokens": inline_max_tokens,
+                }
+                if is_openrouter:
+                    llm_kwargs["api_key"] = settings.OPENROUTER_API_KEY
+                    llm_kwargs["base_url"] = "https://openrouter.ai/api/v1"
+                else:
+                    llm_kwargs["api_key"] = settings.OPENAI_API_KEY
+
+                llm = ChatOpenAI(**llm_kwargs)
+                messages = [
+                    SystemMessage(content=full_system_prompt),
+                    HumanMessage(content=message),
+                ]
+                response = await llm.ainvoke(messages)
+                response_text = response.content if response else ""
+
+                logger.info(f"[WorkflowEngine] ✅ Inline agent '{inline_name}' responded ({len(response_text)} chars)")
+
+                return {
+                    'response': response_text,
+                    'agent_used': f"Inline: {inline_name}",
+                    'transition_data': None,
+                    'last_agent': inline_name,
+                }
+
+            except Exception as e:
+                logger.error(f"[WorkflowEngine] Inline agent block failed: {e}")
+                raise
+
+        # ── Existing Agent Mode ────────────────────────────────────────
+        if not agent_id:
+            raise ValueError("Agent block: 'agent_id' is required (or configure an inline agent)")
+
+        use_structured = config.get('use_structured_output', False)
+        user_access_level = resolve_template(
+            config.get('user_access_level', 'normal'),
+            context
+        )
+
         # Pass MTM active flag if webhook trigger is configured to inject MTM
         trigger_config = context.get('$trigger', {}).get('config', {})
         if trigger_config.get('inject_mtm'):
