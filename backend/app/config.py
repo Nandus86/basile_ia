@@ -73,16 +73,23 @@ if settings.LANGCHAIN_TRACING_V2:
     if settings.LANGCHAIN_ENDPOINT:
         os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT
 
+_langfuse_callback_instance = None
+
 def get_langfuse_callback():
-    """Get a Langfuse callback handler if enabled."""
+    """Get a globally cached Langfuse callback handler if enabled."""
+    global _langfuse_callback_instance
+    if _langfuse_callback_instance is not None:
+        return _langfuse_callback_instance
+        
     if settings.LANGFUSE_ENABLED and settings.LANGFUSE_SECRET_KEY and settings.LANGFUSE_PUBLIC_KEY:
         try:
             from langfuse.callback import CallbackHandler
-            return CallbackHandler(
+            _langfuse_callback_instance = CallbackHandler(
                 secret_key=settings.LANGFUSE_SECRET_KEY,
                 public_key=settings.LANGFUSE_PUBLIC_KEY,
                 host=settings.LANGFUSE_HOST,
             )
+            return _langfuse_callback_instance
         except ImportError:
             import logging
             logging.getLogger(__name__).warning("Langfuse enabled but 'langfuse' package is not installed.")
