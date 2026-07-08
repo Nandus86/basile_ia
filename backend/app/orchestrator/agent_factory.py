@@ -396,7 +396,14 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         return ChatOpenAI(**kwargs)
     
     def get_run_config(self, agent_config: Dict[str, Any]) -> RunnableConfig:
-        """Create LangSmith run configuration for tracing"""
+        """Create LangSmith/Langfuse run configuration for tracing"""
+        from app.config import get_langfuse_callback
+        
+        callbacks = []
+        langfuse_cb = get_langfuse_callback()
+        if langfuse_cb:
+            callbacks.append(langfuse_cb)
+            
         return RunnableConfig(
             run_name=f"Agent: {agent_config['name']}",
             metadata={
@@ -405,7 +412,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 "has_tools": agent_config["has_tools"],
                 "model": agent_config["model"]
             },
-            tags=[f"agent:{agent_config['name']}", agent_config["access_level"]]
+            tags=[f"agent:{agent_config['name']}", agent_config["access_level"]],
+            callbacks=callbacks if callbacks else None
         )
     
     async def _inject_training_rules(self, agent_config: Dict[str, Any], messages: List[Any], system_prompt: str) -> str:
@@ -1608,6 +1616,12 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         
         llm = self.create_llm(agent_config)
         
+        from app.config import get_langfuse_callback
+        callbacks = []
+        langfuse_cb = get_langfuse_callback()
+        if langfuse_cb:
+            callbacks.append(langfuse_cb)
+            
         # Create config for structured output tracing
         run_config = RunnableConfig(
             run_name=agent_config["name"],
@@ -1618,7 +1632,8 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 "model": agent_config["model"],
                 "structured": True
             },
-            tags=[f"agent:{agent_config['name']}", "structured"]
+            tags=[f"agent:{agent_config['name']}", "structured"],
+            callbacks=callbacks if callbacks else None
         )
         
         # Get output schema

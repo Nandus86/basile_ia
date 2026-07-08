@@ -2439,10 +2439,17 @@ Responda APENAS com uma das opções:
         compiled = graph.compile()
 
         # ── 10. Execute the graph ────────────────────────────────
+        from app.config import get_langfuse_callback
+        callbacks = []
+        langfuse_cb = get_langfuse_callback()
+        if langfuse_cb:
+            callbacks.append(langfuse_cb)
+            
         run_config = RunnableConfig(
             run_name='Agentic Workflow Block',
             metadata={'block_type': 'agentic_workflow', 'goal': goal[:200]},
-            tags=['agentic-workflow']
+            tags=['agentic-workflow'],
+            callbacks=callbacks if callbacks else None
         )
 
         initial_state: AWState = {

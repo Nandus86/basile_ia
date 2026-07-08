@@ -48,3 +48,6 @@ aio-pika>=9.3.1
 
 # Task Scheduling
 apscheduler>=3.10.0
+
+# Observability
+langfuse>=2.50.0

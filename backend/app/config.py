@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     LANGCHAIN_PROJECT: str = "Basile_IA_Orch"
     LANGCHAIN_ENDPOINT: str = "https://api.smith.langchain.com"
     
+    # Langfuse (Optional - for observability alongside LangSmith)
+    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
@@ -66,3 +72,18 @@ if settings.LANGCHAIN_TRACING_V2:
         os.environ["LANGCHAIN_PROJECT"] = settings.LANGCHAIN_PROJECT
     if settings.LANGCHAIN_ENDPOINT:
         os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT
+
+def get_langfuse_callback():
+    """Get a Langfuse callback handler if enabled."""
+    if settings.LANGFUSE_ENABLED and settings.LANGFUSE_SECRET_KEY and settings.LANGFUSE_PUBLIC_KEY:
+        try:
+            from langfuse.callback import CallbackHandler
+            return CallbackHandler(
+                secret_key=settings.LANGFUSE_SECRET_KEY,
+                public_key=settings.LANGFUSE_PUBLIC_KEY,
+                host=settings.LANGFUSE_HOST,
+            )
+        except ImportError:
+            import logging
+            logging.getLogger(__name__).warning("Langfuse enabled but 'langfuse' package is not installed.")
+    return None
