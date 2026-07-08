@@ -563,6 +563,7 @@ const toolboxItems = [
   { type: 'wait_input', label: 'Aguardar Resposta', icon: 'mdi-account-question', color: '#EC4899', category: 'action' },
   { type: 'response', label: 'Saída', icon: 'mdi-logout', color: '#EC4899', category: 'action' },
   { type: 'sub_workflow', label: 'Sub-workflow', icon: 'mdi-sitemap-outline', color: '#EC4899', category: 'action' },
+  { type: 'agentic_workflow', label: 'Agente AW', icon: 'mdi-brain', color: '#F59E0B', category: 'action' },
   { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
   { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },
   { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },

@@ -127,6 +127,7 @@ const BLOCK_META = {
   mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'MCP' },
   variables:    { icon: 'mdi-variable',          color: '#10B981', label: 'Variáveis' },
   vector_insert:{ icon: 'mdi-database-plus',     color: '#10B981', label: 'Salvar na Base' },
+  agentic_workflow: { icon: 'mdi-brain', color: '#F59E0B', label: 'Agente AW' },
 }
 
 const meta = computed(() => BLOCK_META[props.data.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Bloco' })
@@ -156,6 +157,8 @@ const subtitle = computed(() => {
       return cfg.variables ? `${cfg.variables.length} variáveis` : 'Sem variáveis'
     case 'vector_insert':
       return cfg.base_code ? `Salvar em: ${cfg.base_code}` : 'Salvar na Base'
+    case 'agentic_workflow':
+      return cfg.goal ? cfg.goal.substring(0, 40) + '...' : 'Sem objetivo'
     default:
       return ''
   }
@@ -230,6 +233,7 @@ const openSubWorkflow = (workflowId) => {
 .node-mcp           { border-color: #14B8A640; }
 .node-variables     { border-color: #10B98140; }
 .node-vector_insert { border-color: #10B98140; }
+.node-agentic_workflow { border-color: #F59E0B40; }
 
 /* Handles */
 .handle-in, .handle-out {

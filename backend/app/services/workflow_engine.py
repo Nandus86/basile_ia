@@ -1130,6 +1130,8 @@ class WorkflowEngine:
                 return await self._exec_mcp(config, context)
             case 'vector_insert':
                 return await self._exec_vector_insert(config, context)
+            case 'agentic_workflow':
+                return await self._exec_agentic_workflow(config, context)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -1976,6 +1978,516 @@ class WorkflowEngine:
         )
         
         return sub_result.get('result')
+
+    # ── Agentic Workflow (AW) block ────────────────────────────
+
+    async def _exec_agentic_workflow(
+        self,
+        config: Dict[str, Any],
+        context: Dict[str, Any],
+    ) -> Any:
+        """
+        Execute an Agentic Workflow block.
+
+        Unlike the single-shot 'agent' block, this runs a LangGraph StateGraph
+        with a planning → execution → evaluation → synthesis loop.  The executor
+        node has access to VFS RAG, Vector RAG, and MCP tools — dynamically
+        assembled from the block configuration.
+
+        Config keys:
+            goal (str):               Mission objective
+            model (str):              LLM model name (default: gpt-4o-mini)
+            temperature (float):      LLM temperature (default: 0.3)
+            max_iterations (int):     Max evaluation retries (default: 5, cap: 10)
+            max_tokens (int):         Max tokens per LLM call (default: 4000)
+            agent_id (str|None):      Optional existing agent for prompt + docs
+            system_prompt (str):      Custom system prompt (used if no agent_id)
+            enable_vfs_rag (bool):    Enable VFS RAG 3.0 file tools
+            enable_vector_rag (bool): Enable Weaviate vector search
+            enable_mcp (bool):        Enable MCP tools from linked agent
+            inject_full_context (bool): Inject previous blocks' context
+            validation_prompt (str):  Custom evaluator criteria
+        """
+        from typing import TypedDict, Literal
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+        from langchain_core.tools import tool
+        from langchain_core.runnables import RunnableConfig
+        from langgraph.graph import StateGraph, END
+        from app.config import settings
+
+        # ── 1. Read block configuration ─────────────────────────
+        goal = resolve_template(config.get('goal', ''), context)
+        if not goal:
+            raise ValueError("Bloco Agentic Workflow: 'goal' (objetivo) é obrigatório")
+
+        model_name = config.get('model', 'gpt-4o-mini')
+        temperature = float(config.get('temperature', 0.3))
+        max_iterations = min(int(config.get('max_iterations', 5)), 10)
+        max_tokens = int(config.get('max_tokens', 4000))
+        agent_id = resolve_template(config.get('agent_id', ''), context) or None
+        system_prompt = config.get('system_prompt', '')
+        enable_vfs = config.get('enable_vfs_rag', False)
+        enable_vector = config.get('enable_vector_rag', False)
+        enable_mcp = config.get('enable_mcp', False)
+        inject_ctx = config.get('inject_full_context', True)
+        validation_prompt = config.get('validation_prompt', '')
+
+        logger.info(
+            f"[WorkflowEngine] 🧠 AW block starting — goal: {goal[:80]}... "
+            f"(model={model_name}, max_iter={max_iterations}, "
+            f"vfs={enable_vfs}, vector={enable_vector}, mcp={enable_mcp})"
+        )
+
+        # ── 2. Load agent data if agent_id is provided ──────────
+        agent_system_prompt = system_prompt
+        agent_description = ''
+        if agent_id:
+            try:
+                from sqlalchemy import select as sa_select
+                from sqlalchemy.orm import selectinload
+                from app.models.agent import Agent
+
+                result = await self.db.execute(
+                    sa_select(Agent)
+                    .options(
+                        selectinload(Agent.mcps),
+                        selectinload(Agent.skills),
+                        selectinload(Agent.documents),
+                        selectinload(Agent.vfs_knowledge_bases),
+                    )
+                    .where(Agent.id == agent_id)
+                )
+                agent_obj = result.scalar_one_or_none()
+                if agent_obj:
+                    if not agent_system_prompt:
+                        agent_system_prompt = agent_obj.system_prompt or ''
+                    agent_description = agent_obj.description or agent_obj.name
+                    logger.info(f"[WorkflowEngine] 🧠 AW loaded agent '{agent_obj.name}' for prompt + tools")
+            except Exception as e:
+                logger.warning(f"[WorkflowEngine] 🧠 AW could not load agent {agent_id}: {e}")
+
+        # ── 3. Build workflow context string ─────────────────────
+        workflow_context_str = ''
+        if inject_ctx:
+            wf_ctx = {
+                k.lstrip('$'): v for k, v in context.items()
+                if k not in ('$workflow',)
+            }
+            if wf_ctx:
+                try:
+                    workflow_context_str = json.dumps(wf_ctx, ensure_ascii=False, default=str)[:8000]
+                except Exception:
+                    workflow_context_str = ''
+
+        # ── 4. Assemble tools ────────────────────────────────────
+        tools = []
+        tool_names_log = []
+
+        # 4a. VFS RAG 3.0 tools
+        if enable_vfs and agent_id:
+            try:
+                from app.models.agent import Agent
+                from app.models.vfs_knowledge_base import VFSKnowledgeBase, VFSFile
+                from sqlalchemy import select as sa_select
+                from sqlalchemy.orm import selectinload
+                import os
+
+                vfs_result = await self.db.execute(
+                    sa_select(Agent)
+                    .options(
+                        selectinload(Agent.vfs_knowledge_bases)
+                        .selectinload(VFSKnowledgeBase.files)
+                    )
+                    .where(Agent.id == agent_id)
+                )
+                vfs_agent = vfs_result.scalar_one_or_none()
+                vfs_files = []
+                if vfs_agent and vfs_agent.vfs_knowledge_bases:
+                    for kb in vfs_agent.vfs_knowledge_bases:
+                        if not kb.is_active:
+                            continue
+                        for f in kb.files:
+                            vfs_files.append({
+                                'id': str(f.id),
+                                'title': f.title or f.filename,
+                                'summary': f.summary or '',
+                                'file_path': f.file_path,
+                            })
+
+                if vfs_files:
+                    vfs_lookup = {f['id']: f for f in vfs_files}
+                    vfs_index = '\n'.join([
+                        f"- [{f['id']}] {f['title']}: {f['summary'][:150]}"
+                        for f in vfs_files
+                    ])
+
+                    @tool
+                    def aw_read_vfs_file(file_id: str) -> str:
+                        """Read the full content of a VFS .md knowledge file by its ID."""
+                        info = vfs_lookup.get(file_id)
+                        if not info:
+                            return f"Error: File '{file_id}' not found."
+                        try:
+                            if not os.path.exists(info['file_path']):
+                                return f"Error: File not found at {info['file_path']}"
+                            with open(info['file_path'], 'r', encoding='utf-8') as fh:
+                                content = fh.read()
+                            if len(content) > 8000:
+                                content = content[:8000] + '\n... [TRUNCATED]'
+                            return f"# {info['title']}\n\n{content}"
+                        except Exception as e:
+                            return f"Error reading file: {e}"
+
+                    @tool
+                    def aw_search_vfs(query: str) -> str:
+                        """Search VFS knowledge files by keyword in titles and summaries."""
+                        q = query.lower()
+                        matches = [
+                            f"[{f['id']}] {f['title']} — {f['summary'][:100]}"
+                            for f in vfs_files
+                            if q in (f.get('title') or '').lower()
+                            or q in (f.get('summary') or '').lower()
+                        ]
+                        return '\n'.join(matches[:10]) if matches else 'No files matched.'
+
+                    tools.extend([aw_read_vfs_file, aw_search_vfs])
+                    tool_names_log.extend(['aw_read_vfs_file', 'aw_search_vfs'])
+                    logger.info(f"[WorkflowEngine] 🧠 AW VFS tools loaded ({len(vfs_files)} files)")
+
+            except Exception as e:
+                logger.warning(f"[WorkflowEngine] 🧠 AW VFS tool setup error: {e}")
+
+        # 4b. Vector RAG tool
+        if enable_vector and agent_id:
+            try:
+                from app.services.rag_service import RAGService
+                rag_svc = RAGService(self.db)
+                _rag_agent_id = agent_id  # capture for closure
+
+                @tool
+                async def aw_search_knowledge_base(query: str) -> str:
+                    """Search the vector knowledge base (Weaviate) for semantically relevant documents."""
+                    try:
+                        ctx_text = await rag_svc.retrieve_context(
+                            query=query,
+                            agent_id=_rag_agent_id,
+                            limit=5,
+                            min_score=0.4,
+                        )
+                        return ctx_text if ctx_text else 'No relevant documents found.'
+                    except Exception as e:
+                        return f"Error searching knowledge base: {e}"
+
+                tools.append(aw_search_knowledge_base)
+                tool_names_log.append('aw_search_knowledge_base')
+                logger.info(f"[WorkflowEngine] 🧠 AW Vector RAG tool loaded")
+
+            except Exception as e:
+                logger.warning(f"[WorkflowEngine] 🧠 AW Vector RAG tool setup error: {e}")
+
+        # 4c. MCP tools (from agent's linked MCPs)
+        if enable_mcp and agent_id:
+            try:
+                from app.services.mcp_tools import get_tools_for_agent
+                mcp_tools_list = await get_tools_for_agent(self.db, agent_id, None)
+                if mcp_tools_list:
+                    tools.extend(mcp_tools_list)
+                    tool_names_log.extend([t.name for t in mcp_tools_list])
+                    logger.info(f"[WorkflowEngine] 🧠 AW MCP tools loaded ({len(mcp_tools_list)} tools)")
+            except Exception as e:
+                logger.warning(f"[WorkflowEngine] 🧠 AW MCP tool setup error: {e}")
+
+        logger.info(f"[WorkflowEngine] 🧠 AW total tools: {tool_names_log or '(none)'}")
+
+        # ── 5. Create LLM ────────────────────────────────────────
+        is_openrouter = '/' in model_name
+        llm_kwargs = {
+            'model': model_name,
+            'temperature': temperature,
+            'max_tokens': max_tokens,
+        }
+        if is_openrouter:
+            llm_kwargs['api_key'] = settings.OPENROUTER_API_KEY
+            llm_kwargs['base_url'] = 'https://openrouter.ai/api/v1'
+        else:
+            llm_kwargs['api_key'] = settings.OPENAI_API_KEY
+
+        llm = ChatOpenAI(**llm_kwargs)
+
+        # ── 6. Define AW State ───────────────────────────────────
+        class AWState(TypedDict, total=False):
+            messages: list
+            goal: str
+            plan: str
+            iteration: int
+            max_iterations: int
+            final_answer: str
+            status: str
+            tools_called: list
+
+        # ── 7. Build the full system prompt for executor ─────────
+        vfs_index_str = ''
+        if 'aw_search_vfs' in tool_names_log:
+            vfs_index_str = '\n\nYou have access to VFS knowledge files. Use aw_search_vfs to find files, then aw_read_vfs_file to read them.'
+
+        vector_str = ''
+        if 'aw_search_knowledge_base' in tool_names_log:
+            vector_str = '\n\nYou have access to a vector knowledge base. Use aw_search_knowledge_base to find relevant documents.'
+
+        full_system_prompt = f"""{agent_system_prompt}
+
+## Agentic Workflow — Missão
+
+Você é um agente especialista executando uma missão dentro de um workflow automatizado.
+Seu OBJETIVO é: {goal}
+
+## Instruções
+
+1. Analise o objetivo e o contexto fornecido
+2. Use TODAS as ferramentas necessárias para coletar dados e completar a tarefa
+3. Não invente dados — use apenas informações obtidas pelas ferramentas ou fornecidas no contexto
+4. Seja completo e preciso na sua resposta{vfs_index_str}{vector_str}"""
+
+        if workflow_context_str:
+            full_system_prompt += f"""
+
+## Contexto do Workflow (blocos anteriores)
+
+```json
+{workflow_context_str}
+```"""
+
+        # ── 8. Define graph nodes ────────────────────────────────
+
+        async def planner_node(state: AWState) -> AWState:
+            """Planner: analyze the goal and produce a step-by-step plan."""
+            plan_prompt = f"""Analise o seguinte objetivo e crie um plano de ação claro e conciso com os passos necessários.
+Se ferramentas estão disponíveis, inclua no plano quais ferramentas usar.
+Retorne APENAS o plano, sem executá-lo.
+
+OBJETIVO: {state['goal']}
+
+Ferramentas disponíveis: {', '.join(tool_names_log) if tool_names_log else 'Nenhuma (responda com seu conhecimento)'}"""
+
+            if workflow_context_str:
+                plan_prompt += f"\n\nContexto disponível:\n```json\n{workflow_context_str[:4000]}\n```"
+
+            plan_response = await llm.ainvoke([
+                SystemMessage(content='Você é um planejador estratégico. Crie planos claros e acionáveis.'),
+                HumanMessage(content=plan_prompt),
+            ])
+
+            plan_text = plan_response.content if plan_response else 'Executar objetivo diretamente.'
+            logger.info(f"[WorkflowEngine] 🧠 AW Planner: {plan_text[:150]}...")
+
+            return {
+                **state,
+                'plan': plan_text,
+                'status': 'executing',
+                'iteration': state.get('iteration', 0),
+            }
+
+        async def executor_node(state: AWState) -> AWState:
+            """Executor: use a ReAct agent with tools to execute the plan."""
+            exec_prompt = f"""Execute o plano abaixo para atingir o objetivo.
+
+OBJETIVO: {state['goal']}
+
+PLANO:
+{state.get('plan', 'Executar diretamente.')}"""
+
+            iteration = state.get('iteration', 0)
+            if iteration > 0:
+                exec_prompt += f"\n\n⚠️ TENTATIVA {iteration + 1}: O resultado anterior foi considerado insuficiente. Tente novamente com mais profundidade."
+
+            run_config = RunnableConfig(
+                run_name=f'AW Executor (iter {iteration})',
+                metadata={'node': 'aw_executor', 'iteration': iteration},
+                tags=['agentic-workflow', 'executor']
+            )
+
+            if tools:
+                from langgraph.prebuilt import create_react_agent
+                react_agent = create_react_agent(
+                    model=llm,
+                    tools=tools,
+                    prompt=full_system_prompt,
+                )
+                result = await react_agent.ainvoke(
+                    {'messages': [HumanMessage(content=exec_prompt)]},
+                    config=run_config,
+                )
+                # Extract final AI response
+                exec_messages = result.get('messages', [])
+                exec_response = ''
+                called = state.get('tools_called', [])
+                for msg in exec_messages:
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            called.append(tc.get('name', 'unknown'))
+                for msg in reversed(exec_messages):
+                    if isinstance(msg, AIMessage) and msg.content:
+                        if not (hasattr(msg, 'tool_calls') and msg.tool_calls):
+                            exec_response = msg.content
+                            break
+            else:
+                # No tools — direct LLM call
+                response = await llm.ainvoke(
+                    [
+                        SystemMessage(content=full_system_prompt),
+                        HumanMessage(content=exec_prompt),
+                    ],
+                    config=run_config,
+                )
+                exec_response = response.content if response else ''
+                called = state.get('tools_called', [])
+
+            logger.info(f"[WorkflowEngine] 🧠 AW Executor (iter {iteration}): {exec_response[:150]}...")
+
+            return {
+                **state,
+                'messages': [{'role': 'executor', 'content': exec_response}],
+                'status': 'evaluating',
+                'tools_called': called,
+            }
+
+        async def evaluator_node(state: AWState) -> AWState:
+            """Evaluator: check if the executor's output meets the goal."""
+            iteration = state.get('iteration', 0)
+            max_iter = state.get('max_iterations', max_iterations)
+
+            # If we've hit max iterations, accept whatever we have
+            if iteration >= max_iter - 1:
+                logger.info(f"[WorkflowEngine] 🧠 AW Evaluator: max iterations reached ({max_iter}), accepting result")
+                return {**state, 'status': 'done', 'iteration': iteration + 1}
+
+            # Get executor output
+            exec_output = ''
+            for msg in reversed(state.get('messages', [])):
+                if isinstance(msg, dict) and msg.get('role') == 'executor':
+                    exec_output = msg.get('content', '')
+                    break
+
+            if not exec_output:
+                return {**state, 'status': 'done', 'iteration': iteration + 1}
+
+            # Build evaluation prompt
+            eval_criteria = validation_prompt or 'O resultado responde completamente ao objetivo? Os dados estão corretos e completos?'
+
+            eval_prompt = f"""Avalie se o resultado abaixo atende ao objetivo.
+
+OBJETIVO: {state['goal']}
+
+RESULTADO:
+{exec_output[:6000]}
+
+CRITÉRIO DE ACEITAÇÃO:
+{eval_criteria}
+
+Responda APENAS com uma das opções:
+- APROVADO: se o resultado atende ao objetivo
+- REPROVADO: [motivo breve] se o resultado não atende"""
+
+            eval_response = await llm.ainvoke([
+                SystemMessage(content='Você é um avaliador rigoroso de qualidade. Seja objetivo e conciso.'),
+                HumanMessage(content=eval_prompt),
+            ])
+
+            eval_text = (eval_response.content or '').strip()
+            logger.info(f"[WorkflowEngine] 🧠 AW Evaluator (iter {iteration}): {eval_text[:100]}")
+
+            if eval_text.upper().startswith('APROVADO'):
+                return {**state, 'status': 'done', 'iteration': iteration + 1}
+            else:
+                return {**state, 'status': 'retry', 'iteration': iteration + 1}
+
+        async def synthesizer_node(state: AWState) -> AWState:
+            """Synthesizer: format the final response."""
+            # Get last executor output
+            exec_output = ''
+            for msg in reversed(state.get('messages', [])):
+                if isinstance(msg, dict) and msg.get('role') == 'executor':
+                    exec_output = msg.get('content', '')
+                    break
+
+            logger.info(f"[WorkflowEngine] 🧠 AW Synthesizer: finalizing ({len(exec_output)} chars)")
+            return {**state, 'final_answer': exec_output, 'status': 'completed'}
+
+        # ── 9. Build the graph ───────────────────────────────────
+        def route_after_eval(state: AWState) -> str:
+            """Route based on evaluator result."""
+            if state.get('status') == 'done':
+                return 'synthesizer'
+            return 'executor'  # retry
+
+        graph = StateGraph(AWState)
+        graph.add_node('planner', planner_node)
+        graph.add_node('executor', executor_node)
+        graph.add_node('evaluator', evaluator_node)
+        graph.add_node('synthesizer', synthesizer_node)
+
+        graph.set_entry_point('planner')
+        graph.add_edge('planner', 'executor')
+        graph.add_edge('executor', 'evaluator')
+        graph.add_conditional_edges('evaluator', route_after_eval, {
+            'synthesizer': 'synthesizer',
+            'executor': 'executor',
+        })
+        graph.add_edge('synthesizer', END)
+
+        compiled = graph.compile()
+
+        # ── 10. Execute the graph ────────────────────────────────
+        run_config = RunnableConfig(
+            run_name='Agentic Workflow Block',
+            metadata={'block_type': 'agentic_workflow', 'goal': goal[:200]},
+            tags=['agentic-workflow']
+        )
+
+        initial_state: AWState = {
+            'messages': [],
+            'goal': goal,
+            'plan': '',
+            'iteration': 0,
+            'max_iterations': max_iterations,
+            'final_answer': '',
+            'status': 'planning',
+            'tools_called': [],
+        }
+
+        try:
+            final_state = await compiled.ainvoke(initial_state, config=run_config)
+        except Exception as e:
+            logger.error(f"[WorkflowEngine] 🧠 AW graph execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'response': f'Erro no Agentic Workflow: {str(e)}',
+                'plan': '',
+                'iterations_used': 0,
+                'tools_called': [],
+                'status': 'failed',
+            }
+
+        final_answer = final_state.get('final_answer', '')
+        iterations_used = final_state.get('iteration', 0)
+        tools_used = list(set(final_state.get('tools_called', [])))
+        final_status = 'completed' if final_state.get('status') == 'completed' else 'max_iterations_reached'
+
+        logger.info(
+            f"[WorkflowEngine] 🧠 AW completed — status={final_status}, "
+            f"iterations={iterations_used}, tools={tools_used}, "
+            f"answer_len={len(final_answer)}"
+        )
+
+        return {
+            'response': final_answer,
+            'plan': final_state.get('plan', ''),
+            'iterations_used': iterations_used,
+            'tools_called': tools_used,
+            'status': final_status,
+        }
 
     # ── Navigation helpers ─────────────────────────────────────
 

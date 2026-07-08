@@ -1025,6 +1025,139 @@
         ></v-textarea>
       </template>
 
+      <!-- ═══ AGENTIC WORKFLOW (AW) ═══ -->
+      <template v-if="block.type === 'agentic_workflow'">
+        <v-textarea
+          v-model="config.goal"
+          label="Objetivo da Missão"
+          rows="3"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="O que o agente AW deve tentar resolver ou criar"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+
+        <v-select
+          v-model="config.agent_id"
+          :items="agents"
+          item-title="name"
+          item-value="id"
+          label="Agente Base (Opcional)"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="Selecione um agente para herdar seu prompt e ferramentas (MCP, RAG)"
+          persistent-hint
+          clearable
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-textarea
+          v-if="!config.agent_id"
+          v-model="config.system_prompt"
+          label="Prompt do Agente (Opcional se não usar Agente Base)"
+          rows="3"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+
+        <v-select
+          v-model="config.model"
+          :items="['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo']"
+          label="Modelo LLM"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-slider
+          v-model.number="config.temperature"
+          label="Temperatura"
+          min="0"
+          max="1"
+          step="0.1"
+          thumb-label
+          class="mb-2 mt-2"
+          color="amber"
+          @end="emitUpdate"
+        ></v-slider>
+        
+        <v-slider
+          v-model.number="config.max_iterations"
+          label="Máx. Iterações"
+          min="1"
+          max="10"
+          step="1"
+          thumb-label
+          class="mb-2"
+          color="amber"
+          hint="Máximo de loops (Planejar → Executar → Avaliar) antes de desistir"
+          persistent-hint
+          @end="emitUpdate"
+        ></v-slider>
+
+        <v-divider class="my-4 border-opacity-25"></v-divider>
+
+        <v-switch
+          v-model="config.enable_vfs_rag"
+          label="Habilitar VFS RAG 3.0"
+          color="amber"
+          density="compact"
+          class="mb-1"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-switch>
+
+        <v-switch
+          v-model="config.enable_vector_rag"
+          label="Habilitar Vector RAG (Weaviate)"
+          color="amber"
+          density="compact"
+          class="mb-1"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-switch>
+
+        <v-switch
+          v-model="config.enable_mcp"
+          label="Habilitar MCP Tools do Agente"
+          color="amber"
+          density="compact"
+          class="mb-1"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-switch>
+        
+        <v-switch
+          v-model="config.inject_full_context"
+          label="Injetar Contexto do Workflow"
+          color="amber"
+          density="compact"
+          class="mb-3"
+          hint="O agente AW receberá o output dos blocos anteriores no prompt"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-switch>
+
+        <v-divider class="my-4 border-opacity-25"></v-divider>
+
+        <v-textarea
+          v-model="config.validation_prompt"
+          label="Critério de Aceitação (Opcional)"
+          rows="2"
+          variant="outlined"
+          density="compact"
+          class="mb-2"
+          hint="Prompt para o Avaliador julgar se a missão foi cumprida"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+      </template>
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
           <v-expansion-panel-title class="text-caption">
@@ -1089,6 +1222,7 @@ const BLOCK_META = {
   mcp:          { icon: 'mdi-connection',        color: '#14B8A6', label: 'Configurar MCP' },
   variables:    { icon: 'mdi-variable',          color: '#10B981', label: 'Configurar Variáveis' },
   vector_insert:{ icon: 'mdi-database-plus',     color: '#10B981', label: 'Configurar Salvar na Base' },
+  agentic_workflow: { icon: 'mdi-brain', color: '#F59E0B', label: 'Configurar Agente AW' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
