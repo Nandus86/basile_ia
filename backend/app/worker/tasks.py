@@ -2966,12 +2966,15 @@ async def process_message_task(
                             if callback_url:
                                 from app.worker.tasks import _send_callback
                                 await _send_callback(callback_url, response_data)
-                            
-                            await redis_client.delete(f"active_workflow_run:{session_id}")
+                            current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                            if current_active == str(res_ctx.get("execution_id")):
+                                await redis_client.delete(f"active_workflow_run:{session_id}")
                             return response_data
                         else:
                             print(f"[Task] 🔄 Workflow '{wf_name}' completed. Passing control back to AI agent.")
-                            await redis_client.delete(f"active_workflow_run:{session_id}")
+                            current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                            if current_active == str(res_ctx.get("execution_id")):
+                                await redis_client.delete(f"active_workflow_run:{session_id}")
                             
                             # Inject workflow result into the user's message so the AI agent knows what happened
                             if response_text:
