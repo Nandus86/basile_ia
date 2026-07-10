@@ -751,7 +751,9 @@ class WorkflowEngine:
                 
             if session_id:
                 from app.redis_client import redis_client
-                await redis_client.delete(f"active_workflow_run:{session_id}")
+                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                if current_active == str(execution.id):
+                    await redis_client.delete(f"active_workflow_run:{session_id}")
                 
             await self.db.commit()
             
@@ -885,7 +887,9 @@ class WorkflowEngine:
                     session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
                     if session_id:
                         from app.redis_client import redis_client
-                        await redis_client.delete(f"active_workflow_run:{session_id}")
+                        current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                        if current_active == str(execution.id):
+                            await redis_client.delete(f"active_workflow_run:{session_id}")
                     return {
                         'result': None,
                         'context': {k.lstrip('$'): v for k, v in context.items()},
@@ -1039,7 +1043,9 @@ class WorkflowEngine:
             session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
             if session_id:
                 from app.redis_client import redis_client
-                await redis_client.delete(f"active_workflow_run:{session_id}")
+                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                if current_active == str(execution.id):
+                    await redis_client.delete(f"active_workflow_run:{session_id}")
 
             logger.info(
                 f"[WorkflowEngine] 🏁 Workflow execution {execution.id} completed "
@@ -1071,7 +1077,9 @@ class WorkflowEngine:
             session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
             if session_id:
                 from app.redis_client import redis_client
-                await redis_client.delete(f"active_workflow_run:{session_id}")
+                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                if current_active == str(execution.id):
+                    await redis_client.delete(f"active_workflow_run:{session_id}")
 
             logger.error(f"[WorkflowEngine] ❌ Workflow execution {execution.id} failed: {e}")
             traceback.print_exc()
