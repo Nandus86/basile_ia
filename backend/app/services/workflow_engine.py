@@ -1974,6 +1974,12 @@ class WorkflowEngine:
             # gets the exact same $trigger.payload structure.
             payload = context.get('$trigger', {}).get('payload', {})
 
+        # Ensure session_id and other critical tracking fields are passed down
+        parent_payload = context.get('$trigger', {}).get('payload', {})
+        if isinstance(payload, dict) and isinstance(parent_payload, dict):
+            if 'session_id' not in payload and 'session_id' in parent_payload:
+                payload['session_id'] = parent_payload['session_id']
+
         logger.info(f"[WorkflowEngine] 🔀 Running sub-workflow: {workflow_id} (depth: {recursion_depth + 1})")
         
         # Run sub-workflow using the same DB session
