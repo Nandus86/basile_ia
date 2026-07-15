@@ -190,10 +190,17 @@ Responda APENAS em JSON válido com este formato exato:
         try:
             from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
             from langchain_core.runnables import RunnableConfig
+            from app.config import get_langfuse_callback
+            
+            callbacks = []
+            langfuse_cb = get_langfuse_callback()
+            if langfuse_cb:
+                callbacks.append(langfuse_cb)
             
             run_config = RunnableConfig(
                 run_name=f"{primary_agent.name} (Decidindo Colaboração)",
-                metadata={"agent_id": primary_agent.id, "structured": True}
+                metadata={"agent_id": primary_agent.id, "structured": True},
+                callbacks=callbacks if callbacks else None
             )
             
             messages = [SystemMessage(content=prompt)]

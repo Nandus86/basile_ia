@@ -73,24 +73,50 @@ if settings.LANGCHAIN_TRACING_V2:
     if settings.LANGCHAIN_ENDPOINT:
         os.environ["LANGCHAIN_ENDPOINT"] = settings.LANGCHAIN_ENDPOINT
 
-_langfuse_callback_instance = None
+import logging as _logging
+_langfuse_logger = _logging.getLogger(__name__)
+_langfuse_verified = False
+
+# Set Langfuse env vars so the SDK can also auto-detect them
+if settings.LANGFUSE_ENABLED:
+    os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
+    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
+    os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_HOST
+    _langfuse_logger.info(
+        f"Langfuse enabled — host={settings.LANGFUSE_HOST}, "
+        f"public_key={settings.LANGFUSE_PUBLIC_KEY[:12]}..."
+    )
 
 def get_langfuse_callback():
-    """Get a globally cached Langfuse callback handler if enabled."""
-    global _langfuse_callback_instance
-    if _langfuse_callback_instance is not None:
-        return _langfuse_callback_instance
-        
-    if settings.LANGFUSE_ENABLED and settings.LANGFUSE_SECRET_KEY and settings.LANGFUSE_PUBLIC_KEY:
+    """Create a fresh Langfuse CallbackHandler for LangChain tracing.
+    
+    Each invocation returns a NEW handler so that traces are properly separated.
+    """
+    global _langfuse_verified
+    
+    if not (settings.LANGFUSE_ENABLED and settings.LANGFUSE_SECRET_KEY and settings.LANGFUSE_PUBLIC_KEY):
+        return None
+
+    try:
+        from langfuse.langchain import CallbackHandler
+    except ImportError:
+        _langfuse_logger.warning("Langfuse enabled but 'langfuse' package is not installed. Run: pip install langfuse")
+        return None
+
+    handler = CallbackHandler(
+        secret_key=settings.LANGFUSE_SECRET_KEY,
+        public_key=settings.LANGFUSE_PUBLIC_KEY,
+        host=settings.LANGFUSE_HOST,
+    )
+    
+    # One-time auth check on first creation
+    if not _langfuse_verified:
         try:
-            from langfuse.callback import CallbackHandler
-            _langfuse_callback_instance = CallbackHandler(
-                secret_key=settings.LANGFUSE_SECRET_KEY,
-                public_key=settings.LANGFUSE_PUBLIC_KEY,
-                host=settings.LANGFUSE_HOST,
-            )
-            return _langfuse_callback_instance
-        except ImportError:
-            import logging
-            logging.getLogger(__name__).warning("Langfuse enabled but 'langfuse' package is not installed.")
-    return None
+            handler.auth_check()
+            _langfuse_logger.info("✅ Langfuse auth_check passed — connection OK")
+            _langfuse_verified = True
+        except Exception as e:
+            _langfuse_logger.error(f"❌ Langfuse auth_check FAILED: {e}")
+            return None
+
+    return handler
