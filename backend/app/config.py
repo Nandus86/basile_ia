@@ -108,14 +108,16 @@ def get_langfuse_callback():
     # we can instantiate it without arguments.
     handler = CallbackHandler()
     
-    # One-time auth check on first creation
+    # One-time auth check using the Langfuse client (not the CallbackHandler)
     if not _langfuse_verified:
         try:
-            handler.auth_check()
+            from langfuse import Langfuse
+            _lf_client = Langfuse()
+            _lf_client.auth_check()
             _langfuse_logger.info("✅ Langfuse auth_check passed — connection OK")
             _langfuse_verified = True
         except Exception as e:
-            _langfuse_logger.error(f"❌ Langfuse auth_check FAILED: {e}")
-            return None
+            _langfuse_logger.warning(f"⚠️ Langfuse auth_check could not verify: {e} — traces will still be attempted")
+            _langfuse_verified = True  # Don't block; let the SDK try anyway
 
     return handler
