@@ -103,11 +103,10 @@ def get_langfuse_callback():
         _langfuse_logger.warning("Langfuse enabled but 'langfuse' package is not installed. Run: pip install langfuse")
         return None
 
-    handler = CallbackHandler(
-        secret_key=settings.LANGFUSE_SECRET_KEY,
-        public_key=settings.LANGFUSE_PUBLIC_KEY,
-        host=settings.LANGFUSE_HOST,
-    )
+    # In newer versions of the SDK, CallbackHandler reads directly from os.environ
+    # and might reject explicit kwargs like 'secret_key'. Since we populated os.environ above,
+    # we can instantiate it without arguments.
+    handler = CallbackHandler()
     
     # One-time auth check on first creation
     if not _langfuse_verified:
