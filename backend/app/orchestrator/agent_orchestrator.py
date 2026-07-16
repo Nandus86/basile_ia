@@ -133,7 +133,8 @@ class AgentOrchestrator:
         primary_agent: Agent,
         enabled_collaborators: list,
         neutral_collaborators: list,
-        history: Optional[list] = None
+        history: Optional[list] = None,
+        context_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Ask LLM if collaboration is needed and which agents to consult."""
         if not primary_agent.collaboration_enabled:
@@ -192,8 +193,25 @@ Responda APENAS em JSON válido com este formato exato:
             from langchain_core.runnables import RunnableConfig
             from app.config import get_langfuse_callback
             
+            user_phone = None
+            sess_id = None
+            langfuse_tags = []
+            if context_data:
+                user_phone = context_data.get("member", {}).get("phone")
+                sess_id = context_data.get("session_id")
+                instancia_id = context_data.get("global", {}).get("instancia")
+                church_id = context_data.get("church", {}).get("_id")
+                if instancia_id:
+                    langfuse_tags.append(f"instancia:{instancia_id}")
+                if church_id:
+                    langfuse_tags.append(f"church:{church_id}")
+
             callbacks = []
-            langfuse_cb = get_langfuse_callback()
+            langfuse_cb = get_langfuse_callback(
+                user_id=user_phone,
+                session_id=sess_id,
+                tags=langfuse_tags if langfuse_tags else None
+            )
             if langfuse_cb:
                 callbacks.append(langfuse_cb)
             
@@ -771,7 +789,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
         selected_collaborators = [(c, "MANDATORY_ALWAYS_ACTIVE_START") for c in always_start]
 
         # Use LLM decision to select subset of agents to consult
-        decision = await self.should_collaborate(message, primary_agent, enabled, neutral, history)
+        decision = await self.should_collaborate(message, primary_agent, enabled, neutral, history, context_data)
         
         if decision["should_collaborate"] and decision["agents_to_consult"]:
             for agent_info in decision["agents_to_consult"]:
@@ -924,7 +942,7 @@ Execute a instrução acima e reporte o resultado ao coordenador {primary_name}.
 
         selected_collaborators = [(c, "MANDATORY_ALWAYS_ACTIVE_END") for c in always_end]
 
-        decision = await self.should_collaborate(message, primary_agent, enabled, neutral)
+        decision = await self.should_collaborate(message, primary_agent, enabled, neutral, None, None)
         if decision["should_collaborate"] and decision["agents_to_consult"]:
             for agent_info in decision["agents_to_consult"]:
                 agent_id = agent_info.get("id")

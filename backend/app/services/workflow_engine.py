@@ -2454,8 +2454,28 @@ Responda APENAS com uma das opções:
 
         # ── 10. Execute the graph ────────────────────────────────
         from app.config import get_langfuse_callback
+        
+        user_phone = None
+        sess_id = None
+        langfuse_tags = []
+        payload = context.get("request_data", context)
+        if isinstance(payload, dict):
+            user_phone = payload.get("member", {}).get("phone") if isinstance(payload.get("member"), dict) else None
+            sess_id = payload.get("session_id")
+            instancia_id = payload.get("global", {}).get("instancia") if isinstance(payload.get("global"), dict) else None
+            church_id = payload.get("church", {}).get("_id") if isinstance(payload.get("church"), dict) else None
+            
+            if instancia_id:
+                langfuse_tags.append(f"instancia:{instancia_id}")
+            if church_id:
+                langfuse_tags.append(f"church:{church_id}")
+
         callbacks = []
-        langfuse_cb = get_langfuse_callback()
+        langfuse_cb = get_langfuse_callback(
+            user_id=user_phone,
+            session_id=sess_id,
+            tags=langfuse_tags if langfuse_tags else None
+        )
         if langfuse_cb:
             callbacks.append(langfuse_cb)
             

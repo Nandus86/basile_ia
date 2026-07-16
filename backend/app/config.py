@@ -87,7 +87,7 @@ if settings.LANGFUSE_ENABLED:
         f"public_key={settings.LANGFUSE_PUBLIC_KEY[:12]}..."
     )
 
-def get_langfuse_callback():
+def get_langfuse_callback(user_id: str = None, session_id: str = None, tags: list = None):
     """Create a fresh Langfuse CallbackHandler for LangChain tracing.
     
     Each invocation returns a NEW handler so that traces are properly separated.
@@ -105,8 +105,8 @@ def get_langfuse_callback():
 
     # In newer versions of the SDK, CallbackHandler reads directly from os.environ
     # and might reject explicit kwargs like 'secret_key'. Since we populated os.environ above,
-    # we can instantiate it without arguments.
-    handler = CallbackHandler()
+    # we can instantiate it without arguments (except for tracking context).
+    handler = CallbackHandler(user_id=user_id, session_id=session_id, tags=tags)
     
     # One-time auth check using the Langfuse client (not the CallbackHandler)
     if not _langfuse_verified:

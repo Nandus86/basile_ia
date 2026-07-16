@@ -395,12 +395,31 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         return ChatOpenAI(**kwargs)
     
-    def get_run_config(self, agent_config: Dict[str, Any]) -> RunnableConfig:
+    def get_run_config(self, agent_config: Dict[str, Any], context_data: Optional[Dict[str, Any]] = None) -> RunnableConfig:
         """Create LangSmith/Langfuse run configuration for tracing"""
         from app.config import get_langfuse_callback
         
+        user_phone = None
+        sess_id = None
+        langfuse_tags = []
+
+        if context_data:
+            user_phone = context_data.get("member", {}).get("phone")
+            sess_id = context_data.get("session_id")
+            instancia_id = context_data.get("global", {}).get("instancia")
+            church_id = context_data.get("church", {}).get("_id")
+
+            if instancia_id:
+                langfuse_tags.append(f"instancia:{instancia_id}")
+            if church_id:
+                langfuse_tags.append(f"church:{church_id}")
+        
         callbacks = []
-        langfuse_cb = get_langfuse_callback()
+        langfuse_cb = get_langfuse_callback(
+            user_id=user_phone,
+            session_id=sess_id,
+            tags=langfuse_tags if langfuse_tags else None
+        )
         if langfuse_cb:
             callbacks.append(langfuse_cb)
             
@@ -558,7 +577,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         from app.schemas.structured_output import format_context_data_for_prompt
         
         llm = self.create_llm(agent_config)
-        run_config = self.get_run_config(agent_config)
+        run_config = self.get_run_config(agent_config, context_data)
 
         resolved_execution_mode = (
             (execution_mode_override or "").strip().lower()
@@ -1065,7 +1084,7 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         from typing import Annotated, Sequence
 
         llm = self.create_llm(agent_config)
-        run_config = self.get_run_config(agent_config)
+        run_config = self.get_run_config(agent_config, context_data)
 
         resolved_execution_mode = (
             (execution_mode_override or "").strip().lower()
@@ -1617,8 +1636,26 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         llm = self.create_llm(agent_config)
         
         from app.config import get_langfuse_callback
+        
+        user_phone = None
+        sess_id = None
+        langfuse_tags = []
+        if context_data:
+            user_phone = context_data.get("member", {}).get("phone")
+            sess_id = context_data.get("session_id")
+            instancia_id = context_data.get("global", {}).get("instancia")
+            church_id = context_data.get("church", {}).get("_id")
+            if instancia_id:
+                langfuse_tags.append(f"instancia:{instancia_id}")
+            if church_id:
+                langfuse_tags.append(f"church:{church_id}")
+
         callbacks = []
-        langfuse_cb = get_langfuse_callback()
+        langfuse_cb = get_langfuse_callback(
+            user_id=user_phone,
+            session_id=sess_id,
+            tags=langfuse_tags if langfuse_tags else None
+        )
         if langfuse_cb:
             callbacks.append(langfuse_cb)
             
