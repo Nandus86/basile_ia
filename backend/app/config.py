@@ -106,7 +106,19 @@ def get_langfuse_callback(user_id: str = None, session_id: str = None, tags: lis
     # In newer versions of the SDK, CallbackHandler reads directly from os.environ
     # and might reject explicit kwargs like 'secret_key'. Since we populated os.environ above,
     # we can instantiate it without arguments (except for tracking context).
-    handler = CallbackHandler(user_id=user_id, session_id=session_id, tags=tags)
+    try:
+        handler = CallbackHandler(user_id=user_id, session_id=session_id, tags=tags)
+    except TypeError:
+        # Fallback for older versions of the langfuse SDK that don't accept these kwargs
+        _langfuse_logger.warning("Langfuse SDK version is too old to support user_id/session_id directly. Please upgrade langfuse.")
+        handler = CallbackHandler()
+        # Attempt to set them as properties just in case
+        try:
+            if user_id: handler.user_id = user_id
+            if session_id: handler.session_id = session_id
+            if tags: handler.tags = tags
+        except Exception:
+            pass
     
     # One-time auth check using the Langfuse client (not the CallbackHandler)
     if not _langfuse_verified:
