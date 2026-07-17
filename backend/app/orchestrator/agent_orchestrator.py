@@ -207,17 +207,18 @@ Responda APENAS em JSON válido com este formato exato:
                     langfuse_tags.append(f"church:{church_id}")
 
             callbacks = []
-            langfuse_cb = get_langfuse_callback(
-                user_id=user_phone,
-                session_id=sess_id,
-                tags=langfuse_tags if langfuse_tags else None
-            )
+            langfuse_cb = get_langfuse_callback()
             if langfuse_cb:
                 callbacks.append(langfuse_cb)
+                
+            metadata = {"agent_id": primary_agent.id, "structured": True}
+            if user_phone: metadata["langfuse_user_id"] = user_phone
+            if sess_id: metadata["langfuse_session_id"] = sess_id
+            if langfuse_tags: metadata["langfuse_tags"] = langfuse_tags
             
             run_config = RunnableConfig(
                 run_name=f"{primary_agent.name} (Decidindo Colaboração)",
-                metadata={"agent_id": primary_agent.id, "structured": True},
+                metadata=metadata,
                 callbacks=callbacks if callbacks else None
             )
             

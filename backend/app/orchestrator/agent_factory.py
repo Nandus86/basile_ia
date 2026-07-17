@@ -415,22 +415,24 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 langfuse_tags.append(f"church:{church_id}")
         
         callbacks = []
-        langfuse_cb = get_langfuse_callback(
-            user_id=user_phone,
-            session_id=sess_id,
-            tags=langfuse_tags if langfuse_tags else None
-        )
+        langfuse_cb = get_langfuse_callback()
         if langfuse_cb:
             callbacks.append(langfuse_cb)
             
+        metadata = {
+            "agent_id": agent_config["id"],
+            "agent_name": agent_config["name"],
+            "has_tools": agent_config["has_tools"],
+            "model": agent_config["model"]
+        }
+        
+        if user_phone: metadata["langfuse_user_id"] = user_phone
+        if sess_id: metadata["langfuse_session_id"] = sess_id
+        if langfuse_tags: metadata["langfuse_tags"] = langfuse_tags
+            
         return RunnableConfig(
             run_name=f"Agent: {agent_config['name']}",
-            metadata={
-                "agent_id": agent_config["id"],
-                "agent_name": agent_config["name"],
-                "has_tools": agent_config["has_tools"],
-                "model": agent_config["model"]
-            },
+            metadata=metadata,
             tags=[f"agent:{agent_config['name']}", agent_config["access_level"]],
             callbacks=callbacks if callbacks else None
         )
@@ -1651,24 +1653,26 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                 langfuse_tags.append(f"church:{church_id}")
 
         callbacks = []
-        langfuse_cb = get_langfuse_callback(
-            user_id=user_phone,
-            session_id=sess_id,
-            tags=langfuse_tags if langfuse_tags else None
-        )
+        langfuse_cb = get_langfuse_callback()
         if langfuse_cb:
             callbacks.append(langfuse_cb)
             
+        metadata = {
+            "agent_id": agent_config["id"],
+            "agent_name": agent_config["name"],
+            "has_tools": agent_config.get("has_tools", False),
+            "model": agent_config["model"],
+            "structured": True
+        }
+        
+        if user_phone: metadata["langfuse_user_id"] = user_phone
+        if sess_id: metadata["langfuse_session_id"] = sess_id
+        if langfuse_tags: metadata["langfuse_tags"] = langfuse_tags
+
         # Create config for structured output tracing
         run_config = RunnableConfig(
             run_name=agent_config["name"],
-            metadata={
-                "agent_id": agent_config["id"],
-                "agent_name": agent_config["name"],
-                "has_tools": agent_config.get("has_tools", False),
-                "model": agent_config["model"],
-                "structured": True
-            },
+            metadata=metadata,
             tags=[f"agent:{agent_config['name']}", "structured"],
             callbacks=callbacks if callbacks else None
         )

@@ -2471,17 +2471,18 @@ Responda APENAS com uma das opções:
                 langfuse_tags.append(f"church:{church_id}")
 
         callbacks = []
-        langfuse_cb = get_langfuse_callback(
-            user_id=user_phone,
-            session_id=sess_id,
-            tags=langfuse_tags if langfuse_tags else None
-        )
+        langfuse_cb = get_langfuse_callback()
         if langfuse_cb:
             callbacks.append(langfuse_cb)
             
+        metadata = {'block_type': 'agentic_workflow', 'goal': goal[:200]}
+        if user_phone: metadata["langfuse_user_id"] = user_phone
+        if sess_id: metadata["langfuse_session_id"] = sess_id
+        if langfuse_tags: metadata["langfuse_tags"] = langfuse_tags
+            
         run_config = RunnableConfig(
             run_name='Agentic Workflow Block',
-            metadata={'block_type': 'agentic_workflow', 'goal': goal[:200]},
+            metadata=metadata,
             tags=['agentic-workflow'],
             callbacks=callbacks if callbacks else None
         )
