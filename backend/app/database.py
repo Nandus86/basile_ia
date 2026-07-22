@@ -28,11 +28,11 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     future=True,
-    pool_size=20,          # Base number of persistent connections
-    max_overflow=10,       # Extra connections allowed beyond pool_size
+    pool_size=40,          # Base number of persistent connections
+    max_overflow=20,       # Extra connections allowed beyond pool_size
     pool_pre_ping=True,    # Verify connections before use (handles stale connections)
     pool_recycle=1800,     # Recycle connections every 30 minutes
-    pool_timeout=30,       # Wait up to 30s for a connection from pool
+    pool_timeout=60,       # Wait up to 60s for a connection from pool
     json_serializer=custom_serializer,
 )
 

@@ -251,72 +251,68 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             except Exception as e:
                 logger.error(f"Failed to update JobLog in_progress: {e}")
 
+            # Fetch agent metadata using a short-lived DB session
+            agent = None
+            logger.info(f"[Consumer] agent_id={agent_id}, session={session_id}")
             async with async_session_maker() as db:
                 from app.orchestrator.agent_factory import AgentFactory
-                from langchain_core.messages import HumanMessage, AIMessage
-
-                # Check if target agent exists and has output schema
-                agent_config = None
-                agent = None
-                logger.info(f"[Consumer] agent_id={agent_id}, session={session_id}")
-                
-                factory = AgentFactory(db)
                 if agent_id:
+                    factory = AgentFactory(db)
                     agent = await factory.get_agent_by_id(agent_id)
-                    logger.info(f"[Consumer] Agent found: {agent.name if agent else 'None'}, has output_schema: {bool(agent.output_schema) if agent else False}")
-                    
-                    if agent:
-                        # Auto-map extra root fields from payload to context or transition data
-                        standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url", "source", "event_type", "sender_id", "sender_name", "timestamp"}
-                        ctx_keys = set(agent.input_schema.keys()) if agent.input_schema else set()
-                        trans_keys = set(agent.transition_input_schema.keys()) if agent.transition_input_schema else set()
-                        
-                        c_data = dict(context_data) if context_data else {}
-                        t_data = dict(transition_data) if transition_data else {}
-                        
-                        for k, v in payload.items():
-                            if k in standard_keys: continue
-                            # Se estiver estritamente no schema de transição do entry-agent, vai para transition_data
-                            if k in trans_keys:
-                                t_data[k] = v
-                            else:
-                                # Todo o resto vai para context_data para que tanto o orquestrador 
-                                # quanto os subordinados possam buscar o que for necessário em seus próprios schemas
-                                c_data[k] = v
-                                
-                        context_data = c_data
-                        transition_data = t_data
 
-                    if agent:
-                        logger.info(f"[Consumer] Agent found: {agent.name}")
+            if agent:
+                logger.info(f"[Consumer] Agent found: {agent.name}, has output_schema: {bool(agent.output_schema)}")
+                # Auto-map extra root fields from payload to context or transition data
+                standard_keys = {"message", "session_id", "agent_id", "user_access_level", "metadata", "context_data", "transition_data", "callback_url", "source", "event_type", "sender_id", "sender_name", "timestamp"}
+                ctx_keys = set(agent.input_schema.keys()) if agent.input_schema else set()
+                trans_keys = set(agent.transition_input_schema.keys()) if agent.transition_input_schema else set()
+                
+                c_data = dict(context_data) if context_data else {}
+                t_data = dict(transition_data) if transition_data else {}
+                
+                for k, v in payload.items():
+                    if k in standard_keys: continue
+                    # Se estiver estritamente no schema de transição do entry-agent, vai para transition_data
+                    if k in trans_keys:
+                        t_data[k] = v
+                    else:
+                        # Todo o resto vai para context_data para que tanto o orquestrador 
+                        # quanto os subordinados possam buscar o que for necessário em seus próprios schemas
+                        c_data[k] = v
+                        
+                context_data = c_data
+                transition_data = t_data
+            else:
+                if agent_id:
+                    logger.warning(f"[Consumer] Agent ID {agent_id} not found in DB")
                 else:
                     logger.warning(f"[Consumer] No agent_id provided, falling back to standard orchestrator")
 
-                # Configure resilience
-                max_retries = 3
-                retry_delay = 1.0
-                if agent and agent.resilience_config:
-                    max_retries = agent.resilience_config.max_retries
-                    retry_delay = getattr(agent.resilience_config, "retry_delay_seconds", 1.0)
-                
-                attempts = 0
-                last_exception = None
-                
-                # Start StatusMonitor for interim progress messages
-                monitor = None
-                if callback_url and agent:
-                    from app.worker.status_monitor import StatusMonitor
-                    monitor = StatusMonitor(
-                        callback_url=callback_url,
-                        agent_config={
-                            "status_updates_enabled": getattr(agent, "status_updates_enabled", True),
-                            "status_updates_config": getattr(agent, "status_updates_config", {}) or {}
-                        },
-                        session_id=session_id,
-                        transition_data=transition_data, # Use reconstructed transition data
-                        is_structured=bool(agent.output_schema)
-                    )
-                    await monitor.start()
+            # Configure resilience
+            max_retries = 3
+            retry_delay = 1.0
+            if agent and agent.resilience_config:
+                max_retries = agent.resilience_config.max_retries
+                retry_delay = getattr(agent.resilience_config, "retry_delay_seconds", 1.0)
+            
+            attempts = 0
+            last_exception = None
+            
+            # Start StatusMonitor for interim progress messages
+            monitor = None
+            if callback_url and agent:
+                from app.worker.status_monitor import StatusMonitor
+                monitor = StatusMonitor(
+                    callback_url=callback_url,
+                    agent_config={
+                        "status_updates_enabled": getattr(agent, "status_updates_enabled", True),
+                        "status_updates_config": getattr(agent, "status_updates_config", {}) or {}
+                    },
+                    session_id=session_id,
+                    transition_data=transition_data, # Use reconstructed transition data
+                    is_structured=bool(agent.output_schema)
+                )
+                await monitor.start()
                     # Initial state is handled by the loop delay
                 
                 while attempts <= max_retries:
