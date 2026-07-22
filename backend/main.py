@@ -128,6 +128,11 @@ app.include_router(backup.router, prefix="/backup", tags=["Backup"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(qa_eval.router, prefix="/qa-eval", tags=["Q&A Eval"])
 
+# Reports & System Admin
+from app.api import reports
+app.include_router(reports.admin_router)
+app.include_router(reports.church_router)
+
 
 @app.get("/")
 async def root():
