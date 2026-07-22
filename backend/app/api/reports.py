@@ -24,6 +24,8 @@ church_router = APIRouter(prefix="/reports/church", tags=["Relatórios - Igreja"
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────
 
+from sqlalchemy import cast, String
+
 def _build_church_filter(identifier: str):
     """
     Build SQLAlchemy filter condition to match a church by:
@@ -35,9 +37,12 @@ def _build_church_filter(identifier: str):
     cleaned_id = identifier.strip()
     return or_(
         JobLog.church_name.ilike(f"%{cleaned_id}%"),
-        JobLog.request_data["global"]["instancia"].astext == cleaned_id,
-        JobLog.request_data["church"]["_id"].astext == cleaned_id,
-        JobLog.request_data["member"]["church_id"].astext == cleaned_id,
+        func.json_extract_path_text(JobLog.request_data, "global", "instancia") == cleaned_id,
+        func.json_extract_path_text(JobLog.request_data, "church", "_id") == cleaned_id,
+        func.json_extract_path_text(JobLog.request_data, "member", "church_id") == cleaned_id,
+        cast(JobLog.request_data["global"]["instancia"], String).ilike(f"%{cleaned_id}%"),
+        cast(JobLog.request_data["church"]["_id"], String).ilike(f"%{cleaned_id}%"),
+        cast(JobLog.request_data["member"]["church_id"], String).ilike(f"%{cleaned_id}%"),
     )
 
 
@@ -137,7 +142,12 @@ async def list_system_jobs(
         q = q.where(JobLog.church_name.ilike(f"%{church_name}%"))
 
     if instancia:
-        q = q.where(JobLog.request_data["global"]["instancia"].astext == instancia)
+        q = q.where(
+            or_(
+                func.json_extract_path_text(JobLog.request_data, "global", "instancia") == instancia,
+                cast(JobLog.request_data["global"]["instancia"], String).ilike(f"%{instancia}%")
+            )
+        )
 
     # Count total matching
     count_q = select(func.count()).select_from(q.subquery())
