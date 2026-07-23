@@ -21,19 +21,29 @@ async def get_result_status(job_id: str):
     status = await redis_client.hget(status_key, "status")
     attempts_str = await redis_client.hget(status_key, "attempts")
     last_error = await redis_client.hget(status_key, "last_error")
+    created_at = await redis_client.hget(status_key, "created_at")
     updated_at = await redis_client.hget(status_key, "updated_at")
+    sent_at = await redis_client.hget(status_key, "sent_at")
+    input_payload_str = await redis_client.hget(status_key, "input_payload")
+    output_payload_str = await redis_client.hget(status_key, "output_payload")
     
     if not status:
         raise HTTPException(status_code=404, detail="Result status not found")
+        
+    import json
+    input_payload = json.loads(input_payload_str) if input_payload_str else None
+    output_payload = json.loads(output_payload_str) if output_payload_str else None
     
     return ResultStatusResponse(
         job_id=job_id,
         status=status,
         attempts=int(attempts_str or "0"),
         last_error=last_error if last_error else None,
-        created_at=None,
-        updated_at=None,
-        sent_at=None
+        created_at=created_at,
+        updated_at=updated_at,
+        sent_at=sent_at,
+        input_payload=input_payload,
+        output_payload=output_payload
     )
 
 

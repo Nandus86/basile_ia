@@ -564,6 +564,27 @@ onMounted(() => {
               <div class="text-caption">{{ new Date(selectedResult.sent_at).toLocaleString('pt-BR') }}</div>
             </v-col>
           </v-row>
+
+          <v-divider class="my-4" v-if="selectedResult.input_payload || selectedResult.output_payload"></v-divider>
+
+          <v-row v-if="selectedResult.input_payload || selectedResult.output_payload">
+            <v-col cols="12" md="6" v-if="selectedResult.input_payload">
+              <div class="text-overline mb-1">Payload Recebido (do Agente)</div>
+              <v-card variant="tonal" class="bg-grey-darken-4 rounded overflow-auto" max-height="300">
+                <v-card-text class="pa-2">
+                  <pre class="text-caption text-success font-weight-medium" style="white-space: pre-wrap; font-family: monospace;">{{ JSON.stringify(selectedResult.input_payload, null, 2) }}</pre>
+                </v-card-text>
+              </v-card>
+            </v-col>
+            <v-col cols="12" md="6" v-if="selectedResult.output_payload">
+              <div class="text-overline mb-1">Payload Enviado (Transformado)</div>
+              <v-card variant="tonal" class="bg-grey-darken-4 rounded overflow-auto" max-height="300">
+                <v-card-text class="pa-2">
+                  <pre class="text-caption text-info font-weight-medium" style="white-space: pre-wrap; font-family: monospace;">{{ JSON.stringify(selectedResult.output_payload, null, 2) }}</pre>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
         </v-card-text>
       </v-card>
     </v-dialog>

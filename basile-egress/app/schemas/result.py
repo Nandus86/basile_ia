@@ -70,6 +70,8 @@ class ResultStatusResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     sent_at: Optional[datetime] = None
+    input_payload: Optional[Dict[str, Any]] = None
+    output_payload: Optional[Dict[str, Any]] = None
     
     model_config = {"from_attributes": True}
 

@@ -24,7 +24,9 @@ async def save_result_status(
     job_id: str,
     status: str,
     attempts: int = 0,
-    last_error: str = None
+    last_error: str = None,
+    input_payload: dict = None,
+    output_payload: dict = None
 ) -> None:
     """Save result status to Redis"""
     status_key = f"result:status:{job_id}"
@@ -40,6 +42,14 @@ async def save_result_status(
     await redis_client.hset(status_key, "attempts", str(attempts))
     await redis_client.hset(status_key, "last_error", last_error or "")
     await redis_client.hset(status_key, "updated_at", datetime.now(timezone.utc).isoformat())
+    
+    if status == "sent":
+        await redis_client.hset(status_key, "sent_at", datetime.now(timezone.utc).isoformat())
+        
+    if input_payload is not None:
+        await redis_client.hset(status_key, "input_payload", json.dumps(input_payload))
+    if output_payload is not None:
+        await redis_client.hset(status_key, "output_payload", json.dumps(output_payload))
 
 
 async def _resolve_pipeline(result: ResultInput, db: AsyncSession):
@@ -95,7 +105,7 @@ async def receive_result(
         
     result = await _resolve_pipeline(result, db)
     
-    await save_result_status(result.job_id, "processing", attempts=0)
+    await save_result_status(result.job_id, "processing", attempts=0, input_payload=result.model_dump(mode='json'))
     
     try:
         transformed = transform_output(
@@ -106,7 +116,7 @@ async def receive_result(
             result.agent_used
         )
     except ValueError as ve:
-        await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve))
+        await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve), input_payload=result.model_dump(mode='json'))
         raise HTTPException(status_code=422, detail=str(ve))
         
     if result.workflow_id:
@@ -148,7 +158,7 @@ async def receive_result(
     )
     
     if success:
-        await save_result_status(result.job_id, "sent", attempts, None)
+        await save_result_status(result.job_id, "sent", attempts, None, result.model_dump(mode='json'), transformed)
         return ResultOutput(
             success=True,
             job_id=result.job_id,
@@ -157,7 +167,7 @@ async def receive_result(
             status="sent"
         )
     else:
-        await save_result_status(result.job_id, "failed", attempts, error_msg)
+        await save_result_status(result.job_id, "failed", attempts, error_msg, result.model_dump(mode='json'), transformed)
         raise HTTPException(
             status_code=502,
             detail=f"Failed to send result after {attempts} attempts: {error_msg}"
@@ -190,7 +200,7 @@ async def receive_result_sync(
             result.agent_used
         )
     except ValueError as ve:
-        await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve))
+        await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve), input_payload=result.model_dump(mode='json'))
         raise HTTPException(status_code=422, detail=str(ve))
     
     success, error_msg = await webhook_sender.send(
@@ -201,7 +211,7 @@ async def receive_result_sync(
     )
     
     if success:
-        await save_result_status(result.job_id, "sent", 1, None)
+        await save_result_status(result.job_id, "sent", 1, None, result.model_dump(mode='json'), transformed)
         return ResultOutput(
             success=True,
             job_id=result.job_id,
@@ -210,7 +220,7 @@ async def receive_result_sync(
             status="sent"
         )
     else:
-        await save_result_status(result.job_id, "failed", 1, error_msg)
+        await save_result_status(result.job_id, "failed", 1, error_msg, result.model_dump(mode='json'), transformed)
         raise HTTPException(
             status_code=502,
             detail=f"Failed to send result: {error_msg}"
