@@ -138,9 +138,12 @@ const defaultPipelineItem = {
     mappings: {},
     defaults: {}
   },
+  workflow_id: null,
   output_headers: null,
   retry_config: { maxRetries: 3, delays: [5000, 15000, 60000] }
 }
+
+const workflowsList = ref([])
 
 const editedPipelineItem = ref(JSON.parse(JSON.stringify(defaultPipelineItem)))
 const isEditingPipeline = ref(false)
@@ -265,10 +268,20 @@ const refreshData = () => {
   }
 }
 
+const fetchWorkflows = async () => {
+  try {
+    const res = await axios.get('/api/workflows')
+    workflowsList.value = res.data.workflows || []
+  } catch (err) {
+    console.error('Erro ao carregar workflows', err)
+  }
+}
+
 onMounted(() => {
   checkHealth()
   fetchResults()
   fetchPipelines()
+  fetchWorkflows()
 })
 </script>
 
@@ -597,6 +610,27 @@ onMounted(() => {
                   rows="2"
                   auto-grow
                 ></v-textarea>
+              </v-col>
+            </v-row>
+            
+            <v-row>
+              <v-col cols="12">
+                <v-autocomplete
+                  v-model="editedPipelineItem.workflow_id"
+                  :items="workflowsList"
+                  item-title="name"
+                  item-value="id"
+                  label="Workflow Vinculado (Opcional)"
+                  variant="outlined"
+                  clearable
+                  hint="Selecione um workflow para executar os dados antes de disparar o webhook"
+                  persistent-hint
+                >
+                  <template #item="{ props, item }">
+                    <v-list-item v-bind="props" :subtitle="item.raw.description || ''">
+                    </v-list-item>
+                  </template>
+                </v-autocomplete>
               </v-col>
             </v-row>
 

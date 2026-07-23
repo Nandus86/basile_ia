@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://basile:basile123@basile-postgres:5432/basile_db"
     REDIS_URL: str = "redis://basile-redis:6379"
     SECRET_KEY: str = "egress-secret-key-change-in-production"
+    BASILE_API_URL: str = "http://basile-backend:8000"
     
     DEFAULT_WEBHOOK_TIMEOUT: int = 30
     DEFAULT_RETRY_MAX: int = 3

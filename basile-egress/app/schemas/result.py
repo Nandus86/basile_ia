@@ -23,6 +23,7 @@ class ResultInput(BaseModel):
     job_id: str
     output_url: Optional[str] = None
     pipeline_path: Optional[str] = None
+    workflow_id: Optional[str] = None
     output_method: str = "POST"
     response: Dict[str, Any] = Field(default_factory=dict, description="Worker response data")
     agent_used: Optional[str] = None

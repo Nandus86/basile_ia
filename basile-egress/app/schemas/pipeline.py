@@ -16,6 +16,7 @@ class EgressPipelineBase(BaseModel):
     output_method: str = "POST"
     output_schema: Optional[Dict[str, Any]] = None
     output_headers: Optional[Dict[str, Any]] = None
+    workflow_id: Optional[str] = None
     retry_config: Optional[Dict[str, Any]] = Field(default={"maxRetries": 3, "delays": [5000, 15000, 60000]})
 
 

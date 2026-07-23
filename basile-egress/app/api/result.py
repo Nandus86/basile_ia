@@ -72,6 +72,8 @@ async def _resolve_pipeline(result: ResultInput, db: AsyncSession):
         result.output_headers = pipeline.output_headers
     if pipeline.retry_config:
         result.retry_config = pipeline.retry_config
+    if getattr(pipeline, "workflow_id", None):
+        result.workflow_id = pipeline.workflow_id
         
     return result
 
@@ -106,6 +108,31 @@ async def receive_result(
     except ValueError as ve:
         await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve))
         raise HTTPException(status_code=422, detail=str(ve))
+        
+    if result.workflow_id:
+        try:
+            import httpx
+            from app.config import settings
+            wf_url = f"{settings.BASILE_API_URL}/api/workflows/{result.workflow_id}/execute"
+            wf_payload = {
+                "trigger_data": {
+                    "egress_data": transformed,
+                    "job_id": result.job_id
+                },
+                "async_mode": False
+            }
+            logger.info(f"Triggering workflow {result.workflow_id} for job {result.job_id}")
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                wf_res = await client.post(wf_url, json=wf_payload)
+                if wf_res.status_code == 200:
+                    wf_data = wf_res.json()
+                    if "final_result" in wf_data and wf_data["final_result"]:
+                        transformed = wf_data["final_result"]
+                        logger.info(f"Workflow {result.workflow_id} completed, transformed payload.")
+                else:
+                    logger.error(f"Workflow {result.workflow_id} failed: {wf_res.status_code} - {wf_res.text}")
+        except Exception as e:
+            logger.error(f"Error executing workflow {result.workflow_id}: {str(e)}")
     
     retry_config = result.retry_config or {
         "maxRetries": 3,

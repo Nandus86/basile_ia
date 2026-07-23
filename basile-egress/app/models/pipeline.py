@@ -23,6 +23,8 @@ class EgressPipeline(Base):
     output_schema = Column(JSONB, nullable=True)
     output_headers = Column(JSONB, nullable=True)
     
+    workflow_id = Column(String(36), nullable=True)
+    
     retry_config = Column(JSONB, default={"maxRetries": 3, "delays": [5000, 15000, 60000]})
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
