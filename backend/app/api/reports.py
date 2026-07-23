@@ -1,7 +1,7 @@
 """
 Admin System & Church Reporting Endpoints
 Provides read-only GET endpoints for System Administration and Church-level attendance reports.
-Optimized for high performance and fast JSON query execution.
+Optimized for high performance and fast JSON query execution with ISO datetime range filtering.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,29 @@ church_router = APIRouter(prefix="/reports/church", tags=["Relatórios - Igreja"
 # ─────────────────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────
+
+def _parse_datetime_param(dt_str: Optional[str]) -> Optional[datetime]:
+    """
+    Parse an ISO datetime string (ex: '2026-07-01T00:00:00', '2026-07-01T15:30:00Z', or '2026-07-01')
+    into a timezone-aware UTC datetime for SQLAlchemy comparisons.
+    """
+    if not dt_str:
+        return None
+    dt_str = dt_str.strip()
+    try:
+        if "T" in dt_str:
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        elif len(dt_str) == 10:  # YYYY-MM-DD
+            dt = datetime.strptime(dt_str, "%Y-%m-%d")
+        else:
+            dt = datetime.fromisoformat(dt_str)
+            
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
 
 def _build_church_filter(identifier: str):
     """
@@ -73,21 +96,35 @@ async def get_system_health(db: AsyncSession = Depends(get_db)):
 
 
 @admin_router.get("/metrics", summary="Métricas globais do sistema e desempenho")
-async def get_system_metrics(db: AsyncSession = Depends(get_db)):
+async def get_system_metrics(
+    start_date: Optional[str] = Query(None, description="Data/Hora inicial no formato ISO (ex: 2026-07-01T00:00:00)"),
+    end_date: Optional[str] = Query(None, description="Data/Hora final no formato ISO (ex: 2026-07-31T23:59:59)"),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Retorna estatísticas agregadas de atendimentos: total de jobs, taxa de erro (%), 
-    tempo médio de processamento (ms) e total de mensagens no MTM.
+    tempo médio de processamento (ms) e total de mensagens no MTM, com suporte a intervalo de datas/horas.
     """
-    # Combined single query for job stats
-    job_stats_q = await db.execute(
-        select(
-            func.count(JobLog.id).label("total"),
-            func.count(func.nullif(JobLog.status == "completed", False)).label("completed"),
-            func.count(func.nullif(JobLog.status == "failed", False)).label("failed"),
-            func.avg(JobLog.duration_ms).label("avg_dur"),
-            func.count(func.distinct(JobLog.church_name)).label("churches"),
-        )
+    st = _parse_datetime_param(start_date)
+    et = _parse_datetime_param(end_date)
+
+    conditions = []
+    if st:
+        conditions.append(JobLog.created_at >= st)
+    if et:
+        conditions.append(JobLog.created_at <= et)
+
+    query = select(
+        func.count(JobLog.id).label("total"),
+        func.count(func.nullif(JobLog.status == "completed", False)).label("completed"),
+        func.count(func.nullif(JobLog.status == "failed", False)).label("failed"),
+        func.avg(JobLog.duration_ms).label("avg_dur"),
+        func.count(func.distinct(JobLog.church_name)).label("churches"),
     )
+    for cond in conditions:
+        query = query.where(cond)
+
+    job_stats_q = await db.execute(query)
     job_stats = job_stats_q.first()
 
     total_jobs = job_stats.total if job_stats else 0
@@ -97,12 +134,22 @@ async def get_system_metrics(db: AsyncSession = Depends(get_db)):
     total_churches = job_stats.churches if job_stats else 0
 
     # Total MTM messages
-    msg_q = await db.execute(select(func.count(ConversationMessage.id)))
+    msg_query = select(func.count(ConversationMessage.id))
+    if st:
+        msg_query = msg_query.where(ConversationMessage.created_at >= st)
+    if et:
+        msg_query = msg_query.where(ConversationMessage.created_at <= et)
+
+    msg_q = await db.execute(msg_query)
     total_messages = msg_q.scalar_one() or 0
 
     error_rate_pct = round((failed_jobs / total_jobs * 100), 2) if total_jobs > 0 else 0.0
 
     return {
+        "period": {
+            "start_date": st.isoformat() if st else None,
+            "end_date": et.isoformat() if et else None,
+        },
         "total_jobs": total_jobs,
         "completed_jobs": completed_jobs,
         "failed_jobs": failed_jobs,
@@ -119,12 +166,14 @@ async def list_system_jobs(
     status: Optional[str] = Query(None, description="Filtra por status: completed, failed, queued, in_progress"),
     church_name: Optional[str] = Query(None, description="Filtra pelo nome da igreja"),
     instancia: Optional[str] = Query(None, description="Filtra pelo ID da instância (global.instancia)"),
+    start_date: Optional[str] = Query(None, description="Data/Hora inicial no formato ISO (ex: 2026-07-01T00:00:00)"),
+    end_date: Optional[str] = Query(None, description="Data/Hora final no formato ISO (ex: 2026-07-31T23:59:59)"),
     limit: int = Query(50, le=500),
     skip: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Lista todos os jobs com suporte a filtros técnicos (status, igreja, instância).
+    Lista todos os jobs com suporte a filtros técnicos (status, igreja, instância, intervalo de datas/horas).
     """
     q = select(JobLog)
 
@@ -141,6 +190,13 @@ async def list_system_jobs(
                 cast(JobLog.request_data, String).ilike(f"%{instancia}%")
             )
         )
+
+    st = _parse_datetime_param(start_date)
+    et = _parse_datetime_param(end_date)
+    if st:
+        q = q.where(JobLog.created_at >= st)
+    if et:
+        q = q.where(JobLog.created_at <= et)
 
     # Fetch rows
     q = q.order_by(desc(JobLog.created_at)).offset(skip).limit(limit)
@@ -209,16 +265,25 @@ async def list_active_churches(db: AsyncSession = Depends(get_db)):
 @church_router.get("/{church_identifier}/summary", summary="Resumo executivo de atendimentos da igreja")
 async def get_church_summary(
     church_identifier: str,
+    start_date: Optional[str] = Query(None, description="Data/Hora inicial no formato ISO (ex: 2026-07-01T00:00:00)"),
+    end_date: Optional[str] = Query(None, description="Data/Hora final no formato ISO (ex: 2026-07-31T23:59:59)"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Retorna estatísticas consolidadas para o pastor: total de membros atendidos, 
-    total de interações e última atividade. O church_identifier aceita global.instancia, 
-    church._id ou o nome da igreja.
+    total de interações e última atividade no intervalo de data/hora especificado. 
+    O church_identifier aceita global.instancia, church._id ou o nome da igreja.
     """
     condition = _build_church_filter(church_identifier)
 
-    # Executa apenas 1 query agregada rápida
+    st = _parse_datetime_param(start_date)
+    et = _parse_datetime_param(end_date)
+    if st:
+        condition = and_(condition, JobLog.created_at >= st)
+    if et:
+        condition = and_(condition, JobLog.created_at <= et)
+
+    # Executa 1 query agregada rápida
     q = select(
         func.count(JobLog.id).label("total_attendances"),
         func.count(func.distinct(JobLog.member_name)).label("unique_members"),
@@ -235,13 +300,21 @@ async def get_church_summary(
     if not row or total_attendances == 0:
         return {
             "church_identifier": church_identifier,
+            "period": {
+                "start_date": st.isoformat() if st else None,
+                "end_date": et.isoformat() if et else None,
+            },
             "found": False,
-            "message": f"Nenhum registro encontrado para a igreja '{church_identifier}'."
+            "message": f"Nenhum registro encontrado para a igreja '{church_identifier}' no período especificado."
         }
 
     return {
         "church_identifier": church_identifier,
         "resolved_church_name": row.church_name or church_identifier,
+        "period": {
+            "start_date": st.isoformat() if st else None,
+            "end_date": et.isoformat() if et else None,
+        },
         "found": True,
         "metrics": {
             "total_attendances": total_attendances,
@@ -255,17 +328,26 @@ async def get_church_summary(
 @church_router.get("/{church_identifier}/attendances", summary="Lista de atendimentos dos membros da igreja")
 async def list_church_attendances(
     church_identifier: str,
+    start_date: Optional[str] = Query(None, description="Data/Hora inicial no formato ISO (ex: 2026-07-01T00:00:00)"),
+    end_date: Optional[str] = Query(None, description="Data/Hora final no formato ISO (ex: 2026-07-31T23:59:59)"),
     limit: int = Query(50, le=500),
     skip: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Retorna a lista de atendimentos realizados para os fiéis/visitantes da igreja, 
-    sem jargões técnicos dos agentes.
+    filtrando por intervalo de data/hora.
     """
     condition = _build_church_filter(church_identifier)
 
-    # Fetch attendances in 1 fast query
+    st = _parse_datetime_param(start_date)
+    et = _parse_datetime_param(end_date)
+    if st:
+        condition = and_(condition, JobLog.created_at >= st)
+    if et:
+        condition = and_(condition, JobLog.created_at <= et)
+
+    # Fetch attendances
     q = (
         select(JobLog)
         .where(condition)
@@ -308,6 +390,10 @@ async def list_church_attendances(
 
     return {
         "church_identifier": church_identifier,
+        "period": {
+            "start_date": st.isoformat() if st else None,
+            "end_date": et.isoformat() if et else None,
+        },
         "attendances": attendances,
         "count": len(attendances),
         "limit": limit,
@@ -380,14 +466,23 @@ async def get_attendance_details(
 @church_router.get("/{church_identifier}/prayer-requests", summary="Pedidos de oração e intenções recebidas")
 async def list_prayer_requests(
     church_identifier: str,
+    start_date: Optional[str] = Query(None, description="Data/Hora inicial no formato ISO (ex: 2026-07-01T00:00:00)"),
+    end_date: Optional[str] = Query(None, description="Data/Hora final no formato ISO (ex: 2026-07-31T23:59:59)"),
     limit: int = Query(50, le=500),
     skip: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Filtra atendimentos da igreja onde o membro enviou um pedido de oração ou intenção espiritual.
+    Filtra atendimentos da igreja onde o membro enviou um pedido de oração ou intenção espiritual no intervalo de data/hora.
     """
     base_condition = _build_church_filter(church_identifier)
+
+    st = _parse_datetime_param(start_date)
+    et = _parse_datetime_param(end_date)
+    if st:
+        base_condition = and_(base_condition, JobLog.created_at >= st)
+    if et:
+        base_condition = and_(base_condition, JobLog.created_at <= et)
 
     # Keywords matching prayer requests
     prayer_keywords = ["oração", "oracao", "orar", "interceder", "intercessão", "clamor", "benção", "bencao", "cura", "libertação", "libertacao"]
@@ -418,6 +513,10 @@ async def list_prayer_requests(
 
     return {
         "church_identifier": church_identifier,
+        "period": {
+            "start_date": st.isoformat() if st else None,
+            "end_date": et.isoformat() if et else None,
+        },
         "prayer_requests": requests,
         "count": len(requests),
         "limit": limit,
