@@ -493,6 +493,9 @@
                   {{ getMemoryIcon(msg.role) }}
                 </v-icon>
                 <span class="text-caption font-weight-bold text-uppercase" style="opacity: 0.7">{{ msg.role }}</span>
+                <v-chip v-if="msg.webhook_path || msg.endpoint" size="x-small" color="primary" variant="outlined" class="ml-2">
+                  {{ msg.webhook_path || msg.endpoint }}
+                </v-chip>
                 <span v-if="msg.created_at || msg.timestamp" class="text-caption ml-2" style="opacity: 0.4">
                   {{ formatDate(msg.created_at || msg.timestamp) }}
                 </span>

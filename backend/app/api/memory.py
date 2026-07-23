@@ -615,6 +615,8 @@ async def get_mtm_session_messages(
             q = q.where(ConversationMessage.agent_id == uuid.UUID(agent_id))
 
         result = await db.execute(q)
+        rows = result.scalars().all()
+
         messages = []
         for r in rows:
             messages.append({
