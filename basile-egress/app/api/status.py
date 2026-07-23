@@ -48,22 +48,25 @@ async def get_result_status(job_id: str):
 
 
 @router.get("")
-async def list_results(status: Optional[str] = None, limit: int = 20):
+async def list_results(status: Optional[str] = None, limit: int = 50):
     """
-    List recent results (from Redis using pattern).
+    List recent results (from Redis using pattern), sorted by date.
     """
     client = await redis_client.connect()
     keys = []
     
-    async for key in client.scan_iter(match="result:status:*", count=limit):
+    async for key in client.scan_iter(match="result:status:*"):
         keys.append(key)
     
     results = []
-    for key in keys[:limit]:
+    for key in keys:
         job_id = key.replace("result:status:", "")
         status_val = await redis_client.hget(key, "status")
         attempts_str = await redis_client.hget(key, "attempts")
         last_error = await redis_client.hget(key, "last_error")
+        created_at = await redis_client.hget(key, "created_at")
+        updated_at = await redis_client.hget(key, "updated_at")
+        sent_at = await redis_client.hget(key, "sent_at")
         
         if status and status_val != status:
             continue
@@ -73,9 +76,15 @@ async def list_results(status: Optional[str] = None, limit: int = 20):
             status=status_val or "unknown",
             attempts=int(attempts_str or "0"),
             last_error=last_error if last_error else None,
-            created_at=None,
-            updated_at=None,
-            sent_at=None
+            created_at=created_at,
+            updated_at=updated_at,
+            sent_at=sent_at
         ))
+        
+    # Sort results by created_at or updated_at descending
+    results.sort(
+        key=lambda x: str(x.created_at or x.updated_at or x.job_id), 
+        reverse=True
+    )
     
-    return ResultListResponse(results=results, total=len(results))
+    return ResultListResponse(results=results[:limit], total=len(results))
