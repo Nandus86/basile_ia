@@ -1640,6 +1640,68 @@ async def _build_workflow_tools(
 
     return tools
 
+async def _execute_egress_workflows(
+    db,
+    agent_model,
+    context_data: Optional[Dict[str, Any]] = None,
+    agent_config: Optional[Dict[str, Any]] = None,
+    response_text: str = "",
+) -> str:
+    """
+    Executes workflows marked with 'always_run_on_egress' = true after agent generates a response.
+    Returns a formatted string containing all results.
+    """
+    from app.models.agent import Agent as AgentModel
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+    import json
+
+    result = await db.execute(
+        sa_select(AgentModel)
+        .options(selectinload(AgentModel.workflows))
+        .where(AgentModel.id == agent_model.id)
+    )
+    agent_obj = result.scalar_one_or_none()
+    if not agent_obj or not agent_obj.workflows:
+        return ""
+
+    active_workflows = [w for w in agent_obj.workflows if w.is_active]
+    egress_workflows = []
+    
+    for wf in active_workflows:
+        if getattr(wf, "always_run_on_egress", False):
+            egress_workflows.append(wf)
+            
+    if not egress_workflows:
+        return ""
+
+    from app.services.workflow_engine import WorkflowEngine
+    engine = WorkflowEngine(db)
+    
+    results_str = ""
+    for wf in egress_workflows:
+        try:
+            print(f"[Egress Workflow] Executing {wf.name} for agent {agent_model.name}")
+            payload = context_data or {}
+            # Include the response text in the payload for egress workflows
+            payload["agent_response"] = response_text
+            
+            exec_result = await engine.execute(
+                workflow_id=wf.id,
+                trigger_data=payload,
+                trigger_type="agent_egress"
+            )
+            
+            final_result = exec_result.get('result') or exec_result.get('context', {})
+            
+            results_str += f"\n### Resultado da Automação (Egress): {wf.name}\n```json\n{json.dumps(final_result, ensure_ascii=False, indent=2)}\n```\n"
+        except Exception as e:
+            print(f"[Egress Workflow] Failed to execute {wf.name}: {e}")
+            results_str += f"\n### Resultado da Automação (Egress): {wf.name}\n[FALHA NA EXECUÇÃO: {str(e)}]\n"
+
+    return results_str
+
+
 async def _execute_startup_workflows(
     db,
     agent_model,
@@ -4275,6 +4337,24 @@ async def process_message_task(
                     response_data["response"] = final_result
                     
                 break  # Sai do loop while
+
+            # ── Execute egress workflows (Post-hooks) ──
+            if agent_model:
+                try:
+                    egress_results = await _execute_egress_workflows(
+                        db=db,
+                        agent_model=agent_model,
+                        context_data=context_data,
+                        agent_config=agent_config,
+                        response_text=output_text if 'output_text' in locals() else str(final_result)
+                    )
+                    if egress_results:
+                        print(f"[Task] Egress workflow results: {egress_results}")
+                        response_data["egress_workflows_result"] = egress_results
+                except Exception as e:
+                    import traceback
+                    print(f"[Task] Error executing egress workflows: {e}")
+                    traceback.print_exc()
 
             response_transition_data = _merge_transition_data(transition_data, context_data)
             if response_transition_data:

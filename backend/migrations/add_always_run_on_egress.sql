@@ -1,0 +1,1 @@
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS always_run_on_egress BOOLEAN DEFAULT FALSE;

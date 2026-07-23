@@ -411,6 +411,16 @@
             @update:model-value="markUnsaved"
           ></v-switch>
 
+          <v-switch
+            v-model="workflow.always_run_on_egress"
+            color="secondary"
+            label="Executar na Saída do Agente (Egress / Post-hook)"
+            hint="Se ativado, este workflow será executado automaticamente APÓS o agente gerar a resposta final, podendo usar essa resposta como entrada."
+            persistent-hint
+            class="mb-4"
+            @update:model-value="markUnsaved"
+          ></v-switch>
+
           <v-divider class="mb-4"></v-divider>
 
           <div class="text-subtitle-2 font-weight-bold mb-2">
@@ -731,6 +741,10 @@ async function loadWorkflow() {
     if (workflow.value.always_run_on_startup === undefined || workflow.value.always_run_on_startup === null) {
       workflow.value.always_run_on_startup = false
     }
+    // Ensure always_run_on_egress has a boolean value
+    if (workflow.value.always_run_on_egress === undefined || workflow.value.always_run_on_egress === null) {
+      workflow.value.always_run_on_egress = false
+    }
     
     const def = workflow.value.definition || {}
     if (def.blocks && def.edges) {
@@ -964,6 +978,7 @@ async function saveDefinition() {
       trigger_keywords: workflow.value.trigger_keywords || [],
       trigger_match_mode: workflow.value.trigger_match_mode || 'word',
       always_run_on_startup: workflow.value.always_run_on_startup ?? false,
+      always_run_on_egress: workflow.value.always_run_on_egress ?? false,
       return_direct_payload: workflow.value.return_direct_payload ?? false,
       definition
     })
