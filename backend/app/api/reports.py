@@ -378,6 +378,7 @@ async def list_church_attendances(
         attendances.append({
             "session_id": log.session_id,
             "job_id": log.job_id,
+            "webhook_path": log.webhook_path,
             "member_name": log.member_name or "Visitante / Anônimo",
             "member_phone": phone,
             "member_role": role,
@@ -409,7 +410,7 @@ async def get_attendance_details(
 ):
     """
     Retorna o histórico completo do atendimento de um membro: payload de entrada, 
-    resposta gerada e todas as mensagens MTM da conversa.
+    resposta gerada e todas as mensagens MTM da conversa com o endpoint/canal processado.
     """
     condition = and_(_build_church_filter(church_identifier), JobLog.session_id == session_id)
 
@@ -433,6 +434,8 @@ async def get_attendance_details(
         mtm_messages.append({
             "role": msg.role,
             "content": msg.content,
+            "webhook_path": msg.webhook_path or (log.webhook_path if log else None),
+            "endpoint": msg.webhook_path or (log.webhook_path if log else None),
             "timestamp": msg.created_at.isoformat() if msg.created_at else None,
         })
 
@@ -444,6 +447,7 @@ async def get_attendance_details(
 
     return {
         "session_id": session_id,
+        "webhook_path": log.webhook_path if log else None,
         "church": {
             "name": church_data.get("church_name") or (log.church_name if log else None),
             "instancia": glob.get("instancia"),
@@ -504,6 +508,7 @@ async def list_prayer_requests(
 
         requests.append({
             "session_id": log.session_id,
+            "webhook_path": log.webhook_path,
             "member_name": log.member_name or "Membro",
             "member_phone": phone,
             "prayer_request": log.user_message,

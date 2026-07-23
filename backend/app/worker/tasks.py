@@ -907,12 +907,17 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
 # MTM (Medium-Term Memory) helpers — PostgreSQL
 # ─────────────────────────────────────────────────────────────
 
-async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, content: str, tool_trace: dict = None):
+async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, content: str, tool_trace: dict = None, webhook_path: str = None):
     """Save a message to MTM (PostgreSQL) and trigger auto-summarize if needed."""
     try:
         from app.models.conversation_message import ConversationMessage
+        from app.context import get_request_context
         from sqlalchemy import func, select
         import uuid
+
+        if not webhook_path:
+            ctx = get_request_context() or {}
+            webhook_path = ctx.get("webhook_path") or ctx.get("webhook_endpoint") or ctx.get("path")
 
         msg = ConversationMessage(
             id=uuid.uuid4(),
@@ -921,6 +926,7 @@ async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, conte
             role=role,
             content=content,
             tool_trace=tool_trace,
+            webhook_path=webhook_path,
         )
         db.add(msg)
         await db.commit()

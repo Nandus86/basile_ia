@@ -79,11 +79,17 @@ async def _listen_for_aborts():
             except Exception as clean_err:
                 logger.error(f"Error cleaning up pubsub abort listener: {clean_err}")
 
-async def _save_to_mtm(agent_id: str, session_id: str, role: str, content: str):
+async def _save_to_mtm(agent_id: str, session_id: str, role: str, content: str, webhook_path: str = None):
     """Helper to save a message to MTM (PostgreSQL ConversationMessage)."""
     try:
         import uuid as uuid_mod
         from app.models.conversation_message import ConversationMessage
+        from app.context import get_request_context
+
+        if not webhook_path:
+            ctx = get_request_context() or {}
+            webhook_path = ctx.get("webhook_path") or ctx.get("webhook_endpoint") or ctx.get("path")
+
         async with async_session_maker() as db_session:
             msg = ConversationMessage(
                 id=uuid_mod.uuid4(),
@@ -91,6 +97,7 @@ async def _save_to_mtm(agent_id: str, session_id: str, role: str, content: str):
                 session_id=str(session_id),
                 role=role,
                 content=content,
+                webhook_path=webhook_path,
             )
             db_session.add(msg)
             await db_session.commit()

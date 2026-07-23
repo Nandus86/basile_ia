@@ -19,6 +19,7 @@ class ConversationMessage(Base):
     role = Column(String(30), nullable=False)  # "user" | "assistant" | "fromMe" | "supportResponse"
     content = Column(Text, nullable=False)
     tool_trace = Column(JSONB, nullable=True)  # Tool usage trace for Q&A Eval (new interactions only)
+    webhook_path = Column(String(255), nullable=True, index=True)  # Endpoint/Webhook path that processed the interaction
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

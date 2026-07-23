@@ -615,8 +615,6 @@ async def get_mtm_session_messages(
             q = q.where(ConversationMessage.agent_id == uuid.UUID(agent_id))
 
         result = await db.execute(q)
-        rows = result.scalars().all()
-
         messages = []
         for r in rows:
             messages.append({
@@ -625,6 +623,7 @@ async def get_mtm_session_messages(
                 "session_id": r.session_id,
                 "role": r.role,
                 "content": r.content,
+                "webhook_path": r.webhook_path,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             })
 
