@@ -1,10 +1,11 @@
 """
 Admin System & Church Reporting Endpoints
 Provides read-only GET endpoints for System Administration and Church-level attendance reports.
+Optimized for high performance and fast JSON query execution.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, or_, and_
+from sqlalchemy import select, func, desc, or_, and_, cast, String
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 import json
@@ -24,25 +25,16 @@ church_router = APIRouter(prefix="/reports/church", tags=["Relatórios - Igreja"
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────
 
-from sqlalchemy import cast, String
-
 def _build_church_filter(identifier: str):
     """
-    Build SQLAlchemy filter condition to match a church by:
-    - church_name (string column)
-    - global.instancia (JSON extract)
-    - church._id (JSON extract)
-    - member.church_id (JSON extract)
+    Build efficient SQLAlchemy filter condition to match a church by:
+    - church_name (indexed column)
+    - string pattern match on JSON request_data (global.instancia, church._id, member.church_id)
     """
     cleaned_id = identifier.strip()
     return or_(
         JobLog.church_name.ilike(f"%{cleaned_id}%"),
-        func.json_extract_path_text(JobLog.request_data, "global", "instancia") == cleaned_id,
-        func.json_extract_path_text(JobLog.request_data, "church", "_id") == cleaned_id,
-        func.json_extract_path_text(JobLog.request_data, "member", "church_id") == cleaned_id,
-        cast(JobLog.request_data["global"]["instancia"], String).ilike(f"%{cleaned_id}%"),
-        cast(JobLog.request_data["church"]["_id"], String).ilike(f"%{cleaned_id}%"),
-        cast(JobLog.request_data["member"]["church_id"], String).ilike(f"%{cleaned_id}%"),
+        cast(JobLog.request_data, String).ilike(f"%{cleaned_id}%"),
     )
 
 
@@ -86,26 +78,27 @@ async def get_system_metrics(db: AsyncSession = Depends(get_db)):
     Retorna estatísticas agregadas de atendimentos: total de jobs, taxa de erro (%), 
     tempo médio de processamento (ms) e total de mensagens no MTM.
     """
-    # Job stats
-    total_jobs_q = await db.execute(select(func.count(JobLog.id)))
-    total_jobs = total_jobs_q.scalar_one() or 0
+    # Combined single query for job stats
+    job_stats_q = await db.execute(
+        select(
+            func.count(JobLog.id).label("total"),
+            func.count(func.nullif(JobLog.status == "completed", False)).label("completed"),
+            func.count(func.nullif(JobLog.status == "failed", False)).label("failed"),
+            func.avg(JobLog.duration_ms).label("avg_dur"),
+            func.count(func.distinct(JobLog.church_name)).label("churches"),
+        )
+    )
+    job_stats = job_stats_q.first()
 
-    completed_q = await db.execute(select(func.count(JobLog.id)).where(JobLog.status == "completed"))
-    completed_jobs = completed_q.scalar_one() or 0
-
-    failed_q = await db.execute(select(func.count(JobLog.id)).where(JobLog.status == "failed"))
-    failed_jobs = failed_q.scalar_one() or 0
-
-    avg_dur_q = await db.execute(select(func.avg(JobLog.duration_ms)).where(JobLog.status == "completed"))
-    avg_duration_ms = avg_dur_q.scalar_one() or 0.0
+    total_jobs = job_stats.total if job_stats else 0
+    completed_jobs = job_stats.completed if job_stats else 0
+    failed_jobs = job_stats.failed if job_stats else 0
+    avg_duration_ms = float(job_stats.avg_dur or 0.0) if job_stats else 0.0
+    total_churches = job_stats.churches if job_stats else 0
 
     # Total MTM messages
     msg_q = await db.execute(select(func.count(ConversationMessage.id)))
     total_messages = msg_q.scalar_one() or 0
-
-    # Distinct active churches count
-    churches_q = await db.execute(select(func.count(func.distinct(JobLog.church_name))))
-    total_churches = churches_q.scalar_one() or 0
 
     error_rate_pct = round((failed_jobs / total_jobs * 100), 2) if total_jobs > 0 else 0.0
 
@@ -114,7 +107,7 @@ async def get_system_metrics(db: AsyncSession = Depends(get_db)):
         "completed_jobs": completed_jobs,
         "failed_jobs": failed_jobs,
         "error_rate_pct": error_rate_pct,
-        "avg_duration_ms": round(float(avg_duration_ms), 2),
+        "avg_duration_ms": round(avg_duration_ms, 2),
         "total_messages": total_messages,
         "total_active_churches": total_churches,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -144,15 +137,10 @@ async def list_system_jobs(
     if instancia:
         q = q.where(
             or_(
-                func.json_extract_path_text(JobLog.request_data, "global", "instancia") == instancia,
-                cast(JobLog.request_data["global"]["instancia"], String).ilike(f"%{instancia}%")
+                JobLog.church_name.ilike(f"%{instancia}%"),
+                cast(JobLog.request_data, String).ilike(f"%{instancia}%")
             )
         )
-
-    # Count total matching
-    count_q = select(func.count()).select_from(q.subquery())
-    total_res = await db.execute(count_q)
-    total = total_res.scalar_one() or 0
 
     # Fetch rows
     q = q.order_by(desc(JobLog.created_at)).offset(skip).limit(limit)
@@ -179,7 +167,7 @@ async def list_system_jobs(
             "completed_at": log.completed_at.isoformat() if log.completed_at else None,
         })
 
-    return {"items": items, "count": len(items), "total": total, "limit": limit, "skip": skip}
+    return {"items": items, "count": len(items), "limit": limit, "skip": skip}
 
 
 @admin_router.get("/churches", summary="Lista de igrejas ativas e estatísticas globais")
@@ -230,44 +218,36 @@ async def get_church_summary(
     """
     condition = _build_church_filter(church_identifier)
 
-    # Total attendances
-    total_q = await db.execute(select(func.count(JobLog.id)).where(condition))
-    total_attendances = total_q.scalar_one() or 0
+    # Executa apenas 1 query agregada rápida
+    q = select(
+        func.count(JobLog.id).label("total_attendances"),
+        func.count(func.distinct(JobLog.member_name)).label("unique_members"),
+        func.count(func.nullif(JobLog.status == "completed", False)).label("successful"),
+        func.max(JobLog.created_at).label("last_active"),
+        func.max(JobLog.church_name).label("church_name"),
+    ).where(condition)
 
-    if total_attendances == 0:
+    res = await db.execute(q)
+    row = res.first()
+
+    total_attendances = row.total_attendances if row else 0
+
+    if not row or total_attendances == 0:
         return {
             "church_identifier": church_identifier,
             "found": False,
             "message": f"Nenhum registro encontrado para a igreja '{church_identifier}'."
         }
 
-    # Unique members
-    members_q = await db.execute(select(func.count(func.distinct(JobLog.member_name))).where(condition))
-    unique_members = members_q.scalar_one() or 0
-
-    # Completed vs Failed
-    comp_q = await db.execute(select(func.count(JobLog.id)).where(and_(condition, JobLog.status == "completed")))
-    completed = comp_q.scalar_one() or 0
-
-    # Last active timestamp & Church name
-    info_q = await db.execute(
-        select(JobLog.church_name, func.max(JobLog.created_at))
-        .where(condition)
-        .group_by(JobLog.church_name)
-    )
-    info_row = info_q.first()
-    resolved_church_name = info_row[0] if info_row else church_identifier
-    last_active = info_row[1].isoformat() if info_row and info_row[1] else None
-
     return {
         "church_identifier": church_identifier,
-        "resolved_church_name": resolved_church_name,
+        "resolved_church_name": row.church_name or church_identifier,
         "found": True,
         "metrics": {
             "total_attendances": total_attendances,
-            "unique_members_attended": unique_members,
-            "successful_attendances": completed,
-            "last_attendance_at": last_active,
+            "unique_members_attended": row.unique_members or 0,
+            "successful_attendances": row.successful or 0,
+            "last_attendance_at": row.last_active.isoformat() if row.last_active else None,
         }
     }
 
@@ -285,12 +265,7 @@ async def list_church_attendances(
     """
     condition = _build_church_filter(church_identifier)
 
-    # Count total
-    count_q = select(func.count(JobLog.id)).where(condition)
-    total_res = await db.execute(count_q)
-    total = total_res.scalar_one() or 0
-
-    # Fetch attendances
+    # Fetch attendances in 1 fast query
     q = (
         select(JobLog)
         .where(condition)
@@ -335,7 +310,6 @@ async def list_church_attendances(
         "church_identifier": church_identifier,
         "attendances": attendances,
         "count": len(attendances),
-        "total": total,
         "limit": limit,
         "skip": skip
     }
@@ -421,11 +395,6 @@ async def list_prayer_requests(
 
     condition = and_(base_condition, or_(*prayer_conditions))
 
-    # Count matching
-    count_q = select(func.count(JobLog.id)).where(condition)
-    total_res = await db.execute(count_q)
-    total = total_res.scalar_one() or 0
-
     # Fetch rows
     q = select(JobLog).where(condition).order_by(desc(JobLog.created_at)).offset(skip).limit(limit)
     res = await db.execute(q)
@@ -451,7 +420,6 @@ async def list_prayer_requests(
         "church_identifier": church_identifier,
         "prayer_requests": requests,
         "count": len(requests),
-        "total": total,
         "limit": limit,
         "skip": skip
     }
