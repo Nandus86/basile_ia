@@ -292,7 +292,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         self._agent_cache[agent_id] = config
         return config
     
-    def create_llm(self, agent_config: Dict[str, Any]) -> ChatOpenAI:
+    def create_llm(self, agent_config: Dict[str, Any], session_id: Optional[str] = None) -> Any:
         """Create LLM instance for an agent, routing to the correct provider.
         Supports reasoning models (O1, O3, DeepSeek R1) with special parameters.
         Supports Qwen3 sampling parameters (top_p, top_k, min_p, etc).
@@ -353,6 +353,33 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         provider = agent_config.get("provider")
 
         if provider and provider.is_active:
+            # Check if it's Google Gemini for native Context Caching support
+            is_google = False
+            if provider.base_url and "generativelanguage.googleapis" in provider.base_url:
+                is_google = True
+            elif provider.name and "gemini" in provider.name.lower() or "google" in provider.name.lower():
+                is_google = True
+                
+            if is_google:
+                from app.services.gemini_cache_service import CachedChatGoogleGenerativeAI
+                logger.info(f"[AgentFactory] 🌐 Using native Google Generative AI for model '{model_id}'")
+                
+                # Check for cached model id override (used internally by caching service)
+                if "gemini_cache_id" in extra_config and extra_config["gemini_cache_id"]:
+                    model_id = extra_config["gemini_cache_id"]
+                    logger.info(f"[AgentFactory] ⚡ Using cached model ID: {model_id}")
+                
+                # Instantiate Cached wrapper
+                llm_google = CachedChatGoogleGenerativeAI(
+                    model=model_id,
+                    api_key=provider.api_key,
+                    temperature=kwargs.get("temperature", 0.7),
+                    max_tokens=kwargs.get("max_tokens", 2048)
+                )
+                llm_google._gemini_session_id = session_id
+                llm_google._gemini_agent_id = str(agent_config.get("id", ""))
+                return llm_google
+
             # Custom AI Provider (Ollama, Anthropic, etc.)
             kwargs["api_key"] = provider.api_key
             if provider.base_url:
@@ -578,7 +605,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         """
         from app.schemas.structured_output import format_context_data_for_prompt
         
-        llm = self.create_llm(agent_config)
+        session_id = context_data.get("session_id") if context_data else None
+        llm = self.create_llm(agent_config, session_id=session_id)
         run_config = self.get_run_config(agent_config, context_data)
 
         resolved_execution_mode = (
@@ -1085,7 +1113,8 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         from langchain_core.tools import StructuredTool
         from typing import Annotated, Sequence
 
-        llm = self.create_llm(agent_config)
+        session_id = context_data.get("session_id") if context_data else None
+        llm = self.create_llm(agent_config, session_id=session_id)
         run_config = self.get_run_config(agent_config, context_data)
 
         resolved_execution_mode = (

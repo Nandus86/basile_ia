@@ -170,8 +170,11 @@ async def run_swarm(
             "provider": provider,
             "config": config_dict,
             "resilience": resilience,
+            "id": member.id,
         }
-        llm = factory.create_llm(mini_config)
+        
+        session_id = context_data.get("session_id") if context_data else None
+        llm = factory.create_llm(mini_config, session_id=session_id)
         
         # Create compiled ReAct agent for this node
         node_agent = create_react_agent(
