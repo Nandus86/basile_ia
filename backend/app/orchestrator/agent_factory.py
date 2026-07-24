@@ -354,20 +354,20 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         
         # 1. Checar se é Google Gemini (nativamente, com ou sem provider configurado)
         is_google = False
-        if provider and provider.is_active:
-            if provider.base_url and "generativelanguage.googleapis" in provider.base_url:
+        if provider and hasattr(provider, "is_active") and provider.is_active:
+            if hasattr(provider, "base_url") and provider.base_url and "generativelanguage.googleapis" in provider.base_url:
                 is_google = True
-            elif provider.name and "gemini" in provider.name.lower() or "google" in provider.name.lower():
+            elif hasattr(provider, "name") and provider.name and ("gemini" in provider.name.lower() or "google" in provider.name.lower()):
                 is_google = True
-        elif "gemini" in model_id.lower() and settings.GOOGLE_API_KEY:
-            # Fallback dinâmico: se o nome do modelo tem gemini e temos a chave local
+        elif "gemini" in model_id.lower() and "/" not in model_id and settings.GOOGLE_API_KEY:
+            # Fallback dinâmico: se o nome do modelo tem gemini (e NÃO tem '/' que indica OpenRouter)
             is_google = True
 
         if is_google:
             from app.services.gemini_cache_service import CachedChatGoogleGenerativeAI
             
             # Pega a API key do provider ou das variáveis de ambiente
-            google_api_key = provider.api_key if provider and provider.is_active else settings.GOOGLE_API_KEY
+            google_api_key = provider.api_key if provider and hasattr(provider, "is_active") and provider.is_active else settings.GOOGLE_API_KEY
             logger.info(f"[AgentFactory] 🌐 Using native Google Generative AI for model '{model_id}'")
             
             # Check for cached model id override (used internally by caching service)
@@ -387,10 +387,10 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             return llm_google
 
         # 2. Lógica para Custom Providers
-        if provider and provider.is_active:
+        if provider and hasattr(provider, "is_active") and provider.is_active:
             # Custom AI Provider (Ollama, Anthropic, etc.)
-            kwargs["api_key"] = provider.api_key
-            if provider.base_url:
+            kwargs["api_key"] = getattr(provider, "api_key", "")
+            if hasattr(provider, "base_url") and provider.base_url:
                 base_url = provider.base_url
                 # Heurística: Se não tem /v1 e parece ser uma URL de base, adiciona /v1
                 # Isso resolve o problema comum de 404 no Ollama (que exige /v1 para compatibilidade OpenAI)
@@ -400,7 +400,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 kwargs["base_url"] = base_url
                 logger.info(f"[AgentFactory] 🌐 Using custom provider '{provider.name}' at '{base_url}' for model '{model_id}'")
             else:
-                logger.info(f"[AgentFactory] 🌐 Using custom provider '{provider.name}' (no base_url) for model '{model_id}'")
+                logger.info(f"[AgentFactory] 🌐 Using custom provider '{getattr(provider, 'name', '')}' (no base_url) for model '{model_id}'")
         else:
             # 3. Fallback para OpenRouter / OpenAI
             openrouter_specials = ["sambanova", "groq"]
