@@ -2790,6 +2790,7 @@ const activeProvider = ref('openai')
 const providerOptions = computed(() => {
   const options = [
     { title: '🟢 OpenAI', value: 'openai' },
+    { title: '🟡 Google Gemini', value: 'google' },
     { title: '🔵 OpenRouter', value: 'openrouter' }
   ]
   
@@ -3197,7 +3198,9 @@ async function fetchModels() {
       { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', context_length: 128000 },
       { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai', context_length: 128000 },
       { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai', context_length: 128000 },
-      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'openai', context_length: 16385 }
+      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'openai', context_length: 16385 },
+      { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'google', context_length: 1048576 },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'google', context_length: 2097152 }
     ]
   } finally {
     loadingModels.value = false

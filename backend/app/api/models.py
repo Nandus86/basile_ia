@@ -155,6 +155,22 @@ async def fetch_openrouter_models() -> List[Dict[str, Any]]:
         return []
 
 
+async def fetch_google_models() -> List[Dict[str, Any]]:
+    """Fetch popular Google Gemini models"""
+    if not settings.GOOGLE_API_KEY:
+        return []
+    
+    # Retornar uma lista fixa dos modelos mais usados, pois a API REST exige chamadas específicas
+    # e a lista de modelos suportados por Context Caching é bem definida.
+    return [
+        {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash", "provider": "google", "context_length": 1048576},
+        {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "provider": "google", "context_length": 2097152},
+        {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "provider": "google", "context_length": 1048576},
+        {"id": "gemini-2.0-flash-lite", "name": "Gemini 2.0 Flash Lite", "provider": "google", "context_length": 1048576},
+        {"id": "gemini-2.0-pro-exp", "name": "Gemini 2.0 Pro Exp", "provider": "google", "context_length": 2097152},
+    ]
+
+
 async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
     """Get combined list of models from all providers, with caching"""
     global _models_cache, _cache_timestamp
@@ -169,6 +185,10 @@ async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
     if settings.OPENAI_API_KEY:
         openai_models = await fetch_openai_models()
         all_models.extend(openai_models)
+        
+    if settings.GOOGLE_API_KEY:
+        google_models = await fetch_google_models()
+        all_models.extend(google_models)
     
     # Fetch OpenRouter models
     openrouter_models = await fetch_openrouter_models()
@@ -213,6 +233,15 @@ async def list_providers():
             "configured": True,
             "icon": "mdi-creation",
             "color": "#10a37f"
+        })
+        
+    if settings.GOOGLE_API_KEY:
+        providers.append({
+            "id": "google",
+            "name": "Google Gemini",
+            "configured": True,
+            "icon": "mdi-google",
+            "color": "#fbbc04"
         })
     
     if settings.OPENROUTER_API_KEY:
