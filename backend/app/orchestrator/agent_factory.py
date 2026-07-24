@@ -351,35 +351,43 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         # Determina o provedor e as credenciais
         provider = agent_config.get("provider")
-
+        
+        # 1. Checar se é Google Gemini (nativamente, com ou sem provider configurado)
+        is_google = False
         if provider and provider.is_active:
-            # Check if it's Google Gemini for native Context Caching support
-            is_google = False
             if provider.base_url and "generativelanguage.googleapis" in provider.base_url:
                 is_google = True
             elif provider.name and "gemini" in provider.name.lower() or "google" in provider.name.lower():
                 is_google = True
-                
-            if is_google:
-                from app.services.gemini_cache_service import CachedChatGoogleGenerativeAI
-                logger.info(f"[AgentFactory] 🌐 Using native Google Generative AI for model '{model_id}'")
-                
-                # Check for cached model id override (used internally by caching service)
-                if "gemini_cache_id" in extra_config and extra_config["gemini_cache_id"]:
-                    model_id = extra_config["gemini_cache_id"]
-                    logger.info(f"[AgentFactory] ⚡ Using cached model ID: {model_id}")
-                
-                # Instantiate Cached wrapper
-                llm_google = CachedChatGoogleGenerativeAI(
-                    model=model_id,
-                    api_key=provider.api_key,
-                    temperature=kwargs.get("temperature", 0.7),
-                    max_tokens=kwargs.get("max_tokens", 2048)
-                )
-                llm_google._gemini_session_id = session_id
-                llm_google._gemini_agent_id = str(agent_config.get("id", ""))
-                return llm_google
+        elif "gemini" in model_id.lower() and settings.GOOGLE_API_KEY:
+            # Fallback dinâmico: se o nome do modelo tem gemini e temos a chave local
+            is_google = True
 
+        if is_google:
+            from app.services.gemini_cache_service import CachedChatGoogleGenerativeAI
+            
+            # Pega a API key do provider ou das variáveis de ambiente
+            google_api_key = provider.api_key if provider and provider.is_active else settings.GOOGLE_API_KEY
+            logger.info(f"[AgentFactory] 🌐 Using native Google Generative AI for model '{model_id}'")
+            
+            # Check for cached model id override (used internally by caching service)
+            if "gemini_cache_id" in extra_config and extra_config["gemini_cache_id"]:
+                model_id = extra_config["gemini_cache_id"]
+                logger.info(f"[AgentFactory] ⚡ Using cached model ID: {model_id}")
+            
+            # Instantiate Cached wrapper
+            llm_google = CachedChatGoogleGenerativeAI(
+                model=model_id,
+                api_key=google_api_key,
+                temperature=kwargs.get("temperature", 0.7),
+                max_tokens=kwargs.get("max_tokens", 2048)
+            )
+            llm_google._gemini_session_id = session_id
+            llm_google._gemini_agent_id = str(agent_config.get("id", ""))
+            return llm_google
+
+        # 2. Lógica para Custom Providers
+        if provider and provider.is_active:
             # Custom AI Provider (Ollama, Anthropic, etc.)
             kwargs["api_key"] = provider.api_key
             if provider.base_url:
@@ -394,7 +402,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             else:
                 logger.info(f"[AgentFactory] 🌐 Using custom provider '{provider.name}' (no base_url) for model '{model_id}'")
         else:
-            # Fallback para lógica padrão (OpenRouter/OpenAI)
+            # 3. Fallback para OpenRouter / OpenAI
             openrouter_specials = ["sambanova", "groq"]
             is_openrouter = "/" in model_id or model_id in openrouter_specials
 
