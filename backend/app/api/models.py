@@ -156,19 +156,55 @@ async def fetch_openrouter_models() -> List[Dict[str, Any]]:
 
 
 async def fetch_google_models() -> List[Dict[str, Any]]:
-    """Fetch popular Google Gemini models"""
+    """Fetch available models dynamically from Google Generative Language API"""
     if not settings.GOOGLE_API_KEY:
         return []
     
-    # Retornar uma lista fixa dos modelos mais usados, pois a API REST exige chamadas específicas
-    # e a lista de modelos suportados por Context Caching é bem definida.
-    return [
-        {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash", "provider": "google", "context_length": 1048576},
-        {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "provider": "google", "context_length": 2097152},
-        {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash", "provider": "google", "context_length": 1048576},
-        {"id": "gemini-2.0-flash-lite", "name": "Gemini 2.0 Flash Lite", "provider": "google", "context_length": 1048576},
-        {"id": "gemini-2.0-pro-exp", "name": "Gemini 2.0 Pro Exp", "provider": "google", "context_length": 2097152},
-    ]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={settings.GOOGLE_API_KEY}"
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            raw_models = data.get("models", [])
+            logger.info(f"Google API returned {len(raw_models)} models")
+            
+            models = []
+            for m in raw_models:
+                # API returns models as "models/gemini-1.5-flash", we just want "gemini-1.5-flash"
+                full_name = m.get("name", "")
+                model_id = full_name.replace("models/", "") if full_name.startswith("models/") else full_name
+                
+                # Optionally only include generateContent models
+                supported_methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" not in supported_methods:
+                    continue
+                
+                display_name = m.get("displayName", model_id)
+                input_limit = m.get("inputTokenLimit", 1048576)
+                
+                models.append({
+                    "id": model_id,
+                    "name": display_name,
+                    "provider": "google",
+                    "context_length": input_limit,
+                })
+            
+            # Sort models alphabetically
+            models.sort(key=lambda x: x["name"])
+            return models
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch Google models dynamically: {e}")
+        # Fallback se falhar
+        return [
+            {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash (Fallback)", "provider": "google", "context_length": 1048576},
+            {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro (Fallback)", "provider": "google", "context_length": 2097152},
+            {"id": "gemini-2.0-flash", "name": "Gemini 2.0 Flash (Fallback)", "provider": "google", "context_length": 1048576},
+            {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash (Fallback)", "provider": "google", "context_length": 1048576},
+        ]
 
 
 async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
