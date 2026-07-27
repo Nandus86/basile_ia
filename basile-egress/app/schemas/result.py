@@ -42,7 +42,9 @@ class ResultInput(BaseModel):
         if isinstance(data, dict):
             if not data.get("job_id"):
                 data["job_id"] = str(uuid.uuid4())
-            if "response" not in data:
+            
+            resp = data.get("response")
+            if "response" not in data or not isinstance(resp, dict):
                 known_fields = {
                     "job_id", "output_url", "pipeline_path", "output_method", 
                     "agent_used", "session_id", "input_data", "output_schema", 
@@ -54,6 +56,11 @@ class ResultInput(BaseModel):
                 if "job_id" in data:
                     response_data["job_id"] = data["job_id"]
                     
+                if "response" in data and not isinstance(resp, dict):
+                    response_data["response"] = resp
+                    if not response_data.get("result") and isinstance(resp, str):
+                        response_data["result"] = resp
+                        
                 new_data["response"] = response_data
                 return new_data
         return data

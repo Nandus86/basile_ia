@@ -65,7 +65,11 @@ def transform_output(
             set_nested_value(transformed, external_field, value)
             
     if "result" not in transformed and "message" not in transformed:
-        message_value = get_nested_value(response, "result") or get_nested_value(response, "message")
+        message_value = (
+            get_nested_value(response, "result") or 
+            get_nested_value(response, "message") or 
+            get_nested_value(response, "response")
+        )
         if message_value is not None:
             transformed["result"] = message_value
         elif message_required:
