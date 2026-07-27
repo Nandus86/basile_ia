@@ -159,6 +159,17 @@ async def receive_result(
         except Exception as e:
             logger.error(f"[Workflow Trigger] Exception while executing workflow {result.workflow_id}: {str(e)}", exc_info=True)
     
+    if not result.output_url or not str(result.output_url).strip():
+        logger.info(f"[Egress] No output_url provided or output_url is empty for job {result.job_id}. Skipping webhook delivery.")
+        await save_result_status(result.job_id, "sent", 1, None, result.model_dump(mode='json'), transformed)
+        return ResultOutput(
+            success=True,
+            job_id=result.job_id,
+            message="Result processed successfully (no webhook output_url configured)",
+            attempts=1,
+            status="sent"
+        )
+    
     retry_config = result.retry_config or {
         "maxRetries": 3,
         "delays": [1000, 5000, 15000]
@@ -218,6 +229,17 @@ async def receive_result_sync(
         await save_result_status(result.job_id, "failed", attempts=0, last_error=str(ve), input_payload=result.model_dump(mode='json'))
         raise HTTPException(status_code=422, detail=str(ve))
     
+    if not result.output_url or not str(result.output_url).strip():
+        logger.info(f"[Egress] No output_url provided or output_url is empty for job {result.job_id}. Skipping webhook delivery.")
+        await save_result_status(result.job_id, "sent", 1, None, result.model_dump(mode='json'), transformed)
+        return ResultOutput(
+            success=True,
+            job_id=result.job_id,
+            message="Result processed successfully (no webhook output_url configured)",
+            attempts=1,
+            status="sent"
+        )
+
     success, error_msg = await webhook_sender.send(
         result.output_url,
         transformed,

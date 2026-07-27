@@ -12,7 +12,7 @@ class EgressPipelineBase(BaseModel):
     path: str
     is_active: bool = True
     description: Optional[str] = None
-    output_url: str
+    output_url: Optional[str] = None
     output_method: str = "POST"
     output_schema: Optional[Dict[str, Any]] = None
     output_headers: Optional[Dict[str, Any]] = None
