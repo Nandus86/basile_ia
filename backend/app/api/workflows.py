@@ -194,6 +194,7 @@ async def execute_workflow(
     """
     from app.services.workflow_engine import WorkflowEngine
 
+    logger.info(f"[Workflows API] Received execute request for workflow_id: {workflow_id}")
     engine = WorkflowEngine(db)
 
     try:

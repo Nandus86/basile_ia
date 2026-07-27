@@ -123,7 +123,8 @@ async def receive_result(
         try:
             import httpx
             from app.config import settings
-            wf_url = f"{settings.BASILE_API_URL}/api/workflows/{result.workflow_id}/execute"
+            base_url = settings.BASILE_API_URL.rstrip('/')
+            wf_url = f"{base_url}/api/workflows/{result.workflow_id}/execute"
             wf_payload = {
                 "trigger_data": {
                     "egress_data": transformed,
@@ -131,18 +132,32 @@ async def receive_result(
                 },
                 "async_mode": False
             }
-            logger.info(f"Triggering workflow {result.workflow_id} for job {result.job_id}")
+            logger.info(f"[Workflow Trigger] Triggering workflow {result.workflow_id} for job {result.job_id}")
+            logger.info(f"[Workflow Trigger] Request URL: {wf_url}")
+            logger.info(f"[Workflow Trigger] Request Payload: {wf_payload}")
+            
             async with httpx.AsyncClient(timeout=60.0) as client:
                 wf_res = await client.post(wf_url, json=wf_payload)
+                
+                # If 404 on /api/workflows/, attempt fallback to /workflows/
+                if wf_res.status_code == 404 and "/api/workflows/" in wf_url:
+                    fallback_url = wf_url.replace("/api/workflows/", "/workflows/")
+                    logger.warning(f"[Workflow Trigger] Received 404 on {wf_url}. Trying fallback URL: {fallback_url}")
+                    wf_res = await client.post(fallback_url, json=wf_payload)
+                    wf_url = fallback_url
+                
+                logger.info(f"[Workflow Trigger] Response Status: {wf_res.status_code}")
+                logger.info(f"[Workflow Trigger] Response Body: {wf_res.text}")
+                
                 if wf_res.status_code == 200:
                     wf_data = wf_res.json()
                     if "final_result" in wf_data and wf_data["final_result"]:
                         transformed = wf_data["final_result"]
-                        logger.info(f"Workflow {result.workflow_id} completed, transformed payload.")
+                        logger.info(f"[Workflow Trigger] Workflow {result.workflow_id} completed successfully, updated transformed payload.")
                 else:
-                    logger.error(f"Workflow {result.workflow_id} failed: {wf_res.status_code} - {wf_res.text}")
+                    logger.error(f"[Workflow Trigger] Workflow {result.workflow_id} failed on {wf_url}: Status {wf_res.status_code} - Response: {wf_res.text}")
         except Exception as e:
-            logger.error(f"Error executing workflow {result.workflow_id}: {str(e)}")
+            logger.error(f"[Workflow Trigger] Exception while executing workflow {result.workflow_id}: {str(e)}", exc_info=True)
     
     retry_config = result.retry_config or {
         "maxRetries": 3,
