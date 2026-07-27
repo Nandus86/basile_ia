@@ -438,6 +438,27 @@ def _coerce_numeric(val: Any) -> Optional[float]:
     return None
 
 
+def _parse_datetime(val: Any) -> Optional[datetime]:
+    if isinstance(val, datetime):
+        return val
+    if val is None:
+        return None
+    try:
+        if isinstance(val, (int, float)):
+            return datetime.fromtimestamp(val)
+        val_str = str(val).strip()
+        if not val_str:
+            return None
+        val_str_iso = val_str.replace('Z', '+00:00')
+        return datetime.fromisoformat(val_str_iso)
+    except Exception:
+        try:
+            from dateutil import parser as date_parser
+            return date_parser.parse(str(val))
+        except Exception:
+            return None
+
+
 def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
     """Evaluate a comparison between two values."""
     op = operator.lower().strip()
@@ -450,24 +471,89 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
     str_a = str(typed_a) if typed_a is not None else ''
     str_b = str(typed_b) if typed_b is not None else ''
 
+    # 1. State / Existence Operators
+    if op in ('exists',):
+        return typed_a is not None and str_a != ''
+    if op in ('does_not_exist', 'not_exists'):
+        return typed_a is None or str_a == ''
+    if op in ('is_empty',):
+        return typed_a is None or str_a == '' or typed_a == [] or typed_a == {}
+    if op in ('is_not_empty', 'not_empty'):
+        return not (typed_a is None or str_a == '' or typed_a == [] or typed_a == {})
+    if op in ('is_true', 'true'):
+        if isinstance(typed_a, bool):
+            return typed_a is True
+        return str_a.lower() in ('true', '1', 'yes')
+    if op in ('is_false', 'false'):
+        if isinstance(typed_a, bool):
+            return typed_a is False
+        return str_a.lower() in ('false', '0', 'no')
+
+    # 2. Basic Equality / Text Operators
     if op in ('equals', 'eq', '=='):
         return typed_a == typed_b
     if op in ('not_equals', 'neq', '!='):
         return typed_a != typed_b
     if op in ('contains',):
         return str_b in str_a
-    if op in ('not_contains',):
+    if op in ('not_contains', 'does_not_contain'):
         return str_b not in str_a
     if op in ('starts_with',):
         return str_a.startswith(str_b)
+    if op in ('not_starts_with', 'does_not_start_with'):
+        return not str_a.startswith(str_b)
     if op in ('ends_with',):
         return str_a.endswith(str_b)
-    if op in ('exists',):
-        return typed_a is not None and str_a != ''
-    if op in ('is_empty', 'not_exists'):
-        return typed_a is None or str_a == '' or typed_a == [] or typed_a == {}
+    if op in ('not_ends_with', 'does_not_end_with'):
+        return not str_a.endswith(str_b)
 
-    # Numeric comparisons
+    # 3. Regex Operators
+    if op in ('matches_regex', 'regex_match'):
+        try:
+            return bool(re.search(str_b, str_a))
+        except Exception as e:
+            logger.warning(f"[WorkflowEngine] Invalid regex '{str_b}': {e}")
+            return False
+    if op in ('not_matches_regex', 'does_not_match_regex'):
+        try:
+            return not bool(re.search(str_b, str_a))
+        except Exception as e:
+            logger.warning(f"[WorkflowEngine] Invalid regex '{str_b}': {e}")
+            return False
+
+    # 4. Date / Time Operators
+    if op in ('is_after', 'after', 'is_before', 'before', 'is_after_or_equal', 'is_before_or_equal'):
+        dt_a = _parse_datetime(typed_a)
+        dt_b = _parse_datetime(typed_b)
+        if dt_a is not None and dt_b is not None:
+            if op in ('is_after', 'after'):
+                return dt_a > dt_b
+            if op in ('is_before', 'before'):
+                return dt_a < dt_b
+            if op in ('is_after_or_equal',):
+                return dt_a >= dt_b
+            if op in ('is_before_or_equal',):
+                return dt_a <= dt_b
+
+    # 5. Length / Count Operators
+    if op.startswith('length_'):
+        len_a = len(typed_a) if hasattr(typed_a, '__len__') else len(str_a)
+        num_b = _coerce_numeric(typed_b)
+        if num_b is not None:
+            if op in ('length_equals', 'length_eq'):
+                return len_a == num_b
+            if op in ('length_not_equals', 'length_neq'):
+                return len_a != num_b
+            if op in ('length_greater_than', 'length_gt'):
+                return len_a > num_b
+            if op in ('length_less_than', 'length_lt'):
+                return len_a < num_b
+            if op in ('length_greater_than_or_equal', 'length_gte'):
+                return len_a >= num_b
+            if op in ('length_less_than_or_equal', 'length_lte'):
+                return len_a <= num_b
+
+    # 6. Numeric Comparisons
     num_a = _coerce_numeric(typed_a)
     num_b = _coerce_numeric(typed_b)
     if num_a is not None and num_b is not None:
@@ -485,6 +571,10 @@ def evaluate_condition(value_a: Any, operator: str, value_b: Any) -> bool:
         return str_a > str_b
     if op in ('less_than', 'lt', '<'):
         return str_a < str_b
+    if op in ('greater_than_or_equal', 'gte', '>='):
+        return str_a >= str_b
+    if op in ('less_than_or_equal', 'lte', '<='):
+        return str_a <= str_b
 
     logger.warning(f"[WorkflowEngine] Unknown operator: {operator}")
     return False

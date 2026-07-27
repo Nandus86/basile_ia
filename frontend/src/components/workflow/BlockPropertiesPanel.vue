@@ -287,7 +287,7 @@
           @update:model-value="emitUpdate"
         ></v-select>
         <v-text-field
-          v-if="!['exists','is_empty'].includes(config.operator)"
+          v-if="!isUnaryOperator(config.operator)"
           v-model="config.value_b"
           label="Valor B"
           placeholder="0"
@@ -337,7 +337,7 @@
           </div>
           <v-text-field v-model="rule.value_a" label="Valor A" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
           <v-select v-model="rule.operator" :items="operators" label="Operador" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-select>
-          <v-text-field v-model="rule.value_b" label="Valor B" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
+          <v-text-field v-if="!isUnaryOperator(rule.operator)" v-model="rule.value_b" label="Valor B" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
         </div>
         <v-btn size="small" variant="tonal" color="primary" @click="addRule" class="mb-3">
           <v-icon start size="16">mdi-plus</v-icon> Adicionar Regra
@@ -349,7 +349,7 @@
         <v-text-field v-model="config.source" label="Array de origem" placeholder="{{ $http_members.data.members }}" variant="outlined" density="compact" class="mb-3" hint="Template do array" persistent-hint @update:model-value="emitUpdate"></v-text-field>
         <v-text-field v-model="config.filter_field" label="Campo para filtrar" variant="outlined" density="compact" class="mb-3" hide-details @update:model-value="emitUpdate"></v-text-field>
         <v-select v-model="config.filter_operator" :items="operators" label="Operador" variant="outlined" density="compact" class="mb-3" hide-details @update:model-value="emitUpdate"></v-select>
-        <v-text-field v-model="config.filter_value" label="Valor do filtro" variant="outlined" density="compact" class="mb-3" hide-details @update:model-value="emitUpdate"></v-text-field>
+        <v-text-field v-if="!isUnaryOperator(config.filter_operator)" v-model="config.filter_value" label="Valor do filtro" variant="outlined" density="compact" class="mb-3" hide-details @update:model-value="emitUpdate"></v-text-field>
       </template>
 
       <!-- ═══ AGENT ═══ -->
@@ -1353,19 +1353,53 @@ function onMcpSelected(id) {
   emitUpdate()
 }
 
+const UNARY_OPERATORS = ['exists', 'does_not_exist', 'not_exists', 'is_empty', 'is_not_empty', 'is_true', 'is_false']
+function isUnaryOperator(op) {
+  return UNARY_OPERATORS.includes(op)
+}
+
 const operators = [
+  // Existência / Estado
+  { title: 'Existe', value: 'exists' },
+  { title: 'Não existe', value: 'does_not_exist' },
+  { title: 'Está vazio', value: 'is_empty' },
+  { title: 'Não está vazio', value: 'is_not_empty' },
+  { title: 'É verdadeiro (True)', value: 'is_true' },
+  { title: 'É falso (False)', value: 'is_false' },
+
+  // Comparação Básica / Texto
   { title: 'Igual a', value: 'equals' },
   { title: 'Diferente de', value: 'not_equals' },
+  { title: 'Contém', value: 'contains' },
+  { title: 'Não contém', value: 'not_contains' },
+  { title: 'Começa com', value: 'starts_with' },
+  { title: 'Não começa com', value: 'not_starts_with' },
+  { title: 'Termina com', value: 'ends_with' },
+  { title: 'Não termina com', value: 'not_ends_with' },
+
+  // Expressão Regular (Regex)
+  { title: 'Corresponde à Regex', value: 'matches_regex' },
+  { title: 'Não corresponde à Regex', value: 'not_matches_regex' },
+
+  // Números
   { title: 'Maior que', value: 'greater_than' },
   { title: 'Maior ou igual', value: 'greater_than_or_equal' },
   { title: 'Menor que', value: 'less_than' },
   { title: 'Menor ou igual', value: 'less_than_or_equal' },
-  { title: 'Contém', value: 'contains' },
-  { title: 'Não contém', value: 'not_contains' },
-  { title: 'Começa com', value: 'starts_with' },
-  { title: 'Termina com', value: 'ends_with' },
-  { title: 'Existe', value: 'exists' },
-  { title: 'Está vazio', value: 'is_empty' },
+
+  // Data e Hora
+  { title: 'É depois de (Data)', value: 'is_after' },
+  { title: 'É antes de (Data)', value: 'is_before' },
+  { title: 'É depois ou igual a (Data)', value: 'is_after_or_equal' },
+  { title: 'É antes ou igual a (Data)', value: 'is_before_or_equal' },
+
+  // Tamanho / Comprimento (Length)
+  { title: 'Tamanho igual a', value: 'length_equals' },
+  { title: 'Tamanho diferente de', value: 'length_not_equals' },
+  { title: 'Tamanho maior que', value: 'length_greater_than' },
+  { title: 'Tamanho menor que', value: 'length_less_than' },
+  { title: 'Tamanho maior ou igual a', value: 'length_greater_than_or_equal' },
+  { title: 'Tamanho menor ou igual a', value: 'length_less_than_or_equal' },
 ]
 
 // JSON field helpers
