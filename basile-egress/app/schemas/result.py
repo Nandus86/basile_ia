@@ -7,6 +7,9 @@ from uuid import UUID
 from datetime import datetime
 
 
+import uuid
+
+
 class OutputSchema(BaseModel):
     messageRequired: bool = True
     sessionIdField: str = "session_id"
@@ -20,7 +23,7 @@ class RetryConfig(BaseModel):
 
 
 class ResultInput(BaseModel):
-    job_id: str
+    job_id: Optional[str] = Field(default_factory=lambda: str(uuid.uuid4()))
     output_url: Optional[str] = None
     pipeline_path: Optional[str] = None
     workflow_id: Optional[str] = None
@@ -37,6 +40,8 @@ class ResultInput(BaseModel):
     @classmethod
     def wrap_raw_worker_payload(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            if not data.get("job_id"):
+                data["job_id"] = str(uuid.uuid4())
             if "response" not in data:
                 known_fields = {
                     "job_id", "output_url", "pipeline_path", "output_method", 
