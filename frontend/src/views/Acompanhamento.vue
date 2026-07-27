@@ -240,12 +240,40 @@
 
           <!-- Request -->
           <div class="d-flex align-center justify-space-between mb-2">
-            <h3 class="text-subtitle-2 font-weight-bold text-primary">Payload de Entrada (Request)</h3>
-            <v-btn size="x-small" variant="text" icon="mdi-content-copy" @click="copyToClipboard(selectedJob.request_data)"></v-btn>
+            <div class="d-flex align-center ga-2">
+              <h3 class="text-subtitle-2 font-weight-bold text-primary">Payload de Entrada (Request)</h3>
+              <v-chip v-if="isPayloadModified" size="x-small" color="warning" variant="flat">Editado</v-chip>
+            </div>
+            <div class="d-flex ga-1 align-center">
+              <v-btn
+                size="x-small"
+                :color="isEditingPayload ? 'warning' : 'primary'"
+                variant="tonal"
+                :prepend-icon="isEditingPayload ? 'mdi-eye' : 'mdi-pencil'"
+                @click="isEditingPayload = !isEditingPayload"
+              >
+                {{ isEditingPayload ? 'Visualizar' : 'Editar Payload' }}
+              </v-btn>
+              <v-btn size="x-small" variant="text" icon="mdi-content-copy" @click="copyToClipboard(editablePayloadText || selectedJob.request_data)"></v-btn>
+            </div>
           </div>
-          <v-sheet class="pa-4 rounded-lg overflow-auto code-sheet mb-4" max-height="250">
-            <pre class="text-caption">{{ formatJSON(selectedJob.request_data) }}</pre>
+          <v-textarea
+            v-if="isEditingPayload"
+            v-model="editablePayloadText"
+            variant="outlined"
+            density="compact"
+            rows="8"
+            auto-grow
+            style="font-family: monospace; font-size: 12px;"
+            class="mb-4"
+            placeholder="Insira o JSON de entrada..."
+            :error="payloadJsonError"
+            :error-messages="payloadJsonError ? 'JSON inválido' : ''"
+          ></v-textarea>
+          <v-sheet v-else class="pa-4 rounded-lg overflow-auto code-sheet mb-4" max-height="250">
+            <pre class="text-caption">{{ editablePayloadText || formatJSON(selectedJob.request_data) }}</pre>
           </v-sheet>
+
 
           <!-- Response -->
           <div class="d-flex align-center justify-space-between mb-2">
@@ -2125,6 +2153,30 @@ const dialog = ref(false)
 const selectedJob = ref(null)
 const snackbar = ref({ show: false, text: '', color: 'success' })
 
+// Editable payload state
+const editablePayloadText = ref('')
+const isEditingPayload = ref(false)
+const payloadJsonError = ref(false)
+const originalPayloadText = ref('')
+
+const isPayloadModified = computed(() => {
+  if (!editablePayloadText.value || !originalPayloadText.value) return false;
+  return editablePayloadText.value.trim() !== originalPayloadText.value.trim();
+})
+
+const getParsedEditablePayload = () => {
+  if (!editablePayloadText.value || !editablePayloadText.value.trim()) return null;
+  try {
+    payloadJsonError.value = false;
+    return JSON.parse(editablePayloadText.value);
+  } catch (e) {
+    payloadJsonError.value = true;
+    showSnackbar('Payload de Entrada contém um JSON inválido', 'error');
+    return false;
+  }
+}
+
+
 // Test mode references
 const testingJob = ref(false)
 const testResult = ref(null)
@@ -2318,6 +2370,8 @@ const openJobDetails = async (job) => {
   redoCallbackUrl.value = null;
   showHumanInput.value = false;
   humanText.value = '';
+  isEditingPayload.value = false;
+  payloadJsonError.value = false;
 
   try {
     const { data } = await axiosInstance.get(`/tracking/jobs/${job.job_id}`)
@@ -2326,6 +2380,22 @@ const openJobDetails = async (job) => {
     console.error('Erro ao carregar detalhes do job:', error)
     selectedJob.value = job
     showSnackbar('Falha ao carregar detalhes completos do job', 'error')
+  }
+
+  if (selectedJob.value?.request_data) {
+    try {
+      const formatted = typeof selectedJob.value.request_data === 'string'
+        ? JSON.stringify(JSON.parse(selectedJob.value.request_data), null, 2)
+        : JSON.stringify(selectedJob.value.request_data, null, 2);
+      editablePayloadText.value = formatted;
+      originalPayloadText.value = formatted;
+    } catch (e) {
+      editablePayloadText.value = String(selectedJob.value.request_data);
+      originalPayloadText.value = String(selectedJob.value.request_data);
+    }
+  } else {
+    editablePayloadText.value = '';
+    originalPayloadText.value = '';
   }
 
   dialog.value = true
@@ -2377,10 +2447,14 @@ async function viewMtmFromJob(item) {
 
 const testCurrentJob = async () => {
   if (!selectedJob.value) return;
+  const parsedPayload = getParsedEditablePayload();
+  if (parsedPayload === false) return;
+
   testingJob.value = true;
   testResult.value = null;
   try {
-    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/test`);
+    const body = isPayloadModified.value && parsedPayload ? { payload: parsedPayload } : {};
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/test`, body);
     showSnackbar(`Job testado em ${data.processing_time_ms}ms`, 'success');
     testResult.value = data.test_response;
   } catch (error) {
@@ -2396,12 +2470,16 @@ const testCurrentJob = async () => {
 
 const redoCurrentJob = async () => {
   if (!selectedJob.value) return;
+  const parsedPayload = getParsedEditablePayload();
+  if (parsedPayload === false) return;
+
   redoingJob.value = true;
   redoResult.value = null;
   redoNewJobId.value = null;
   redoCallbackUrl.value = null;
   try {
-    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/redo`);
+    const body = isPayloadModified.value && parsedPayload ? { payload: parsedPayload } : {};
+    const { data } = await axiosInstance.post(`/tracking/jobs/${selectedJob.value.job_id}/redo`, body);
     showSnackbar(`Job refeito em ${data.processing_time_ms}ms — Novo Job: ${data.new_job_id}`, 'success');
     redoResult.value = data.response_data;
     redoNewJobId.value = data.new_job_id;
@@ -2416,6 +2494,7 @@ const redoCurrentJob = async () => {
     redoingJob.value = false;
   }
 }
+
 
 const resendRedoResult = async () => {
   if (!redoNewJobId.value) return;

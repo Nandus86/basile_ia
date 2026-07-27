@@ -3,7 +3,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, desc
-from typing import List, Optional
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
 import json
 import asyncio
 import logging
@@ -15,6 +16,11 @@ from app.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class RedoJobRequest(BaseModel):
+    payload: Optional[Dict[str, Any]] = None
+
 
 
 @router.delete("/antibot/{session_id}")
@@ -209,9 +215,13 @@ async def get_tracking_stats(db: AsyncSession = Depends(get_db)):
     }
 
 @router.post("/jobs/{job_id}/test")
-async def test_job(job_id: str, db: AsyncSession = Depends(get_db)):
+async def test_job(
+    job_id: str, 
+    body: Optional[RedoJobRequest] = None,
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Re-test an existing job synchronously using its original payload,
+    Re-test an existing job synchronously using its original or overridden payload,
     without triggering the final output webhook (callback_url).
     """
     query = select(JobLog).where(JobLog.job_id == job_id)
@@ -221,7 +231,7 @@ async def test_job(job_id: str, db: AsyncSession = Depends(get_db)):
     if not job_log:
         raise HTTPException(status_code=404, detail="Job not found")
         
-    payload = job_log.request_data
+    payload = (body.payload if body and body.payload else None) or job_log.request_data
     if not payload:
         raise HTTPException(status_code=400, detail="Job has no request payload")
         
@@ -281,9 +291,13 @@ async def test_job(job_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to test job: {str(e)}")
 
 @router.post("/jobs/{job_id}/redo")
-async def redo_job(job_id: str, db: AsyncSession = Depends(get_db)):
+async def redo_job(
+    job_id: str, 
+    body: Optional[RedoJobRequest] = None,
+    db: AsyncSession = Depends(get_db)
+):
     """
-    Redo an existing job: takes the original request_data (input payload)
+    Redo an existing job: takes the original or overridden request_data (input payload)
     and reprocesses it as a brand-new job through the full pipeline.
     Creates a new JobLog entry with the new result.
     The callback_url is preserved so the new result can be resent.
@@ -295,9 +309,10 @@ async def redo_job(job_id: str, db: AsyncSession = Depends(get_db)):
     if not job_log:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    payload = job_log.request_data
+    payload = (body.payload if body and body.payload else None) or job_log.request_data
     if not payload:
         raise HTTPException(status_code=400, detail="Job has no request payload to redo")
+
 
     from app.worker.tasks import process_message_task
     import time
