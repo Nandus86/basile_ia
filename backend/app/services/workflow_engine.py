@@ -302,12 +302,38 @@ def parse_typed_value(val_str: str) -> Any:
     return val_str
 
 
-def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
-    """Resolve a single template expression (without {{ }})."""
-    if not expr.startswith('$'):
-        return expr  # literal
+def _resolve_single_token(expr: str, context: Dict[str, Any]) -> Any:
+    """Helper to resolve a single token: literal (string, bool, int) or context path ($path)."""
+    expr = expr.strip()
+    if not expr:
+        return None
 
-    # Strip leading $
+    # Handle optional chaining syntax ?. by converting to standard dot notation .
+    expr = expr.replace('?.', '.')
+
+    # Booleans and Null literals
+    if expr.lower() == 'true':
+        return True
+    if expr.lower() == 'false':
+        return False
+    if expr.lower() in ('null', 'none'):
+        return None
+
+    # String literals wrapped in quotes (e.g. 'Sem Telefone' or "Sem Telefone")
+    if (expr.startswith("'") and expr.endswith("'")) or (expr.startswith('"') and expr.endswith('"')):
+        if len(expr) >= 2:
+            return expr[1:-1]
+
+    # Numeric literals
+    num = _coerce_numeric(expr)
+    if num is not None and not expr.startswith('$'):
+        return num if '.' in expr else int(num)
+
+    # Literal fallback if it doesn't start with $
+    if not expr.startswith('$'):
+        return expr
+
+    # Context lookup for path starting with $
     path = expr[1:]
 
     # Handle $fromAI("key", "desc")
@@ -329,7 +355,6 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
         items = _resolve_list_macro(args_str, context)
         if items is not None:
             return "\n".join(items)
-        # Fallback se não for uma lista
         var_path = args_str.split(',', 1)[0].strip().lstrip('$') if ',' in args_str else args_str.strip().lstrip('$')
         parts = var_path.split('.', 1)
         root_key = parts[0]
@@ -344,7 +369,6 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
         items = _resolve_list_macro(args_str, context)
         if items is not None:
             return ",".join(json.dumps(item, ensure_ascii=False) for item in items)
-        # Fallback se não for uma lista
         var_path = args_str.split(',', 1)[0].strip().lstrip('$') if ',' in args_str else args_str.strip().lstrip('$')
         parts = var_path.split('.', 1)
         root_key = parts[0]
@@ -409,17 +433,85 @@ def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
         return os.environ.get(path[4:], '')
 
     # Everything else → context lookup
-    # The first segment is the context key (e.g. "trigger", "leader_data")
     parts = path.split('.', 1)
     root_key = parts[0]
     rest = parts[1] if len(parts) > 1 else None
 
-    root_val = context.get(f'${root_key}') or context.get(root_key)
+    # $json alias support for n8n compatibility -> maps to $trigger.payload
+    if root_key == 'json':
+        root_val = context.get('$trigger', {}).get('payload') or context.get('trigger', {}).get('payload') or context.get('$json') or context.get('json') or context.get('$trigger')
+    else:
+        root_val = context.get(f'${root_key}') or context.get(root_key)
+
     if root_val is None:
         return None
     if rest is None:
         return root_val
     return _resolve_path(root_val, rest)
+
+
+def _evaluate_inline_cond(cond_expr: str, context: Dict[str, Any]) -> bool:
+    """Evaluate an inline condition for ternary operator."""
+    cond_expr = cond_expr.strip()
+    for comp_op in ('==', '!=', '>=', '<=', '>', '<'):
+        if comp_op in cond_expr:
+            parts = cond_expr.split(comp_op, 1)
+            val_a = _resolve_expression(parts[0], context)
+            val_b = _resolve_expression(parts[1], context)
+            op_map = {
+                '==': 'equals',
+                '!=': 'not_equals',
+                '>=': 'greater_than_or_equal',
+                '<=': 'less_than_or_equal',
+                '>': 'greater_than',
+                '<': 'less_than'
+            }
+            return evaluate_condition(val_a, op_map[comp_op], val_b)
+    cond_val = _resolve_expression(cond_expr, context)
+    return bool(cond_val) and cond_val not in ('', [], {}, 'false', 'False', 0, None)
+
+
+def _resolve_expression(expr: str, context: Dict[str, Any]) -> Any:
+    """
+    Resolve a template expression with support for:
+      - Ternary operator:  expr ? true_val : false_val
+      - Fallback operator: expr1 || expr2 || 'default'
+      - Optional chaining:  path?.subpath (handled automatically)
+      - $json alias:       $json.body -> $trigger.payload.body
+      - Single tokens:     $trigger.payload.field or literals
+    """
+    expr = expr.strip()
+    if not expr:
+        return ''
+
+    # Normalize optional chaining ?. to standard dot . BEFORE checking ternary operator ?
+    expr = expr.replace('?.', '.')
+
+    # 1. Ternary Operator (cond ? true_val : false_val)
+    if '?' in expr and ':' in expr:
+        q_pos = expr.find('?')
+        colon_pos = expr.rfind(':')
+        if q_pos > 0 and colon_pos > q_pos:
+            cond_expr = expr[:q_pos].strip()
+            true_expr = expr[q_pos + 1:colon_pos].strip()
+            false_expr = expr[colon_pos + 1:].strip()
+
+            if _evaluate_inline_cond(cond_expr, context):
+                return _resolve_expression(true_expr, context)
+            else:
+                return _resolve_expression(false_expr, context)
+
+    # 2. Fallback Operator (expr1 || expr2 || 'default')
+    if '||' in expr:
+        parts = [p.strip() for p in expr.split('||') if p.strip()]
+        for p in parts:
+            val = _resolve_single_token(p, context)
+            if val is not None and val != '' and val != [] and val != {} and val is not False and str(val).lower() != 'false':
+                return val
+        return None
+
+    # 3. Single Token (Path or Literal)
+    return _resolve_single_token(expr, context)
 
 
 # ─────────────────────────────────────────────────────────────
