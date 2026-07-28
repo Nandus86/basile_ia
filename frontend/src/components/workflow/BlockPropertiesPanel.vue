@@ -1326,6 +1326,100 @@
           Transcreve áudio para texto via OpenAI Whisper. Retorna o texto em: <code>&#123;&#123; ${{ config.output_key || block.id }}.text &#125;&#125;</code>
         </v-alert>
       </template>
+
+      <!-- ═══ TEXT TO SPEECH (TTS) ═══ -->
+      <template v-if="block.type === 'text_to_speech'">
+        <v-textarea
+          v-model="config.input_text"
+          label="Texto para Sintetizar (Template)"
+          placeholder="{{ $agent.message }}"
+          variant="outlined"
+          density="compact"
+          rows="3"
+          class="mb-3"
+          hint="Digite o texto ou use variáveis do contexto: {{ $agent.message }}"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+
+        <v-select
+          v-model="config.model"
+          :items="[
+            { title: 'TTS-1 (Baixa Latência - Padrão)', value: 'tts-1' },
+            { title: 'TTS-1-HD (Alta Definição)', value: 'tts-1-hd' }
+          ]"
+          item-title="title"
+          item-value="value"
+          label="Modelo de TTS"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-select
+          v-model="config.voice"
+          :items="[
+            { title: 'Alloy (Neutra / Equilibrada)', value: 'alloy' },
+            { title: 'Echo (Masculina suave)', value: 'echo' },
+            { title: 'Fable (Narrativa / Expressiva)', value: 'fable' },
+            { title: 'Onyx (Masculina grave)', value: 'onyx' },
+            { title: 'Nova (Feminina enérgica)', value: 'nova' },
+            { title: 'Shimmer (Feminina suave)', value: 'shimmer' },
+            { title: 'Coral (Feminina quente)', value: 'coral' },
+            { title: 'Sage (Masculina clara)', value: 'sage' },
+            { title: 'Verse (Masculina expressiva)', value: 'verse' },
+            { title: 'Ash (Masculina calma)', value: 'ash' },
+            { title: 'Ballad (Feminina calma)', value: 'ballad' }
+          ]"
+          item-title="title"
+          item-value="value"
+          label="Voz do Áudio"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-select
+          v-model="config.response_format"
+          :items="[
+            { title: 'MP3 (Áudio Padrão)', value: 'mp3' },
+            { title: 'WAV (Sem Compressão)', value: 'wav' },
+            { title: 'OPUS (Baixa Latência Web)', value: 'opus' },
+            { title: 'AAC (Streaming Mobile)', value: 'aac' },
+            { title: 'FLAC (Sem Perda)', value: 'flac' }
+          ]"
+          item-title="title"
+          item-value="value"
+          label="Formato do Áudio"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-slider
+          v-model="config.speed"
+          label="Velocidade da Fala"
+          min="0.25"
+          max="4.0"
+          step="0.05"
+          thumb-label
+          density="compact"
+          class="mb-3"
+          hint="Padrão: 1.0 (0.25 a 4.0)"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-slider>
+
+        <v-alert type="info" variant="tonal" density="compact" class="text-caption mb-3">
+          Sintetiza texto em voz via OpenAI TTS. Retorna áudio em Base64 (<code>&#123;&#123; ${{ config.output_key || block.id }}.base64 &#125;&#125;</code>) e arquivo local (<code>&#123;&#123; ${{ config.output_key || block.id }}.file_path &#125;&#125;</code>).
+        </v-alert>
+      </template>
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
           <v-expansion-panel-title class="text-caption">
@@ -1393,6 +1487,7 @@ const BLOCK_META = {
   agentic_workflow: { icon: 'mdi-brain', color: '#F59E0B', label: 'Configurar Agente AW' },
   base64_to_file: { icon: 'mdi-file-code-outline', color: '#8B5CF6', label: 'Configurar Base64 p/ Arquivo' },
   audio_transcribe: { icon: 'mdi-microphone-outline', color: '#EC4899', label: 'Configurar Transcrição de Áudio' },
+  text_to_speech: { icon: 'mdi-account-voice', color: '#10B981', label: 'Configurar Texto p/ Áudio (TTS)' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })

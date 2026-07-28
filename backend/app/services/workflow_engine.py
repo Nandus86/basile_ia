@@ -1326,6 +1326,8 @@ class WorkflowEngine:
                 return await self._exec_base64_to_file(config, context)
             case 'audio_transcribe':
                 return await self._exec_audio_transcribe(config, context)
+            case 'text_to_speech':
+                return await self._exec_text_to_speech(config, context)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -2971,4 +2973,107 @@ Responda APENAS com uma das opções:
             "language": language or "auto",
             "duration_ms": duration_ms
         }
+
+    async def _exec_text_to_speech(self, config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert text into audio using OpenAI Text-to-Speech (TTS) API."""
+        import base64
+        import os
+        import tempfile
+        import uuid
+        from app.config import settings
+
+        raw_text = str(resolve_template(config.get('input_text', ''), context) or '').strip()
+        if not raw_text:
+            raise ValueError("Input text for TTS is empty or unresolved.")
+
+        api_key = str(resolve_template(config.get('api_key', ''), context) or '').strip() or settings.OPENAI_API_KEY
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is not configured in settings or block config.")
+
+        model = str(resolve_template(config.get('model', 'tts-1'), context) or 'tts-1').strip()
+        voice = str(resolve_template(config.get('voice', 'alloy'), context) or 'alloy').strip()
+        fmt = str(resolve_template(config.get('response_format', 'mp3'), context) or 'mp3').strip().lower()
+        
+        try:
+            speed = float(config.get('speed', 1.0))
+        except (ValueError, TypeError):
+            speed = 1.0
+
+        audio_bytes = b""
+        t0 = time.time()
+
+        # Try AsyncOpenAI client first
+        try:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=api_key)
+            response = await client.audio.speech.create(
+                model=model,
+                voice=voice,
+                input=raw_text,
+                response_format=fmt,
+                speed=speed
+            )
+            if hasattr(response, 'content'):
+                audio_bytes = response.content
+            elif hasattr(response, 'read'):
+                audio_bytes = await response.read()
+            else:
+                audio_bytes = response
+        except Exception as openai_err:
+            logger.warning(f"[WorkflowEngine] AsyncOpenAI TTS failed/unavailable, falling back to httpx: {openai_err}")
+            # Fallback to direct HTTP request using httpx
+            async with httpx.AsyncClient(timeout=120.0) as http_client:
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": model,
+                    "input": raw_text,
+                    "voice": voice,
+                    "response_format": fmt,
+                    "speed": speed
+                }
+                resp = await http_client.post(
+                    "https://api.openai.com/v1/audio/speech",
+                    headers=headers,
+                    json=payload
+                )
+                if resp.status_code != 200:
+                    raise ValueError(f"OpenAI TTS API error ({resp.status_code}): {resp.text}")
+                audio_bytes = resp.content
+
+        if not audio_bytes:
+            raise ValueError("OpenAI TTS returned empty audio content.")
+
+        # Encode Base64 Data URL
+        mime_type = f"audio/{fmt}" if fmt != "mp3" else "audio/mpeg"
+        b64_str = base64.b64encode(audio_bytes).decode('utf-8')
+        base64_data_url = f"data:{mime_type};base64,{b64_str}"
+
+        # Write temp file on disk
+        file_id = str(uuid.uuid4())[:8]
+        filename = f"tts_{file_id}.{fmt}"
+        temp_dir = os.path.join(tempfile.gettempdir(), "basile_temp_media")
+        os.makedirs(temp_dir, exist_ok=True)
+        file_path = os.path.join(temp_dir, filename)
+
+        with open(file_path, "wb") as f:
+            f.write(audio_bytes)
+
+        duration_ms = int((time.time() - t0) * 1000)
+        logger.info(f"[WorkflowEngine] 🔊 TTS generated successfully ({len(audio_bytes)} bytes, voice: {voice}, {duration_ms}ms)")
+
+        return {
+            "base64": base64_data_url,
+            "file_path": file_path,
+            "file_name": filename,
+            "mime_type": mime_type,
+            "format": fmt,
+            "voice": voice,
+            "model": model,
+            "size_bytes": len(audio_bytes),
+            "duration_ms": duration_ms
+        }
+
 

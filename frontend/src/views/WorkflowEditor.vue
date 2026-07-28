@@ -576,6 +576,7 @@ const toolboxItems = [
   { type: 'agentic_workflow', label: 'Agente AW', icon: 'mdi-brain', color: '#F59E0B', category: 'action' },
   { type: 'base64_to_file', label: 'Base64 p/ Arquivo', icon: 'mdi-file-code-outline', color: '#8B5CF6', category: 'action' },
   { type: 'audio_transcribe', label: 'Transcrever Áudio', icon: 'mdi-microphone-outline', color: '#EC4899', category: 'action' },
+  { type: 'text_to_speech', label: 'Texto p/ Áudio (TTS)', icon: 'mdi-account-voice', color: '#10B981', category: 'action' },
   { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
   { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },
   { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },
@@ -819,6 +820,12 @@ function onDrop(event) {
     config.file_path = '{{ $base64_to_file.file_path }}'
     config.model = 'whisper-1'
     config.auto_delete = true
+  } else if (type === 'text_to_speech') {
+    config.input_text = '{{ $agent.message }}'
+    config.model = 'tts-1'
+    config.voice = 'alloy'
+    config.response_format = 'mp3'
+    config.speed = 1.0
   }
   
   nodes.value = [...nodes.value, {
