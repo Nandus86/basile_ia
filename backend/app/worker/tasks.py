@@ -3483,10 +3483,11 @@ async def process_message_task(
                         agente_nome = ai_params.get("name") or agent_config.get("name", "Assistente")
                         igreja_nome = church_data.get("church_name") or "nossa igreja"
                         
-                        # Limpar e pegar o primeiro nome do membro
+                        # Limpar e pegar o primeiro nome do membro (se não for usuário não cadastrado do WhatsApp)
                         nome_completo = member_data.get("fullname") or member_data.get("name") or global_data.get("name") or ""
+                        is_whatsapp_user = "whatsapp" in nome_completo.lower()
                         nome_formatado = ""
-                        if nome_completo.strip():
+                        if nome_completo.strip() and not is_whatsapp_user:
                             primeiro_nome = nome_completo.strip().split()[0].capitalize()
                             import re
                             primeiro_nome = re.sub(r'[^\w\s]', '', primeiro_nome)
@@ -3494,7 +3495,9 @@ async def process_message_task(
                                 nome_formatado = f" {primeiro_nome}"
                         
                         # 2. Montar a resposta dinâmica
-                        if not has_history:
+                        if is_whatsapp_user:
+                            response_text = f"{saudacao}! Sou {agente_nome}, assistente da {igreja_nome} e estou aqui para lhe ajudar na comunicação e conexão com a nossa igreja. Para começarmos, como posso te chamar?"
+                        elif not has_history:
                             response_text = f"{saudacao}{nome_formatado}! Sou {agente_nome}, assistente da {igreja_nome} e estou aqui para lhe ajudar na comunicação e conexão com a nossa igreja. Me conta, qual o assunto você gostaria de tratar?"
                         else:
                             response_text = f"{saudacao}{nome_formatado}! Me conta, qual o assunto você gostaria de tratar?"
