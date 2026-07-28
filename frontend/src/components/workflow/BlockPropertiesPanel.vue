@@ -1197,7 +1197,7 @@
         ></v-text-field>
 
         <v-alert type="info" variant="tonal" density="compact" class="text-caption mb-3">
-          Converte base64 de imagem, vídeo ou áudio para arquivo em disco. Retorna: <code>{{ `{{ $${config.output_key || block.id}.file_path }}` }}</code>
+          Converte base64 de imagem, vídeo ou áudio para arquivo em disco. Retorna: <code>&#123;&#123; ${{ config.output_key || block.id }}.file_path &#125;&#125;</code>
         </v-alert>
       </template>
 
@@ -1266,7 +1266,7 @@
         ></v-switch>
 
         <v-alert type="info" variant="tonal" density="compact" class="text-caption mb-3">
-          Transcreve áudio para texto via OpenAI Whisper. Retorna o texto em: <code>{{ `{{ $${config.output_key || block.id}.text }}` }}</code>
+          Transcreve áudio para texto via OpenAI Whisper. Retorna o texto em: <code>&#123;&#123; ${{ config.output_key || block.id }}.text &#125;&#125;</code>
         </v-alert>
       </template>
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
