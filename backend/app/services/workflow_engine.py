@@ -1322,6 +1322,10 @@ class WorkflowEngine:
                 return await self._exec_vector_insert(config, context)
             case 'agentic_workflow':
                 return await self._exec_agentic_workflow(config, context)
+            case 'base64_to_file':
+                return await self._exec_base64_to_file(config, context)
+            case 'audio_transcribe':
+                return await self._exec_audio_transcribe(config, context)
             case _:
                 raise ValueError(f"Unknown block type: {block_type}")
 
@@ -2792,3 +2796,179 @@ Responda APENAS com uma das opções:
             return next_list[0]
 
         return None  # End of pipeline
+
+    async def _exec_base64_to_file(self, config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert a Base64 string (image, audio, video) into a local file on disk."""
+        import base64
+        import mimetypes
+        import os
+        import tempfile
+        import uuid
+
+        raw_input = resolve_template(config.get('base64_input', ''), context)
+        if isinstance(raw_input, dict):
+            raw_input = raw_input.get('base64') or raw_input.get('data') or raw_input.get('audio_base64') or str(raw_input)
+        raw_input = str(raw_input or '').strip()
+
+        if not raw_input:
+            raise ValueError("Base64 input is empty or unresolved.")
+
+        # Detect data URL format header e.g. data:audio/mp3;base64,...
+        mime_type = "audio/mp3"  # default fallback
+        if raw_input.startswith("data:") and ";base64," in raw_input:
+            header, base64_str = raw_input.split(";base64,", 1)
+            mime_type = header.replace("data:", "").strip()
+        else:
+            base64_str = raw_input
+            custom_mime = config.get('mime_type')
+            if custom_mime:
+                mime_type = str(resolve_template(custom_mime, context) or 'audio/mp3').strip()
+
+        # Sanitize base64 string
+        base64_str = base64_str.replace('\n', '').replace('\r', '').strip()
+        if (base64_str.startswith('"') and base64_str.endswith('"')) or (base64_str.startswith("'") and base64_str.endswith("'")):
+            base64_str = base64_str[1:-1]
+
+        try:
+            file_bytes = base64.b64decode(base64_str)
+        except Exception as e:
+            raise ValueError(f"Invalid Base64 string payload: {e}")
+
+        # Map MIME type to extension
+        mime_ext_map = {
+            "audio/mp3": ".mp3",
+            "audio/mpeg": ".mp3",
+            "audio/ogg": ".ogg",
+            "audio/wav": ".wav",
+            "audio/x-wav": ".wav",
+            "audio/m4a": ".m4a",
+            "audio/x-m4a": ".m4a",
+            "audio/mp4": ".m4a",
+            "audio/webm": ".webm",
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+            "video/mp4": ".mp4",
+            "video/webm": ".webm",
+        }
+        
+        ext = mime_ext_map.get(mime_type.lower())
+        if not ext:
+            ext = mimetypes.guess_extension(mime_type) or ".mp3"
+
+        prefix = config.get('file_prefix', 'media')
+        file_id = str(uuid.uuid4())[:8]
+        filename = f"{prefix}_{file_id}{ext}"
+
+        temp_dir = os.path.join(tempfile.gettempdir(), "basile_temp_media")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        file_path = os.path.join(temp_dir, filename)
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+
+        logger.info(f"[WorkflowEngine] 📁 Base64 converted to file '{file_path}' ({len(file_bytes)} bytes, mime: {mime_type})")
+
+        return {
+            "file_path": file_path,
+            "file_name": filename,
+            "mime_type": mime_type,
+            "extension": ext.lstrip('.'),
+            "size_bytes": len(file_bytes)
+        }
+
+    async def _exec_audio_transcribe(self, config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Transcribe an audio file into text using OpenAI Whisper API."""
+        import os
+        from app.config import settings
+
+        raw_file_input = resolve_template(config.get('file_path', ''), context)
+        
+        # Support passing dict from base64_to_file directly
+        if isinstance(raw_file_input, dict):
+            file_path = raw_file_input.get('file_path')
+        else:
+            file_path = str(raw_file_input or '').strip()
+
+        if not file_path:
+            raise ValueError("Audio file_path is empty or unresolved.")
+
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Audio file not found at path: '{file_path}'")
+
+        api_key = str(resolve_template(config.get('api_key', ''), context) or '').strip() or settings.OPENAI_API_KEY
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY is not configured in settings or block config.")
+
+        model = str(resolve_template(config.get('model', 'whisper-1'), context) or 'whisper-1').strip()
+        language = str(resolve_template(config.get('language', ''), context) or '').strip()
+        prompt = str(resolve_template(config.get('prompt', ''), context) or '').strip()
+        auto_delete = config.get('auto_delete', True)
+
+        text_result = ""
+        duration_ms = 0
+        t0 = time.time()
+
+        try:
+            # First try using AsyncOpenAI if available
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=api_key)
+                with open(file_path, "rb") as audio_file:
+                    kwargs = {"model": model, "file": audio_file}
+                    if language:
+                        kwargs["language"] = language
+                    if prompt:
+                        kwargs["prompt"] = prompt
+                    transcription = await client.audio.transcriptions.create(**kwargs)
+                    text_result = transcription.text
+            except Exception as openai_err:
+                logger.warning(f"[WorkflowEngine] AsyncOpenAI client transcription failed/unavailable, falling back to httpx: {openai_err}")
+                # Fallback to direct HTTP request using httpx
+                filename = os.path.basename(file_path)
+                import mimetypes
+                mime_type = mimetypes.guess_type(file_path)[0] or "audio/mp3"
+
+                async with httpx.AsyncClient(timeout=120.0) as http_client:
+                    with open(file_path, "rb") as f:
+                        files = {"file": (filename, f, mime_type)}
+                        data = {"model": model}
+                        if language:
+                            data["language"] = language
+                        if prompt:
+                            data["prompt"] = prompt
+
+                        headers = {"Authorization": f"Bearer {api_key}"}
+                        response = await http_client.post(
+                            "https://api.openai.com/v1/audio/transcriptions",
+                            headers=headers,
+                            data=data,
+                            files=files
+                        )
+
+                        if response.status_code != 200:
+                            raise ValueError(f"OpenAI Transcription API error ({response.status_code}): {response.text}")
+                        
+                        resp_data = response.json()
+                        text_result = resp_data.get("text", "")
+        finally:
+            # Delete temp file right after transcription if auto_delete is enabled
+            if auto_delete and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    logger.info(f"[WorkflowEngine] 🗑️ Audio file deleted after transcription: '{file_path}'")
+                except Exception as del_err:
+                    logger.warning(f"[WorkflowEngine] Failed to delete audio file '{file_path}': {del_err}")
+
+        duration_ms = int((time.time() - t0) * 1000)
+        logger.info(f"[WorkflowEngine] 🎙️ Audio transcribed successfully ({len(text_result)} chars, {duration_ms}ms)")
+
+        return {
+            "text": text_result,
+            "model": model,
+            "language": language or "auto",
+            "duration_ms": duration_ms
+        }
+

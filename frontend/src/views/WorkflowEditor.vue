@@ -574,6 +574,8 @@ const toolboxItems = [
   { type: 'response', label: 'Saída', icon: 'mdi-logout', color: '#EC4899', category: 'action' },
   { type: 'sub_workflow', label: 'Sub-workflow', icon: 'mdi-sitemap-outline', color: '#EC4899', category: 'action' },
   { type: 'agentic_workflow', label: 'Agente AW', icon: 'mdi-brain', color: '#F59E0B', category: 'action' },
+  { type: 'base64_to_file', label: 'Base64 p/ Arquivo', icon: 'mdi-file-code-outline', color: '#8B5CF6', category: 'action' },
+  { type: 'audio_transcribe', label: 'Transcrever Áudio', icon: 'mdi-microphone-outline', color: '#EC4899', category: 'action' },
   { type: 'if', label: 'IF (Condição)', icon: 'mdi-call-split', color: '#8B5CF6', category: 'logic' },
   { type: 'router', label: 'Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'logic' },
   { type: 'filter', label: 'Filter', icon: 'mdi-filter-variant', color: '#06B6D4', category: 'logic' },
@@ -810,6 +812,13 @@ function onDrop(event) {
   const config = { output_key: blockId }
   if (type === 'trigger') {
     config.trigger_type = 'event'
+  } else if (type === 'base64_to_file') {
+    config.base64_input = '{{ $trigger.payload.audio_base64 }}'
+    config.file_prefix = 'media'
+  } else if (type === 'audio_transcribe') {
+    config.file_path = '{{ $base64_to_file.file_path }}'
+    config.model = 'whisper-1'
+    config.auto_delete = true
   }
   
   nodes.value = [...nodes.value, {

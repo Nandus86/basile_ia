@@ -1158,6 +1158,117 @@
           @update:model-value="emitUpdate"
         ></v-textarea>
       </template>
+
+      <!-- ═══ BASE64 TO FILE ═══ -->
+      <template v-if="block.type === 'base64_to_file'">
+        <v-textarea
+          v-model="config.base64_input"
+          label="String Base64 (Template / Variável)"
+          placeholder="{{ $trigger.payload.audio_base64 }}"
+          variant="outlined"
+          density="compact"
+          rows="3"
+          class="mb-3"
+          hint="Cole a string ou use variável: {{ $trigger.payload.base64 }}"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-textarea>
+
+        <v-text-field
+          v-model="config.file_prefix"
+          label="Prefixo do Nome do Arquivo"
+          placeholder="media"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-text-field
+          v-model="config.mime_type"
+          label="MIME Type Personalizado (Opcional)"
+          placeholder="audio/mp3 (deixe em branco para auto-detectar)"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-alert type="info" variant="tonal" density="compact" class="text-caption mb-3">
+          Converte base64 de imagem, vídeo ou áudio para arquivo em disco. Retorna: <code>{{ `{{ $${config.output_key || block.id}.file_path }}` }}</code>
+        </v-alert>
+      </template>
+
+      <!-- ═══ AUDIO TRANSCRIBE ═══ -->
+      <template v-if="block.type === 'audio_transcribe'">
+        <v-text-field
+          v-model="config.file_path"
+          label="Caminho do Arquivo de Áudio"
+          placeholder="{{ $base64_converter.file_path }}"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hint="Referência para o arquivo: {{ $base64_to_file.file_path }}"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-select
+          v-model="config.model"
+          :items="[
+            { title: 'Whisper-1 (OpenAI Padrão)', value: 'whisper-1' },
+            { title: 'Whisper Large v3 (Groq/Outros)', value: 'whisper-large-v3' },
+            { title: 'Whisper Large v3 Turbo (Groq)', value: 'whisper-large-v3-turbo' }
+          ]"
+          item-title="title"
+          item-value="value"
+          label="Modelo de Transcrição"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-select>
+
+        <v-text-field
+          v-model="config.language"
+          label="Idioma (Opcional)"
+          placeholder="pt (ex: pt, en, es - deixe em branco para auto-detectar)"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-text-field
+          v-model="config.prompt"
+          label="Prompt / Vocabulário de Guia (Opcional)"
+          placeholder="Ex: Basile, IA, termos técnicos..."
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          hide-details
+          @update:model-value="emitUpdate"
+        ></v-text-field>
+
+        <v-switch
+          :model-value="config.auto_delete !== false"
+          @update:model-value="val => { config.auto_delete = val; emitUpdate(); }"
+          label="Deletar Arquivo de Áudio Após Transcrição"
+          color="error"
+          density="compact"
+          class="mb-3"
+          hint="Apaga o arquivo temporário imediatamente após transcrever para liberar espaço em disco."
+          persistent-hint
+        ></v-switch>
+
+        <v-alert type="info" variant="tonal" density="compact" class="text-caption mb-3">
+          Transcreve áudio para texto via OpenAI Whisper. Retorna o texto em: <code>{{ `{{ $${config.output_key || block.id}.text }}` }}</code>
+        </v-alert>
+      </template>
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
           <v-expansion-panel-title class="text-caption">
@@ -1223,6 +1334,8 @@ const BLOCK_META = {
   variables:    { icon: 'mdi-variable',          color: '#10B981', label: 'Configurar Variáveis' },
   vector_insert:{ icon: 'mdi-database-plus',     color: '#10B981', label: 'Configurar Salvar na Base' },
   agentic_workflow: { icon: 'mdi-brain', color: '#F59E0B', label: 'Configurar Agente AW' },
+  base64_to_file: { icon: 'mdi-file-code-outline', color: '#8B5CF6', label: 'Configurar Base64 p/ Arquivo' },
+  audio_transcribe: { icon: 'mdi-microphone-outline', color: '#EC4899', label: 'Configurar Transcrição de Áudio' },
 }
 
 const meta = computed(() => BLOCK_META[props.block.type] || { icon: 'mdi-help-circle', color: '#9CA3AF', label: 'Configurar Bloco' })
