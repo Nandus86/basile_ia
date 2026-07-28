@@ -328,12 +328,31 @@
             Conecte as saídas Match (Verde) e Outro (Vermelho) aos blocos correspondentes no canvas.
           </div>
         </v-alert>
-        <div v-for="(rule, idx) in (config.rules || [])" :key="idx" class="rule-item mb-3 pa-3 rounded border">
+        <div
+          v-for="(rule, idx) in (config.rules || [])"
+          :key="idx"
+          class="rule-item mb-3 pa-3 rounded border"
+          draggable="true"
+          @dragstart="onDragStart($event, idx, 'rules')"
+          @dragover.prevent
+          @drop="onDrop($event, idx, 'rules')"
+        >
           <div class="d-flex justify-space-between align-center mb-2">
-            <span class="text-caption font-weight-bold">Regra {{ idx + 1 }}</span>
-            <v-btn icon variant="text" size="x-small" color="error" @click="removeRule(idx)">
-              <v-icon size="16">mdi-close</v-icon>
-            </v-btn>
+            <div class="d-flex align-center">
+              <v-icon size="18" class="mr-1 cursor-grab opacity-60">mdi-drag-vertical</v-icon>
+              <span class="text-caption font-weight-bold">Regra {{ idx + 1 }}</span>
+            </div>
+            <div class="d-flex align-center">
+              <v-btn icon variant="text" size="x-small" :disabled="idx === 0" @click="moveRule(idx, -1)" title="Mover para cima">
+                <v-icon size="16">mdi-arrow-up</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" :disabled="idx === config.rules.length - 1" @click="moveRule(idx, 1)" title="Mover para baixo">
+                <v-icon size="16">mdi-arrow-down</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" color="error" @click="removeRule(idx)" title="Excluir regra">
+                <v-icon size="16">mdi-close</v-icon>
+              </v-btn>
+            </div>
           </div>
           <v-text-field v-model="rule.value_a" label="Valor A" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
           <v-select v-model="rule.operator" :items="operators" label="Operador" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-select>
@@ -524,12 +543,31 @@
 
       <!-- ═══ TRANSFORM ═══ -->
       <template v-if="block.type === 'transform'">
-        <div v-for="(op, idx) in (config.operations || [])" :key="idx" class="rule-item mb-3 pa-3 rounded border">
+        <div
+          v-for="(op, idx) in (config.operations || [])"
+          :key="idx"
+          class="rule-item mb-3 pa-3 rounded border"
+          draggable="true"
+          @dragstart="onDragStart($event, idx, 'operations')"
+          @dragover.prevent
+          @drop="onDrop($event, idx, 'operations')"
+        >
           <div class="d-flex justify-space-between align-center mb-2">
-            <span class="text-caption font-weight-bold">Operação {{ idx + 1 }}</span>
-            <v-btn icon variant="text" size="x-small" color="error" @click="removeOperation(idx)">
-              <v-icon size="16">mdi-close</v-icon>
-            </v-btn>
+            <div class="d-flex align-center">
+              <v-icon size="18" class="mr-1 cursor-grab opacity-60">mdi-drag-vertical</v-icon>
+              <span class="text-caption font-weight-bold">Operação {{ idx + 1 }}</span>
+            </div>
+            <div class="d-flex align-center">
+              <v-btn icon variant="text" size="x-small" :disabled="idx === 0" @click="moveOperation(idx, -1)" title="Mover para cima">
+                <v-icon size="16">mdi-arrow-up</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" :disabled="idx === config.operations.length - 1" @click="moveOperation(idx, 1)" title="Mover para baixo">
+                <v-icon size="16">mdi-arrow-down</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" color="error" @click="removeOperation(idx)" title="Excluir operação">
+                <v-icon size="16">mdi-close</v-icon>
+              </v-btn>
+            </div>
           </div>
           <v-select v-model="op.op" :items="['set','merge','extract','map','flatten','join','stringify','parse_json']" label="Tipo" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-select>
           <v-text-field v-model="op.key" label="Chave destino" variant="outlined" density="compact" class="mb-2" hide-details @update:model-value="emitUpdate"></v-text-field>
@@ -593,12 +631,31 @@
           Defina variáveis estáticas (fixas) ou dinâmicas que acumulam valores ao longo da execução do workflow.
         </v-alert>
 
-        <div v-for="(v, idx) in (config.variables || [])" :key="idx" class="rule-item mb-3 pa-3 rounded border">
+        <div
+          v-for="(v, idx) in (config.variables || [])"
+          :key="idx"
+          class="rule-item mb-3 pa-3 rounded border"
+          draggable="true"
+          @dragstart="onDragStart($event, idx, 'variables')"
+          @dragover.prevent
+          @drop="onDrop($event, idx, 'variables')"
+        >
           <div class="d-flex justify-space-between align-center mb-2">
-            <span class="text-caption font-weight-bold">Variável {{ idx + 1 }}</span>
-            <v-btn icon variant="text" size="x-small" color="error" @click="removeVariable(idx)">
-              <v-icon size="16">mdi-close</v-icon>
-            </v-btn>
+            <div class="d-flex align-center">
+              <v-icon size="18" class="mr-1 cursor-grab opacity-60">mdi-drag-vertical</v-icon>
+              <span class="text-caption font-weight-bold">Variável {{ idx + 1 }}</span>
+            </div>
+            <div class="d-flex align-center">
+              <v-btn icon variant="text" size="x-small" :disabled="idx === 0" @click="moveVariable(idx, -1)" title="Mover para cima">
+                <v-icon size="16">mdi-arrow-up</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" :disabled="idx === config.variables.length - 1" @click="moveVariable(idx, 1)" title="Mover para baixo">
+                <v-icon size="16">mdi-arrow-down</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" color="error" @click="removeVariable(idx)" title="Excluir variável">
+                <v-icon size="16">mdi-close</v-icon>
+              </v-btn>
+            </div>
           </div>
           <v-row dense>
             <v-col cols="6">
@@ -1591,6 +1648,58 @@ function addVariable() {
 function removeVariable(idx) {
   config.value.variables.splice(idx, 1)
   emitUpdate()
+}
+
+function moveItem(list, idx, delta) {
+  if (!list || !list.length) return
+  const newIndex = idx + delta
+  if (newIndex < 0 || newIndex >= list.length) return
+  const [moved] = list.splice(idx, 1)
+  list.splice(newIndex, 0, moved)
+  emitUpdate()
+}
+
+function moveRule(idx, delta) {
+  moveItem(config.value.rules, idx, delta)
+}
+
+function moveOperation(idx, delta) {
+  moveItem(config.value.operations, idx, delta)
+}
+
+function moveVariable(idx, delta) {
+  moveItem(config.value.variables, idx, delta)
+}
+
+const draggedIndex = ref(null)
+const draggedType = ref(null)
+
+function onDragStart(event, idx, type) {
+  draggedIndex.value = idx
+  draggedType.value = type
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function onDrop(event, targetIdx, type) {
+  event.preventDefault()
+  if (draggedType.value !== type || draggedIndex.value === null) return
+  const srcIdx = draggedIndex.value
+  if (srcIdx === targetIdx) return
+
+  let list = null
+  if (type === 'rules') list = config.value.rules
+  else if (type === 'operations') list = config.value.operations
+  else if (type === 'variables') list = config.value.variables
+
+  if (list && list.length) {
+    const [item] = list.splice(srcIdx, 1)
+    list.splice(targetIdx, 0, item)
+    emitUpdate()
+  }
+  draggedIndex.value = null
+  draggedType.value = null
 }
 
 function copyVar(key) {
