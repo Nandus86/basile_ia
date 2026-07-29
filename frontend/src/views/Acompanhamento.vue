@@ -110,7 +110,7 @@
       
       <v-divider></v-divider>
       
-      <v-data-table
+      <v-data-table-server
         :headers="headers"
         :items="logs"
         :loading="loading"
@@ -118,6 +118,7 @@
         :items-per-page-options="itemsPerPageOptions"
         :items-length="totalItems"
         v-model:page="page"
+        v-model:items-per-page="itemsPerPage"
         show-current-page
         @update:options="handleOptionsUpdate"
         hover
@@ -205,7 +206,7 @@
             </v-btn>
           </div>
         </template>
-      </v-data-table>
+      </v-data-table-server>
     </v-card>
 
     <!-- Job Details Dialog -->
@@ -2066,7 +2067,7 @@ const pathChartOptions = ref({
 const logs = ref([])
 const totalItems = ref(0)
 const page = ref(1)
-const itemsPerPage = ref(20)
+const itemsPerPage = ref(100)
 const itemsPerPageOptions = [
   { value: 20, title: '20' },
   { value: 50, title: '50' },
