@@ -2287,19 +2287,22 @@ function handleSSEEvent(payload) {
   if (event === 'new_job') {
     const idx = logs.value.findIndex(j => j.job_id === jobData.job_id)
     if (idx !== -1) {
+      // Job already visible on current page — update in-place
       logs.value[idx] = { ...logs.value[idx], ...jobData }
+    } else if (page.value === 1) {
+      // User is on page 1 — re-fetch so the new log appears at the top
+      fetchLogs()
     } else {
-      logs.value.unshift(jobData)
+      // User is on another page — just bump the total count
       totalItems.value += 1
     }
   } else if (event === 'job_updated') {
     const idx = logs.value.findIndex(j => j.job_id === jobData.job_id)
     if (idx !== -1) {
+      // Job is visible on current page — update in-place
       logs.value[idx] = { ...logs.value[idx], ...jobData }
-    } else {
-      logs.value.unshift(jobData)
-      totalItems.value += 1
     }
+    // If job is not on current page, the update will be seen when user navigates there
   }
 
   // Refresh stats occasionally
