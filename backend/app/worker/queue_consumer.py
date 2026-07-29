@@ -381,6 +381,12 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 
             # Set to completed
             is_workflow = isinstance(response_data, dict) and "workflow_name" in response_data
+            duration_ms = (
+                int(response_data.get("duration_ms") or response_data.get("processing_time_ms"))
+                if isinstance(response_data, dict) and (response_data.get("duration_ms") or response_data.get("processing_time_ms"))
+                else None
+            )
+
             job_data = {
                 "job_id": job_id,
                 "status": "completed",
@@ -388,6 +394,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                 "agent_used": agent_used,
                 "is_hitl_pause": is_hitl_pause
             }
+            if duration_ms is not None:
+                job_data["duration_ms"] = duration_ms
             if is_workflow and isinstance(final_result, dict):
                 job_data.update(final_result)
             if transition_data:
@@ -414,6 +422,12 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         if isinstance(final_result, dict) and not is_workflow:
                             db_result = final_result.get("output", final_result.get("response", str(final_result)))
                         
+                        job_log.completed_at = datetime.now(timezone.utc)
+                        if job_log.created_at:
+                            job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                        
+                        calc_duration = job_log.duration_ms or duration_ms
+                        
                         full_response_data = {
                             "status": "completed",
                             "job_id": job_id,
@@ -421,6 +435,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "agent_used": agent_used,
                             "is_hitl_pause": is_hitl_pause
                         }
+                        if calc_duration is not None:
+                            full_response_data["duration_ms"] = calc_duration
                         if is_workflow and isinstance(final_result, dict):
                             full_response_data.update(final_result)
                         if transition_data:
@@ -435,9 +451,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         )
                         if isinstance(job_log.agent_response, dict):
                             job_log.agent_response = job_log.agent_response.get("result") or str(job_log.agent_response)
-                        job_log.completed_at = datetime.now(timezone.utc)
-                        if job_log.created_at:
-                            job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                        
                         await db_session.commit()
                         # SSE: publish job completed
                         await _publish_job_update(
@@ -465,6 +479,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     await asyncio.sleep(lb_delay)
 
                     async with httpx.AsyncClient() as client:
+                        cb_duration = job_log.duration_ms if ('job_log' in locals() and job_log and job_log.duration_ms) else duration_ms
                         cb_response_data = {
                             "status": "completed",
                             "job_id": job_id,
@@ -472,6 +487,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "agent_used": agent_used,
                             "is_hitl_pause": is_hitl_pause
                         }
+                        if cb_duration is not None:
+                            cb_response_data["duration_ms"] = cb_duration
                         if is_workflow and isinstance(final_result, dict):
                             cb_response_data.update(final_result)
                         

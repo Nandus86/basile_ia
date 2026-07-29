@@ -4331,6 +4331,7 @@ async def process_message_task(
                     "status": "completed",
                     "agent_used": agent_used,
                     "processing_time_ms": processing_time,
+                    "duration_ms": int(processing_time),
                     "is_hitl_pause": is_hitl_pause,
                 }
                 
