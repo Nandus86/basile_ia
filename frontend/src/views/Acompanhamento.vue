@@ -2067,7 +2067,7 @@ const pathChartOptions = ref({
 const logs = ref([])
 const totalItems = ref(0)
 const page = ref(1)
-const itemsPerPage = ref(100)
+const itemsPerPage = ref(20)
 const itemsPerPageOptions = [
   { value: 20, title: '20' },
   { value: 50, title: '50' },
@@ -2357,12 +2357,9 @@ const fetchLogs = async () => {
 
 const fetchData = () => { fetchStats(); fetchLogs() }
 const handleOptionsUpdate = ({ page: np, itemsPerPage: nip }) => {
-  const nextPage = np || 1
-  const nextItemsPerPage = nip || itemsPerPage.value
-  const shouldFetch = page.value !== nextPage || itemsPerPage.value !== nextItemsPerPage
-  page.value = nextPage
-  itemsPerPage.value = nextItemsPerPage
-  if (shouldFetch) fetchLogs()
+  page.value = np || 1
+  itemsPerPage.value = nip || itemsPerPage.value
+  fetchLogs()
 }
 const openJobDetails = async (job) => {
   testResult.value = null;
