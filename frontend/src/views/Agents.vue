@@ -289,6 +289,7 @@
           <v-tab value="thinker" :disabled="!editing"><v-icon start>mdi-head-brain</v-icon>Thinker</v-tab>
           <v-tab value="guardrail" :disabled="!editing"><v-icon start>mdi-shield-alert</v-icon>Guardrail</v-tab>
           <v-tab value="workflows" :disabled="!editing"><v-icon start>mdi-sitemap</v-icon>Automações</v-tab>
+          <v-tab value="few_shot" :disabled="!editing"><v-icon start>mdi-format-list-bulleted-type</v-icon>Few-Shot</v-tab>
           <v-tab value="prompt_preview" :disabled="!editing"><v-icon start>mdi-eye</v-icon>Prompt Geral</v-tab>
         </v-tabs>
 
@@ -2289,6 +2290,160 @@
               </div>
             </v-window-item>
 
+            <!-- Tab: Few-Shot Prompting -->
+            <v-window-item value="few_shot">
+              <v-alert v-if="!editing" type="info" variant="tonal" class="mb-4">
+                Salve o agente primeiro para configurar os exemplos Few-Shot.
+              </v-alert>
+              <div v-else>
+                <div class="d-flex justify-space-between align-center mb-4">
+                  <h3 class="text-subtitle-1 font-weight-bold">
+                    <v-icon size="20" class="mr-1">mdi-format-list-bulleted-type</v-icon>
+                    Exemplos de Demonstração (Few-Shot Prompting)
+                  </h3>
+                </div>
+
+                <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                  <template v-slot:prepend>
+                    <v-icon>mdi-information</v-icon>
+                  </template>
+                  Defina pares de Entrada (mensagem do usuário), Ação/Direcionamento (raciocínio ou ferramentas chamadas) e Saída Esperada para ensinar ao agente o comportamento desejado.
+                </v-alert>
+
+                <v-card variant="outlined" class="mb-4 pa-4">
+                  <div class="d-flex align-center justify-space-between mb-4">
+                    <v-switch
+                      v-model="fewShotConfig.enabled"
+                      label="Ativar Few-Shot Prompting neste Agente"
+                      color="primary"
+                      hide-details
+                      density="compact"
+                    ></v-switch>
+                    <v-chip v-if="fewShotConfig.enabled" color="success" size="small" variant="tonal">
+                      <v-icon start size="14">mdi-check-circle</v-icon> Ativo
+                    </v-chip>
+                  </div>
+
+                  <v-expand-transition>
+                    <div v-if="fewShotConfig.enabled">
+                      <v-row class="mt-2">
+                        <v-col cols="12" md="6">
+                          <v-text-field
+                            v-model="fewShotConfig.prefix"
+                            label="Prefixo (Instrução antes dos exemplos)"
+                            placeholder="Ex: Observe os exemplos a seguir para responder e agir:"
+                            density="compact"
+                            variant="outlined"
+                            hide-details="auto"
+                            class="mb-3"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                          <v-text-field
+                            v-model="fewShotConfig.suffix"
+                            label="Sufixo (Instrução após os exemplos)"
+                            placeholder="Ex: Agora processe a solicitação atual do usuário:"
+                            density="compact"
+                            variant="outlined"
+                            hide-details="auto"
+                            class="mb-3"
+                          ></v-text-field>
+                        </v-col>
+                        <v-col cols="12" md="6">
+                          <v-switch
+                            v-model="fewShotConfig.use_example_selector"
+                            label="Seleção Semântica Dinâmica (Embeddings)"
+                            color="secondary"
+                            density="compact"
+                            hide-details="auto"
+                            hint="Selecione automaticamente os exemplos mais relevantes baseados na mensagem do usuário"
+                            persistent-hint
+                          ></v-switch>
+                        </v-col>
+                        <v-col cols="12" md="6" v-if="fewShotConfig.use_example_selector">
+                          <v-text-field
+                            v-model.number="fewShotConfig.max_examples"
+                            label="Máximo de exemplos a injetar por mensagem"
+                            type="number"
+                            min="1"
+                            max="20"
+                            density="compact"
+                            variant="outlined"
+                            hide-details="auto"
+                          ></v-text-field>
+                        </v-col>
+                      </v-row>
+                    </div>
+                  </v-expand-transition>
+                </v-card>
+
+                <div v-if="fewShotConfig.enabled">
+                  <div class="d-flex align-center justify-space-between mb-3">
+                    <h4 class="text-subtitle-2 font-weight-bold">
+                      Lista de Exemplos ({{ fewShotExamples.length }})
+                    </h4>
+                    <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="addFewShotExample">
+                      Adicionar Exemplo
+                    </v-btn>
+                  </div>
+
+                  <div v-if="fewShotExamples.length === 0" class="text-center py-6 border rounded border-dashed mb-4">
+                    <v-icon size="40" color="grey-lighten-1" class="mb-2">mdi-format-list-checks</v-icon>
+                    <p class="text-caption text-medium-emphasis mb-2">Nenhum exemplo cadastrado.</p>
+                    <v-btn size="small" variant="tonal" color="primary" @click="addFewShotExample">
+                      Criar Primeiro Exemplo
+                    </v-btn>
+                  </div>
+
+                  <v-card v-for="(ex, index) in fewShotExamples" :key="index" variant="outlined" class="mb-4 border-primary">
+                    <v-card-title class="d-flex align-center justify-space-between py-2 px-4 bg-surface-variant">
+                      <span class="text-caption font-weight-bold">Exemplo #{{ index + 1 }}</span>
+                      <v-btn icon="mdi-delete" size="x-small" color="error" variant="text" @click="removeFewShotExample(index)">
+                        <v-tooltip activator="parent" location="top">Remover Exemplo</v-tooltip>
+                      </v-btn>
+                    </v-card-title>
+                    <v-card-text class="pa-4">
+                      <v-row density="compact">
+                        <v-col cols="12" md="4">
+                          <v-textarea
+                            v-model="ex.input"
+                            label="Entrada do Usuário (Input)"
+                            placeholder="Ex: Preciso cancelar minha assinatura"
+                            rows="3"
+                            variant="outlined"
+                            density="compact"
+                            hide-details="auto"
+                          ></v-textarea>
+                        </v-col>
+                        <v-col cols="12" md="4">
+                          <v-textarea
+                            v-model="ex.acao"
+                            label="Ação / Direcionamento Interno"
+                            placeholder="Ex: Executar ferramenta buscar_cliente e chamar cancelar_assinatura"
+                            rows="3"
+                            variant="outlined"
+                            density="compact"
+                            hide-details="auto"
+                          ></v-textarea>
+                        </v-col>
+                        <v-col cols="12" md="4">
+                          <v-textarea
+                            v-model="ex.output"
+                            label="Saída Esperada (Output)"
+                            placeholder="Ex: Sua assinatura foi cancelada com sucesso."
+                            rows="3"
+                            variant="outlined"
+                            density="compact"
+                            hide-details="auto"
+                          ></v-textarea>
+                        </v-col>
+                      </v-row>
+                    </v-card-text>
+                  </v-card>
+                </div>
+              </div>
+            </v-window-item>
+
           </v-window>
         </v-card-text>
         
@@ -2725,6 +2880,29 @@ const selectedSkillToAdd = ref(null)
 const addingSkill = ref(false)
 const removingSkill = ref(null)
 
+// Few-Shot Prompting Data
+const fewShotConfig = reactive({
+  enabled: false,
+  prefix: 'Observe os exemplos a seguir para responder e agir:',
+  suffix: 'Agora processe a solicitação atual do usuário:',
+  use_example_selector: false,
+  max_examples: 5
+})
+
+const fewShotExamples = ref([])
+
+function addFewShotExample() {
+  fewShotExamples.value.push({
+    input: '',
+    acao: '',
+    output: ''
+  })
+}
+
+function removeFewShotExample(index) {
+  fewShotExamples.value.splice(index, 1)
+}
+
 // VFS Knowledge Bases Data (RAG 3.0)
 const allVFSBases = ref([])
 const agentVFSBases = ref([])
@@ -3107,6 +3285,13 @@ function resetForm() {
   inputSchemaPreset.value = 'custom'
   transitionInputSchemaJson.value = ''
   transitionInputSchemaError.value = ''
+
+  fewShotConfig.enabled = false
+  fewShotConfig.prefix = 'Observe os exemplos a seguir para responder e agir:'
+  fewShotConfig.suffix = 'Agora processe a solicitação atual do usuário:'
+  fewShotConfig.use_example_selector = false
+  fewShotConfig.max_examples = 5
+  fewShotExamples.value = []
 }
 
 // Output Schema helpers
@@ -3410,6 +3595,20 @@ async function openDialog(agent = null) {
       })
       
       formDataConfigJson.value = JSON.stringify(fullAgent.config || {}, null, 2)
+
+      const agentConfigObj = fullAgent.config || {}
+      const fsConfig = agentConfigObj.few_shot_config || {}
+      fewShotConfig.enabled = fsConfig.enabled ?? false
+      fewShotConfig.prefix = fsConfig.prefix || 'Observe os exemplos a seguir para responder e agir:'
+      fewShotConfig.suffix = fsConfig.suffix || 'Agora processe a solicitação atual do usuário:'
+      fewShotConfig.use_example_selector = fsConfig.use_example_selector ?? false
+      fewShotConfig.max_examples = fsConfig.max_examples || 5
+
+      fewShotExamples.value = (agentConfigObj.few_shot_examples || []).map(ex => ({
+        input: ex.input || '',
+        acao: ex.acao || '',
+        output: ex.output || ''
+      }))
       
       const foundModel = allModels.value.find(m => m.id === fullAgent.model)
       
@@ -3506,6 +3705,17 @@ async function saveData() {
     // Prepare payload
     const payload = { ...formData }
     delete payload.id
+
+    // Embed Few-Shot config & examples into config
+    payload.config = {
+      ...(payload.config || {}),
+      few_shot_config: { ...fewShotConfig },
+      few_shot_examples: fewShotExamples.value.map(ex => ({
+        input: ex.input || '',
+        acao: ex.acao || '',
+        output: ex.output || ''
+      }))
+    }
     
     // Include schemas from JSON editors
     if (parsedOutputSchema.value) {

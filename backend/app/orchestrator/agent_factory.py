@@ -260,6 +260,55 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 system_prompt += skills_instruction
                 logger.info(f"[AgentFactory] 📌 {len(active_skills)} skill(s) disponíveis para '{agent.name}' (injetadas sob demanda)")
         
+        # Injeção de Exemplos Few-Shot se ativado no agent.config
+        agent_extra_config = agent.config or {}
+        fs_config = agent_extra_config.get("few_shot_config", {})
+        fs_examples = agent_extra_config.get("few_shot_examples", [])
+
+        if fs_config.get("enabled") and fs_examples:
+            try:
+                from langchain_core.prompts import PromptTemplate, FewShotPromptTemplate
+
+                valid_examples = []
+                example_fields = set()
+                for ex in fs_examples:
+                    if isinstance(ex, dict) and any(str(v).strip() for v in ex.values()):
+                        clean_ex = {k: str(v).strip() for k, v in ex.items() if str(v).strip()}
+                        valid_examples.append(clean_ex)
+                        example_fields.update(clean_ex.keys())
+
+                if valid_examples:
+                    template_parts = []
+                    if "input" in example_fields:
+                        template_parts.append("Entrada: {input}")
+                    if "acao" in example_fields:
+                        template_parts.append("Ação/Direcionamento: {acao}")
+                    if "output" in example_fields:
+                        template_parts.append("Saída Esperada: {output}")
+
+                    example_template = "\n".join(template_parts)
+                    example_prompt = PromptTemplate(
+                        input_variables=list(example_fields),
+                        template=example_template
+                    )
+
+                    prefix = fs_config.get("prefix") or "Observe os seguintes exemplos de comportamento esperado:"
+                    suffix = fs_config.get("suffix") or "Siga o mesmo padrão de raciocínio, uso de ferramentas e formato de resposta."
+
+                    few_shot_prompt_obj = FewShotPromptTemplate(
+                        examples=valid_examples,
+                        example_prompt=example_prompt,
+                        prefix=prefix,
+                        suffix=suffix,
+                        example_separator="\n---\n"
+                    )
+
+                    few_shot_text = few_shot_prompt_obj.format()
+                    system_prompt += f"\n\n## 💡 Exemplos de Comportamento (Few-Shot Prompting)\n{few_shot_text}\n"
+                    logger.info(f"[AgentFactory] 💡 Injetados {len(valid_examples)} exemplo(s) Few-Shot no system_prompt de '{agent.name}'")
+            except Exception as e:
+                logger.error(f"[AgentFactory] ❌ Erro ao formatar FewShotPromptTemplate para '{agent.name}': {e}", exc_info=True)
+
         config = {
             "id": agent_id,
             "name": agent.name,
