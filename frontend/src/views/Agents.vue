@@ -2404,7 +2404,7 @@
                     </v-card-title>
                     <v-card-text class="pa-4">
                       <v-row density="compact">
-                        <v-col cols="12" md="4">
+                        <v-col cols="12" md="3">
                           <v-textarea
                             v-model="ex.input"
                             label="Entrada do Usuário (Input)"
@@ -2415,7 +2415,25 @@
                             hide-details="auto"
                           ></v-textarea>
                         </v-col>
-                        <v-col cols="12" md="4">
+                        <v-col cols="12" md="3">
+                          <v-select
+                            v-model="ex.collaborator_id"
+                            :items="availableCollaboratorsOptions"
+                            item-title="title"
+                            item-value="value"
+                            label="Colaborador Alvo (Opcional)"
+                            placeholder="Nenhum (Geral)"
+                            clearable
+                            density="compact"
+                            variant="outlined"
+                            hide-details="auto"
+                          >
+                            <template v-slot:prepend-inner>
+                              <v-icon size="18" color="primary">mdi-robot</v-icon>
+                            </template>
+                          </v-select>
+                        </v-col>
+                        <v-col cols="12" md="3">
                           <v-textarea
                             v-model="ex.acao"
                             label="Ação / Direcionamento Interno"
@@ -2426,7 +2444,7 @@
                             hide-details="auto"
                           ></v-textarea>
                         </v-col>
-                        <v-col cols="12" md="4">
+                        <v-col cols="12" md="3">
                           <v-textarea
                             v-model="ex.output"
                             label="Saída Esperada (Output)"
@@ -2891,9 +2909,21 @@ const fewShotConfig = reactive({
 
 const fewShotExamples = ref([])
 
+const availableCollaboratorsOptions = computed(() => {
+  return agents.value
+    .filter(a => a.id !== formData.id)
+    .map(a => ({
+      title: a.name,
+      value: a.id,
+      name: a.name
+    }))
+})
+
 function addFewShotExample() {
   fewShotExamples.value.push({
     input: '',
+    collaborator_id: null,
+    collaborator_name: '',
     acao: '',
     output: ''
   })
@@ -3606,6 +3636,8 @@ async function openDialog(agent = null) {
 
       fewShotExamples.value = (agentConfigObj.few_shot_examples || []).map(ex => ({
         input: ex.input || '',
+        collaborator_id: ex.collaborator_id || null,
+        collaborator_name: ex.collaborator_name || '',
         acao: ex.acao || '',
         output: ex.output || ''
       }))
@@ -3710,11 +3742,16 @@ async function saveData() {
     payload.config = {
       ...(payload.config || {}),
       few_shot_config: { ...fewShotConfig },
-      few_shot_examples: fewShotExamples.value.map(ex => ({
-        input: ex.input || '',
-        acao: ex.acao || '',
-        output: ex.output || ''
-      }))
+      few_shot_examples: fewShotExamples.value.map(ex => {
+        const foundCollab = availableCollaboratorsOptions.value.find(c => c.value === ex.collaborator_id)
+        return {
+          input: ex.input || '',
+          collaborator_id: ex.collaborator_id || null,
+          collaborator_name: foundCollab ? foundCollab.name : (ex.collaborator_name || ''),
+          acao: ex.acao || '',
+          output: ex.output || ''
+        }
+      })
     }
     
     // Include schemas from JSON editors

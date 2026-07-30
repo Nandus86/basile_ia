@@ -281,6 +281,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                     template_parts = []
                     if "input" in example_fields:
                         template_parts.append("Entrada: {input}")
+                    if "collaborator_name" in example_fields:
+                        template_parts.append("Colaborador Alvo: {collaborator_name}")
                     if "acao" in example_fields:
                         template_parts.append("Ação/Direcionamento: {acao}")
                     if "output" in example_fields:
