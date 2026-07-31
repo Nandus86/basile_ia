@@ -948,19 +948,20 @@ async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, conte
         print(f"[MTM] ❌ Error saving message: {e}")
 
 
-async def _load_mtm_fallback(db, agent_id: str, session_id: str, limit: int = 5) -> list:
-    """Load last N messages from MTM when STM is empty."""
+async def _load_mtm_fallback(db, agent_id: str, session_id: str, limit: int = 5, ignore_agent: bool = False) -> list:
+    """Load last N messages from MTM when STM is empty or when querying cross-agent history."""
     try:
         from app.models.conversation_message import ConversationMessage
         from sqlalchemy import select
         import uuid
 
+        conditions = [ConversationMessage.session_id == str(session_id)]
+        if not ignore_agent and agent_id:
+            conditions.append(ConversationMessage.agent_id == uuid.UUID(str(agent_id)))
+
         q = (
             select(ConversationMessage)
-            .where(
-                ConversationMessage.agent_id == uuid.UUID(str(agent_id)),
-                ConversationMessage.session_id == str(session_id),
-            )
+            .where(*conditions)
             .order_by(ConversationMessage.created_at.desc())
             .limit(limit)
         )
@@ -1007,7 +1008,7 @@ def _build_mtm_query_tool(db, agent_id: str, session_id: str) -> list:
         limit: int = Field(default=5, description="Número de mensagens passadas a recuperar. Use valores entre 5 e 20 dependendo de quanto contexto você precisa.")
         
     async def _query_mtm(limit: int = 5) -> str:
-        messages = await _load_mtm_fallback(db, agent_id, session_id, limit=limit)
+        messages = await _load_mtm_fallback(db, agent_id, session_id, limit=limit, ignore_agent=True)
         if not messages:
             return "Nenhuma mensagem encontrada no histórico passado para este contato."
         
