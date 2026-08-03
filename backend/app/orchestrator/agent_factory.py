@@ -348,6 +348,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         Supports reasoning models (O1, O3, DeepSeek R1) with special parameters.
         Supports Qwen3 sampling parameters (top_p, top_k, min_p, etc).
         Automatically injects cost-tracking callbacks for LangSmith observability."""
+        model_id = agent_config.get("model", "gpt-4o-mini") or "gpt-4o-mini"
+        extra_config = agent_config.get("config", {}) or {}
         model_id_lower = model_id.lower()
         is_reasoning = (
             extra_config.get("is_reasoning_model", False)
@@ -358,6 +360,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         # Build kwargs based on model type
         kwargs = {"model": model_id}
+
 
         if is_reasoning:
             # Reasoning models: no temperature, use reasoning_effort and max_completion_tokens
