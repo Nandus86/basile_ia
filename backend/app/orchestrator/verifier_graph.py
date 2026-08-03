@@ -1,259 +1,106 @@
 """
-LangGraph Verifier / Critic Graph
-Performs deterministic verification of tool execution results and semantic validation of agent responses.
-Runs up to MAX_VERIFICATION_ATTEMPTS (3).
+Verifier Module — Lightweight response quality checker.
+Performs deterministic tool-error detection + optional single-shot LLM semantic check.
+Uses the SAME LLM instance already provided by the orchestrator/agent.
+No LangGraph, no Pydantic structured output — pure async for maximum speed.
+MAX_VERIFICATION_ATTEMPTS = 3.
 """
 import json
+import re
 import logging
-from typing import TypedDict, List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 
-from langchain_core.messages import BaseMessage, ToolMessage, AIMessage, SystemMessage, HumanMessage
-from langgraph.graph import StateGraph, START, END
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import ToolMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
 MAX_VERIFICATION_ATTEMPTS = 3
 
-
-class VerificationResult(BaseModel):
-    """Structured output for semantic response validation."""
-    is_valid: bool = Field(description="True se a resposta atende adequadamente ao pedido e usou os dados de ferramentas de forma correta.")
-    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Nível de confiança na validação (0 a 1).")
-    reasoning: str = Field(description="Justificativa sucinta sobre a validação.")
-    action: Literal["APPROVE", "RETRY"] = Field(description="Ação recomendada: APPROVE se a resposta está OK, RETRY se precisa de correção.")
-    correction_guidance: Optional[str] = Field(default=None, description="Instruções claras e específicas do que o agente deve corrigir caso action == RETRY.")
-
-
-class VerifierState(TypedDict, total=False):
-    """State schema for the Verifier / Critic Graph"""
-    original_message: str
-    agent_config: Dict[str, Any]
-    messages: List[Any]
-    response: str
-    verification_attempt: int
-    status: str  # "SUCCESS" | "NEED_CORRECTION" | "MAX_ATTEMPTS_REACHED"
-    correction_instruction: Optional[str]
-    validation_details: Optional[Dict[str, Any]]
-    llm: Optional[Any]
+# ── Deterministic tool-error patterns ────────────────────────────────────────
+_ERROR_KEYWORDS = frozenset([
+    "error", "erro:", "exception", "failed",
+    "statuscode': 4", "statuscode': 5",
+    "tool call blocked", "timeout",
+    "unauthorized", "bad request", "not found",
+])
 
 
-def analyze_tool_results(state: VerifierState) -> VerifierState:
+def _check_tool_errors(messages: List[Any]) -> Optional[str]:
     """
-    Deterministic Node: Inspects ToolMessages looking for errors, exceptions, or empty/failed status.
-    Requires NO LLM call for maximum speed and zero extra token cost.
+    Scans ToolMessages for deterministic error signatures.
+    Returns a description string if errors found, None otherwise.
+    Zero LLM cost — pure string matching.
     """
-    messages = state.get("messages", [])
-    attempt = state.get("verification_attempt", 0)
-    
-    if attempt >= MAX_VERIFICATION_ATTEMPTS:
-        logger.warning(f"[VerifierGraph] ⚠️ Atingido limite máximo de verificações ({MAX_VERIFICATION_ATTEMPTS}). Liberando resposta.")
-        state["status"] = "MAX_ATTEMPTS_REACHED"
-        return state
+    errors: List[str] = []
 
-    tool_errors = []
-    
     for msg in messages:
-        # Check ToolMessages or tool-like payload dictionaries
-        if isinstance(msg, ToolMessage) or (isinstance(msg, dict) and msg.get("role") == "tool"):
-            content = msg.content if isinstance(msg, ToolMessage) else msg.get("content", "")
-            tool_name = getattr(msg, "name", None) or (msg.get("name") if isinstance(msg, dict) else "ferramenta")
-            
-            content_str = str(content)
-            
-            # Check common deterministic failure signatures
-            has_error_keyword = any(err in content_str.lower() for err in [
-                "error", "erro:", "exception", "failed", "statuscode': 4", "statuscode': 5",
-                "tool call blocked", "timeout", "unauthorized", "bad request", "not found"
-            ])
-            
-            # Check JSON payloads for error fields
-            is_json_error = False
+        is_tool = isinstance(msg, ToolMessage) or (isinstance(msg, dict) and msg.get("role") == "tool")
+        if not is_tool:
+            continue
+
+        content = msg.content if isinstance(msg, ToolMessage) else msg.get("content", "")
+        tool_name = getattr(msg, "name", None) or (msg.get("name") if isinstance(msg, dict) else "tool")
+        text = str(content).lower()
+
+        # Keyword check
+        if any(kw in text for kw in _ERROR_KEYWORDS):
+            errors.append(f"'{tool_name}': {str(content)[:200]}")
+            continue
+
+        # JSON payload check
+        stripped = str(content).strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
             try:
-                if content_str.strip().startswith("{") and content_str.strip().endswith("}"):
-                    data = json.loads(content_str)
-                    if isinstance(data, dict):
-                        if data.get("error") or data.get("err") or data.get("status") == "error" or data.get("success") is False:
-                            is_json_error = True
-            except Exception:
+                data = json.loads(stripped)
+                if isinstance(data, dict) and (
+                    data.get("error") or data.get("err")
+                    or data.get("status") == "error"
+                    or data.get("success") is False
+                ):
+                    errors.append(f"'{tool_name}': {stripped[:200]}")
+            except (json.JSONDecodeError, ValueError):
                 pass
-                
-            if has_error_keyword or is_json_error:
-                tool_errors.append(f"Ferramenta '{tool_name}' retornou erro: {content_str[:300]}")
-    
-    if tool_errors:
-        err_msg = "\n".join(tool_errors)
-        logger.info(f"[VerifierGraph] 🚨 Falha determinística detectada em ferramentas:\n{err_msg}")
-        state["status"] = "NEED_CORRECTION"
-        state["correction_instruction"] = (
-            f"AUDITORIA DE SISTEMA (Tentativa {attempt + 1}/{MAX_VERIFICATION_ATTEMPTS}):\n"
-            f"A execução de ferramentas apresentou os seguintes erros:\n{err_msg}\n"
-            f"Por favor, revise os parâmetros informados, corrija a chamada da ferramenta ou tente uma abordagem alternativa para obter o resultado desejado."
-        )
-        return state
-        
-    state["status"] = "PENDING_SEMANTIC_VALIDATION"
-    return state
+
+    if errors:
+        return "\n".join(errors)
+    return None
 
 
-def _clean_json_text(text: str) -> str:
-    """Removes thinking blocks (<think>...</think>) and markdown code fences."""
-    import re
-    if not text:
-        return ""
-    text = re.sub(r'<think>.*?</think>', '', str(text), flags=re.DOTALL)
-    text = text.strip()
-    if text.startswith("```"):
-        parts = text.split("```")
-        if len(parts) > 1:
-            text = parts[1]
-            if text.startswith("json"):
-                text = text[4:]
-    return text.strip()
+def _strip_thinking(text: str) -> str:
+    """Remove <think>…</think> blocks from reasoning-model outputs."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
-async def validate_response_semantics(state: VerifierState) -> VerifierState:
+async def _semantic_check(llm: Any, original_message: str, response: str) -> Optional[str]:
     """
-    LLM Node: Evaluates if the agent's final response effectively answers the user's message
-    and correctly utilizes tool outputs.
-    Uses the exact same LLM instance supplied by the orchestrator/agent with fallback for reasoning models (DeepSeek).
+    Single ultra-short LLM call (~100 prompt tokens).
+    Returns None if approved, or a correction string if retry needed.
+    No structured output — just plain text parsing.
     """
-    # If deterministic check already caught an error, skip LLM check
-    if state.get("status") == "NEED_CORRECTION" or state.get("status") == "MAX_ATTEMPTS_REACHED":
-        return state
-
-    attempt = state.get("verification_attempt", 0)
-    original_msg = state.get("original_message", "")
-    response = state.get("response", "")
-    llm = state.get("llm")
-    
-    if not llm or not original_msg or not response:
-        state["status"] = "SUCCESS"
-        return state
-
-    prompt = f"""Você é um auditor rigoroso de qualidade de agentes IA.
-        
-SOLICITAÇÃO ORIGINAL DO USUÁRIO:
-"{original_msg}"
-
-RESPOSTA GERADA PELO AGENTE:
-"{response}"
-
-TAREFA DE AUDITORIA:
-1. Avalie se a resposta atende diretamente à solicitação do usuário.
-2. Se a solicitação exigia busca/ação via ferramenta e o agente respondeu sem dados ou de forma genérica/evasiva, marque como RETRY.
-3. Se a resposta for suficiente, precisa e completa, marque como APPROVE.
-
-Responda rigorosamente no formato JSON com os campos: "is_valid" (boolean), "reasoning" (string), "action" ("APPROVE" ou "RETRY"), e "correction_guidance" (string opcional)."""
-
-    config = RunnableConfig(
-        run_name="Verifier Semantic Check",
-        metadata={"attempt": attempt}
+    prompt = (
+        "Verifique se a RESPOSTA atende à PERGUNTA. "
+        "Se sim, responda apenas: APPROVE\n"
+        "Se não, responda: RETRY: <motivo curto>\n\n"
+        f"PERGUNTA: {original_message[:500]}\n"
+        f"RESPOSTA: {response[:1000]}"
     )
 
-    result: Optional[VerificationResult] = None
-
-    # Tentativa 1: Structured Output Padrão (Function Calling)
     try:
-        verifier_llm = llm.with_structured_output(VerificationResult)
-        res = await verifier_llm.ainvoke(
-            [SystemMessage(content=prompt)],
-            config=config
-        )
-        if isinstance(res, VerificationResult):
-            result = res
-        elif isinstance(res, dict):
-            result = VerificationResult(**res)
-    except Exception as first_err:
-        logger.warning(f"[VerifierGraph] ⚠️ Structured output padrão falhou ({first_err}), tentando json_mode...")
+        result = await llm.ainvoke([SystemMessage(content=prompt)])
+        text = _strip_thinking(result.content if hasattr(result, "content") else str(result)).strip()
 
-    # Tentativa 2: Structured Output em json_mode (necessário para DeepSeek / Qwen no OpenRouter)
-    if not result:
-        try:
-            verifier_llm_json = llm.with_structured_output(VerificationResult, method="json_mode")
-            res = await verifier_llm_json.ainvoke(
-                [SystemMessage(content=prompt + "\n\nResponda estritamente em formato JSON válido.")],
-                config=config
-            )
-            if isinstance(res, VerificationResult):
-                result = res
-            elif isinstance(res, dict):
-                result = VerificationResult(**res)
-        except Exception as second_err:
-            logger.warning(f"[VerifierGraph] ⚠️ json_mode falhou ({second_err}), executando fallback com extração manual de JSON...")
+        if text.upper().startswith("APPROVE"):
+            return None
+        if text.upper().startswith("RETRY"):
+            reason = text.split(":", 1)[1].strip() if ":" in text else text
+            return reason or "Resposta incompleta"
+    except Exception as e:
+        logger.warning(f"[Verifier] ⚠️ Semantic check failed ({e}), approving by resilience.")
 
-    # Tentativa 3: Fallback Manual com Extração e Limpeza de <think>
-    if not result:
-        try:
-            raw_msg = await llm.ainvoke(
-                [SystemMessage(content=prompt + "\n\nResponda APENAS com um objeto JSON válido no formato:\n{\"is_valid\": true, \"reasoning\": \"...\", \"action\": \"APPROVE\", \"correction_guidance\": \"...\"}")],
-                config=config
-            )
-            raw_content = _clean_json_text(raw_msg.content if hasattr(raw_msg, "content") else str(raw_msg))
-            if raw_content:
-                parsed_json = json.loads(raw_content)
-                result = VerificationResult(**parsed_json)
-        except Exception as third_err:
-            logger.warning(f"[VerifierGraph] ⚠️ Fallback de extração manual falhou ({third_err}). Aprovando resposta por resiliência.")
-
-    if result:
-        state["validation_details"] = result.dict() if hasattr(result, "dict") else {}
-        if not result.is_valid and result.action == "RETRY":
-            logger.info(f"[VerifierGraph] 🔍 Validação semântica reprovou resposta: {result.reasoning}")
-            state["status"] = "NEED_CORRECTION"
-            guidance = result.correction_guidance or result.reasoning
-            state["correction_instruction"] = (
-                f"AUDITORIA SEMÂNTICA (Tentativa {attempt + 1}/{MAX_VERIFICATION_ATTEMPTS}):\n"
-                f"A resposta gerada foi considerada incompleta ou inconsistente: {result.reasoning}.\n"
-                f"Instrução de correção: {guidance}"
-            )
-        else:
-            logger.info("[VerifierGraph] ✅ Resposta aprovada na auditoria semântica.")
-            state["status"] = "SUCCESS"
-    else:
-        state["status"] = "SUCCESS"
-
-    return state
+    return None
 
 
-
-def route_verification(state: VerifierState) -> str:
-    """Conditional Edge: Decides whether to request agent correction or end verification."""
-    status = state.get("status", "SUCCESS")
-    attempt = state.get("verification_attempt", 0)
-    
-    if status == "NEED_CORRECTION" and attempt < MAX_VERIFICATION_ATTEMPTS:
-        return "need_correction"
-    return "approved"
-
-
-def build_verifier_graph() -> StateGraph:
-    """Builds and compiles the Verifier / Critic LangGraph."""
-    graph = StateGraph(VerifierState)
-    
-    graph.add_node("analyze_tools", analyze_tool_results)
-    graph.add_node("validate_semantics", validate_response_semantics)
-    
-    graph.set_entry_point("analyze_tools")
-    
-    graph.add_edge("analyze_tools", "validate_semantics")
-    
-    graph.add_conditional_edges(
-        "validate_semantics",
-        route_verification,
-        {
-            "need_correction": END,
-            "approved": END
-        }
-    )
-    
-    return graph.compile()
-
-
-# Single compiled instance for reuse
-verifier_graph_compiled = build_verifier_graph()
-
+# ── Public API ───────────────────────────────────────────────────────────────
 
 async def run_verifier(
     original_message: str,
@@ -261,30 +108,43 @@ async def run_verifier(
     messages: List[Any],
     agent_config: Dict[str, Any],
     llm: Any,
-    verification_attempt: int = 0
+    verification_attempt: int = 0,
 ) -> Dict[str, Any]:
     """
-    Runner function to execute the Verifier Graph.
-    
-    Returns:
-        Dict with status ("SUCCESS" | "NEED_CORRECTION" | "MAX_ATTEMPTS_REACHED")
-        and correction_instruction if status == "NEED_CORRECTION".
+    Lightweight verifier — called after each agent execution turn.
+
+    Returns dict with:
+      status: "SUCCESS" | "NEED_CORRECTION" | "MAX_ATTEMPTS_REACHED"
+      correction_instruction: str | None
     """
-    initial_state: VerifierState = {
-        "original_message": original_message,
-        "response": response,
-        "messages": messages,
-        "agent_config": agent_config,
-        "verification_attempt": verification_attempt,
-        "status": "PENDING",
-        "correction_instruction": None,
-        "validation_details": None,
-        "llm": llm
-    }
-    
-    result = await verifier_graph_compiled.ainvoke(initial_state)
-    return {
-        "status": result.get("status", "SUCCESS"),
-        "correction_instruction": result.get("correction_instruction"),
-        "validation_details": result.get("validation_details")
-    }
+    if verification_attempt >= MAX_VERIFICATION_ATTEMPTS:
+        logger.warning("[Verifier] ⚠️ Max attempts reached, releasing response.")
+        return {"status": "MAX_ATTEMPTS_REACHED", "correction_instruction": None}
+
+    # ── Step 1: Deterministic tool-error scan (instant, zero cost) ──
+    tool_err = _check_tool_errors(messages)
+    if tool_err:
+        logger.info(f"[Verifier] 🚨 Tool errors detected:\n{tool_err}")
+        return {
+            "status": "NEED_CORRECTION",
+            "correction_instruction": (
+                f"AUDITORIA (tentativa {verification_attempt + 1}/{MAX_VERIFICATION_ATTEMPTS}): "
+                f"Ferramentas retornaram erros:\n{tool_err}\n"
+                f"Corrija os parâmetros ou tente abordagem alternativa."
+            ),
+        }
+
+    # ── Step 2: Quick semantic check (single short LLM call) ──
+    retry_reason = await _semantic_check(llm, original_message, response)
+    if retry_reason:
+        logger.info(f"[Verifier] 🔍 Semantic check: RETRY — {retry_reason}")
+        return {
+            "status": "NEED_CORRECTION",
+            "correction_instruction": (
+                f"AUDITORIA (tentativa {verification_attempt + 1}/{MAX_VERIFICATION_ATTEMPTS}): "
+                f"{retry_reason}"
+            ),
+        }
+
+    logger.info("[Verifier] ✅ Response approved.")
+    return {"status": "SUCCESS", "correction_instruction": None}
