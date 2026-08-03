@@ -1,8 +1,7 @@
 """
 Verifier Module — Lightweight response quality checker.
-Performs deterministic tool-error detection + optional single-shot LLM semantic check.
-Uses the SAME LLM instance already provided by the orchestrator/agent.
-No LangGraph, no Pydantic structured output — pure async for maximum speed.
+Performs deterministic tool-error detection + single-shot GPT-4o-mini semantic check.
+Always uses gpt-4o-mini for speed and reliability — independent of the agent's model.
 MAX_VERIFICATION_ATTEMPTS = 3.
 """
 import json
@@ -66,17 +65,29 @@ def _check_tool_errors(messages: List[Any]) -> Optional[str]:
     return None
 
 
-def _strip_thinking(text: str) -> str:
-    """Remove <think>…</think> blocks from reasoning-model outputs."""
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-
-
-async def _semantic_check(llm: Any, original_message: str, response: str) -> Optional[str]:
+def _get_verifier_llm():
     """
-    Single ultra-short LLM call (~100 prompt tokens).
+    Returns a dedicated gpt-4o-mini instance for verification.
+    Fast, cheap, reliable — never depends on the agent's model.
+    """
+    from langchain_openai import ChatOpenAI
+    from app.config import settings
+
+    return ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0,
+        max_tokens=150,
+        api_key=settings.OPENAI_API_KEY,
+    )
+
+
+async def _semantic_check(original_message: str, response: str) -> Optional[str]:
+    """
+    Single ultra-short GPT-4o-mini call (~100 prompt tokens).
     Returns None if approved, or a correction string if retry needed.
-    No structured output — just plain text parsing.
     """
+    llm = _get_verifier_llm()
+
     prompt = (
         "Verifique se a RESPOSTA atende à PERGUNTA. "
         "Se sim, responda apenas: APPROVE\n"
@@ -87,7 +98,7 @@ async def _semantic_check(llm: Any, original_message: str, response: str) -> Opt
 
     try:
         result = await llm.ainvoke([SystemMessage(content=prompt)])
-        text = _strip_thinking(result.content if hasattr(result, "content") else str(result)).strip()
+        text = (result.content if hasattr(result, "content") else str(result)).strip()
 
         if text.upper().startswith("APPROVE"):
             return None
@@ -107,11 +118,12 @@ async def run_verifier(
     response: str,
     messages: List[Any],
     agent_config: Dict[str, Any],
-    llm: Any,
+    llm: Any = None,
     verification_attempt: int = 0,
 ) -> Dict[str, Any]:
     """
     Lightweight verifier — called after each agent execution turn.
+    Always uses gpt-4o-mini internally (llm param kept for backward compat but ignored).
 
     Returns dict with:
       status: "SUCCESS" | "NEED_CORRECTION" | "MAX_ATTEMPTS_REACHED"
@@ -134,8 +146,8 @@ async def run_verifier(
             ),
         }
 
-    # ── Step 2: Quick semantic check (single short LLM call) ──
-    retry_reason = await _semantic_check(llm, original_message, response)
+    # ── Step 2: Quick semantic check via gpt-4o-mini ──
+    retry_reason = await _semantic_check(original_message, response)
     if retry_reason:
         logger.info(f"[Verifier] 🔍 Semantic check: RETRY — {retry_reason}")
         return {
