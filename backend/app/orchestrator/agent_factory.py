@@ -348,9 +348,13 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         Supports reasoning models (O1, O3, DeepSeek R1) with special parameters.
         Supports Qwen3 sampling parameters (top_p, top_k, min_p, etc).
         Automatically injects cost-tracking callbacks for LangSmith observability."""
-        model_id = agent_config.get("model", "gpt-4o-mini")
-        extra_config = agent_config.get("config", {})
-        is_reasoning = extra_config.get("is_reasoning_model", False)
+        model_id_lower = model_id.lower()
+        is_reasoning = (
+            extra_config.get("is_reasoning_model", False)
+            or "deepseek" in model_id_lower
+            or "r1" in model_id_lower
+            or "reasoning" in model_id_lower
+        )
 
         # Build kwargs based on model type
         kwargs = {"model": model_id}
@@ -360,8 +364,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             reasoning_effort = extra_config.get("reasoning_effort", "medium")
             max_completion_tokens = extra_config.get("max_completion_tokens", 16384)
 
-            # Qwen3 thinking models use temperature=0.6, OpenAI O1/O3 use 1.0
-            if "qwen" in model_id.lower():
+            # Qwen/DeepSeek thinking models use custom temperature or max_completion_tokens
+            if "qwen" in model_id_lower or "deepseek" in model_id_lower:
                 kwargs["temperature"] = 0.6
             else:
                 kwargs["temperature"] = 1
@@ -370,6 +374,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 "reasoning_effort": reasoning_effort,
                 "max_completion_tokens": max_completion_tokens
             }
+
         else:
             # Traditional models: use temperature and max_tokens
             kwargs["temperature"] = agent_config.get("temperature", 0.7)

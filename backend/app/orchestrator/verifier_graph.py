@@ -97,11 +97,27 @@ def analyze_tool_results(state: VerifierState) -> VerifierState:
     return state
 
 
+def _clean_json_text(text: str) -> str:
+    """Removes thinking blocks (<think>...</think>) and markdown code fences."""
+    import re
+    if not text:
+        return ""
+    text = re.sub(r'<think>.*?</think>', '', str(text), flags=re.DOTALL)
+    text = text.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) > 1:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+    return text.strip()
+
+
 async def validate_response_semantics(state: VerifierState) -> VerifierState:
     """
     LLM Node: Evaluates if the agent's final response effectively answers the user's message
     and correctly utilizes tool outputs.
-    Uses the exact same LLM instance supplied by the orchestrator/agent.
+    Uses the exact same LLM instance supplied by the orchestrator/agent with fallback for reasoning models (DeepSeek).
     """
     # If deterministic check already caught an error, skip LLM check
     if state.get("status") == "NEED_CORRECTION" or state.get("status") == "MAX_ATTEMPTS_REACHED":
@@ -116,11 +132,7 @@ async def validate_response_semantics(state: VerifierState) -> VerifierState:
         state["status"] = "SUCCESS"
         return state
 
-    try:
-        # Bind structured output
-        verifier_llm = llm.with_structured_output(VerificationResult)
-        
-        prompt = f"""Você é um auditor rigoroso de qualidade de agentes IA.
+    prompt = f"""Você é um auditor rigoroso de qualidade de agentes IA.
         
 SOLICITAÇÃO ORIGINAL DO USUÁRIO:
 "{original_msg}"
@@ -133,21 +145,61 @@ TAREFA DE AUDITORIA:
 2. Se a solicitação exigia busca/ação via ferramenta e o agente respondeu sem dados ou de forma genérica/evasiva, marque como RETRY.
 3. Se a resposta for suficiente, precisa e completa, marque como APPROVE.
 
-Responda rigorosamente no formato de dados estruturado."""
+Responda rigorosamente no formato JSON com os campos: "is_valid" (boolean), "reasoning" (string), "action" ("APPROVE" ou "RETRY"), e "correction_guidance" (string opcional)."""
 
-        config = RunnableConfig(
-            run_name="Verifier Semantic Check",
-            metadata={"attempt": attempt}
-        )
-        
-        result: VerificationResult = await verifier_llm.ainvoke(
+    config = RunnableConfig(
+        run_name="Verifier Semantic Check",
+        metadata={"attempt": attempt}
+    )
+
+    result: Optional[VerificationResult] = None
+
+    # Tentativa 1: Structured Output Padrão (Function Calling)
+    try:
+        verifier_llm = llm.with_structured_output(VerificationResult)
+        res = await verifier_llm.ainvoke(
             [SystemMessage(content=prompt)],
             config=config
         )
-        
+        if isinstance(res, VerificationResult):
+            result = res
+        elif isinstance(res, dict):
+            result = VerificationResult(**res)
+    except Exception as first_err:
+        logger.warning(f"[VerifierGraph] ⚠️ Structured output padrão falhou ({first_err}), tentando json_mode...")
+
+    # Tentativa 2: Structured Output em json_mode (necessário para DeepSeek / Qwen no OpenRouter)
+    if not result:
+        try:
+            verifier_llm_json = llm.with_structured_output(VerificationResult, method="json_mode")
+            res = await verifier_llm_json.ainvoke(
+                [SystemMessage(content=prompt + "\n\nResponda estritamente em formato JSON válido.")],
+                config=config
+            )
+            if isinstance(res, VerificationResult):
+                result = res
+            elif isinstance(res, dict):
+                result = VerificationResult(**res)
+        except Exception as second_err:
+            logger.warning(f"[VerifierGraph] ⚠️ json_mode falhou ({second_err}), executando fallback com extração manual de JSON...")
+
+    # Tentativa 3: Fallback Manual com Extração e Limpeza de <think>
+    if not result:
+        try:
+            raw_msg = await llm.ainvoke(
+                [SystemMessage(content=prompt + "\n\nResponda APENAS com um objeto JSON válido no formato:\n{\"is_valid\": true, \"reasoning\": \"...\", \"action\": \"APPROVE\", \"correction_guidance\": \"...\"}")],
+                config=config
+            )
+            raw_content = _clean_json_text(raw_msg.content if hasattr(raw_msg, "content") else str(raw_msg))
+            if raw_content:
+                parsed_json = json.loads(raw_content)
+                result = VerificationResult(**parsed_json)
+        except Exception as third_err:
+            logger.warning(f"[VerifierGraph] ⚠️ Fallback de extração manual falhou ({third_err}). Aprovando resposta por resiliência.")
+
+    if result:
         state["validation_details"] = result.dict() if hasattr(result, "dict") else {}
-        
-        if result and not result.is_valid and result.action == "RETRY":
+        if not result.is_valid and result.action == "RETRY":
             logger.info(f"[VerifierGraph] 🔍 Validação semântica reprovou resposta: {result.reasoning}")
             state["status"] = "NEED_CORRECTION"
             guidance = result.correction_guidance or result.reasoning
@@ -159,12 +211,11 @@ Responda rigorosamente no formato de dados estruturado."""
         else:
             logger.info("[VerifierGraph] ✅ Resposta aprovada na auditoria semântica.")
             state["status"] = "SUCCESS"
-            
-    except Exception as e:
-        logger.warning(f"[VerifierGraph] Erro ao executar validação semântica (aprovando por tolerância): {e}")
+    else:
         state["status"] = "SUCCESS"
 
     return state
+
 
 
 def route_verification(state: VerifierState) -> str:
