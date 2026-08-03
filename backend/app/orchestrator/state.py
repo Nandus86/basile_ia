@@ -52,6 +52,10 @@ class SupervisorState(TypedDict, total=False):
     # Session continuity
     session_context: Optional[Dict[str, Any]]  # {last_agent_id, last_agent_name, agents_used}
 
+    # Verification / Auditor tracking
+    verification_attempts: int
+    last_verification_result: Optional[Dict[str, Any]]
+
 
 # Legacy state for backward compatibility
 class OrchestratorState(TypedDict, total=False):
