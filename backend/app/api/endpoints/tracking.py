@@ -53,6 +53,8 @@ async def unlock_session(session_id: str):
     }
 
 
+from datetime import datetime
+
 @router.get("/logs")
 async def get_tracking_logs(
     skip: int = Query(0, ge=0),
@@ -64,12 +66,18 @@ async def get_tracking_logs(
     member_name: Optional[str] = None,
     user_message: Optional[str] = None,
     agent_response: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Get paginated list of system webhook/job logs (lightweight list view).
     Uses denormalized indexed columns for fast filtering instead of JSON casting."""
     query = select(JobLog)
 
+    if start_date:
+        query = query.where(JobLog.created_at >= start_date)
+    if end_date:
+        query = query.where(JobLog.created_at <= end_date)
     if status:
         query = query.where(JobLog.status == status)
     if path:

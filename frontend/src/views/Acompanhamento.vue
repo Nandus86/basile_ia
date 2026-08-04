@@ -105,6 +105,12 @@
           <v-col cols="12" sm="12" md="4">
             <v-select v-model="statusFilter" :items="statusOptions" label="Status" variant="outlined" density="compact" hide-details clearable @update:model-value="fetchLogs"></v-select>
           </v-col>
+          <v-col cols="12" sm="6" md="4">
+            <v-text-field v-model="searchStartDate" type="datetime-local" label="Data Inicial" variant="outlined" density="compact" hide-details clearable @update:model-value="fetchLogs"></v-text-field>
+          </v-col>
+          <v-col cols="12" sm="6" md="4">
+            <v-text-field v-model="searchEndDate" type="datetime-local" label="Data Final" variant="outlined" density="compact" hide-details clearable @update:model-value="fetchLogs"></v-text-field>
+          </v-col>
         </v-row>
       </v-card-text>
       
@@ -2127,6 +2133,8 @@ const searchChurchName = ref('')
 const searchMemberName = ref('')
 const searchMessage = ref('')
 const searchResponse = ref('')
+const searchStartDate = ref('')
+const searchEndDate = ref('')
 const statusFilter = ref(null)
 const statusOptions = ['completed', 'failed', 'queued', 'in_progress', 'buffered', 'paused']
 
@@ -2348,6 +2356,8 @@ const fetchLogs = async () => {
     if (searchMemberName.value) url += `&member_name=${encodeURIComponent(searchMemberName.value)}`
     if (searchMessage.value) url += `&user_message=${encodeURIComponent(searchMessage.value)}`
     if (searchResponse.value) url += `&agent_response=${encodeURIComponent(searchResponse.value)}`
+    if (searchStartDate.value) url += `&start_date=${encodeURIComponent(searchStartDate.value)}`
+    if (searchEndDate.value) url += `&end_date=${encodeURIComponent(searchEndDate.value)}`
 
     const { data } = await axiosInstance.get(url)
 
