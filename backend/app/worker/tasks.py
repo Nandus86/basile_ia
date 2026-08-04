@@ -308,7 +308,32 @@ async def _enrich_agent_prompt(
         f"- **DIRETRIZ DE SAUDAÇÃO**: {greeting_rule}\n"
     )
 
-    # 0. Session Continuity — inject previous agent info
+    # 0. User Analytics Injection
+    analytics_info = ""
+    try:
+        from app.models.user_analytics import UserAnalytics
+        from sqlalchemy.future import select
+        analytics_query = select(UserAnalytics).where(UserAnalytics.session_id == session_id)
+        analytics_res = await db.execute(analytics_query)
+        analytics = analytics_res.scalar_one_or_none()
+        
+        if analytics and analytics.interaction_count >= 3:
+            learned = analytics.profile_data.get("__zona_aprendizado", {})
+            metrics = analytics.profile_data.get("__zona_metricas", {})
+            
+            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
+                f"\n\n## 👤 Inteligência Analítica do Contato\n\n"
+                f"- Engajamento: {analytics.engagement_score}/100 ({analytics.care_priority})\n"
+                f"- Interações totais: {analytics.interaction_count}\n"
+                f"- Tópicos de interesse: {learned.get('topics_of_interest', 'Não detectado')}\n"
+                f"- Estilo de comunicação: {learned.get('communication_style', 'Não detectado')}\n"
+                f"- Horário preferido: {metrics.get('preferred_hours', 'Não detectado')}\n"
+                f"- Sentimento predominante: {learned.get('emotional_baseline', 'Não detectado')}\n"
+            )
+    except Exception as e:
+        print(f"[Task] Error fetching UserAnalytics: {e}")
+
+    # 1. Session Continuity — inject previous agent info
     if session_context:
         last_name = session_context.get("last_agent_name", "")
         agents_used = session_context.get("agents_used", [])

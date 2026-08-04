@@ -134,6 +134,9 @@ from app.api import reports
 app.include_router(reports.admin_router)
 app.include_router(reports.church_router)
 
+# Analytics
+from app.api.endpoints import analytics
+app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 
 @app.get("/")
 async def root():

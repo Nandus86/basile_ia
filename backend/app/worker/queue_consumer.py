@@ -462,8 +462,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             duration_ms=job_log.duration_ms,
                             created_at=job_log.created_at.isoformat() if job_log.created_at else None,
                         )
+                        
+                        # UPDATE ANALYTICS
+                        from app.services.analytics_service import AnalyticsService
+                        if session_id:
+                            analytics_svc = AnalyticsService(db_session)
+                            await analytics_svc.update_post_interaction(session_id, payload)
+                            
             except Exception as e:
-                logger.error(f"Failed to update JobLog completed: {e}")
+                logger.error(f"Failed to update JobLog completed or Analytics: {e}")
 
             logger.info(f"Successfully processed webhook job {job_id}, result type: {type(final_result).__name__}")
 
