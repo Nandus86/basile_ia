@@ -16,6 +16,17 @@ class AnalyticsService:
         query = select(UserAnalytics).where(UserAnalytics.session_id == session_id)
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
+        
+    def _get_value_by_path(self, payload: dict, path: str) -> Any:
+        """Resolve dot notation paths against the payload dict."""
+        keys = path.split('.')
+        current = payload
+        for key in keys:
+            if isinstance(current, dict):
+                current = current.get(key)
+            else:
+                return None
+        return current
 
     def _calculate_engagement_score(self, profile_data: dict, interaction_count: int, days_since_last: int) -> float:
         """Score 0-100, calculado deterministicamente."""
@@ -98,24 +109,41 @@ class AnalyticsService:
                 if church_id:
                     analytics.church_id = church_id
                     
+            # --- Fetch Config ---
+            from app.models.analytics_config import AnalyticsConfig
+            config_query = select(AnalyticsConfig).limit(1)
+            config_res = await self.db.execute(config_query)
+            config = config_res.scalar_one_or_none()
+                    
             # --- Update CRM Zone (Snapshot) ---
-            # Extract standard fields to __zona_crm only if they changed (or just refresh)
-            # User Q8 answer: "só em mudanças" -> We check if the new payload differs for relevant fields.
             crm_zone = analytics.profile_data.get("__zona_crm", {})
-            member = payload.get("member", {})
-            member_fin = payload.get("member_fin", {})
-            church = payload.get("church", {})
-            glob = payload.get("global", {})
+            new_crm_data = {}
             
-            new_crm_data = {
-                "display_name": member.get("fullname"),
-                "first_name": member.get("name") or glob.get("name"),
-                "phone": member.get("phone") or glob.get("phone"),
-                "role": member.get("role"),
-                "role_profile": member_fin.get("role_profile"),
-                "church_name": church.get("church_name"),
-                "preferred_language": member.get("preferredLanguage") or church.get("preferredLanguage")
-            }
+            if config and config.crm_mapping:
+                # Dynamic mapping
+                for rule in config.crm_mapping:
+                    dest_key = rule.get("dest_key")
+                    source_path = rule.get("source_path")
+                    if dest_key and source_path:
+                        val = self._get_value_by_path(payload, source_path)
+                        if val is not None:
+                            new_crm_data[dest_key] = val
+            else:
+                # Fallback to hardcoded defaults
+                member = payload.get("member", {})
+                member_fin = payload.get("member_fin", {})
+                church = payload.get("church", {})
+                glob = payload.get("global", {})
+                
+                new_crm_data = {
+                    "display_name": member.get("fullname"),
+                    "first_name": member.get("name") or glob.get("name"),
+                    "phone": member.get("phone") or glob.get("phone"),
+                    "role": member.get("role"),
+                    "role_profile": member_fin.get("role_profile"),
+                    "church_name": church.get("church_name"),
+                    "preferred_language": member.get("preferredLanguage") or church.get("preferredLanguage")
+                }
             
             # Remove None values
             new_crm_data = {k: v for k, v in new_crm_data.items() if v is not None}
@@ -132,11 +160,29 @@ class AnalyticsService:
             
             analytics.profile_data["__zona_crm"] = crm_zone
 
-            # --- Update Metrics Zone (Deterministic) ---
+            # --- Update Metrics Zone ---
             metrics_zone = analytics.profile_data.get("__zona_metricas", {})
-            total_sessions = metrics_zone.get("total_sessions", 0) + 1 # simplistic approach for this demo
-            metrics_zone["total_sessions"] = total_sessions
-            metrics_zone["last_agent_name"] = payload.get("ai_params", {}).get("name")
+            
+            if config and config.metrics_mapping:
+                # Dynamic mapping
+                for rule in config.metrics_mapping:
+                    dest_key = rule.get("dest_key")
+                    source_path = rule.get("source_path")
+                    if dest_key and source_path:
+                        val = self._get_value_by_path(payload, source_path)
+                        if val is not None:
+                            # Note: Metrics mapping usually handles simple value injection.
+                            # If they want incremental counters, it would require deeper DSL.
+                            # For now we support setting the value.
+                            # We will still hardcode total_sessions as a base feature.
+                            metrics_zone[dest_key] = val
+                            
+            # Always ensure total_sessions increments if we are here via webhook
+            # This is a core metric that should not be removed
+            metrics_zone["total_sessions"] = metrics_zone.get("total_sessions", 0) + 1
+            if not config or not config.metrics_mapping:
+                # Fallback defaults
+                metrics_zone["last_agent_name"] = payload.get("ai_params", {}).get("name")
             
             analytics.profile_data["__zona_metricas"] = metrics_zone
 

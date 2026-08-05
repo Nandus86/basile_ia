@@ -42,11 +42,15 @@ class AnalyticsConfigUpdate(BaseModel):
     agent_id: Optional[str] = None
     cron_time: Optional[str] = None
     is_active: Optional[bool] = None
+    crm_mapping: Optional[List[Dict[str, Any]]] = None
+    metrics_mapping: Optional[List[Dict[str, Any]]] = None
 
 class AnalyticsConfigResponse(BaseModel):
     id: UUID
     agent_id: Optional[str] = None
     cron_time: str
     is_active: bool
+    crm_mapping: List[Dict[str, Any]]
+    metrics_mapping: List[Dict[str, Any]]
 
     model_config = {"from_attributes": True}

@@ -89,47 +89,113 @@
     </v-dialog>
 
     <!-- Dialog for Config -->
-    <v-dialog v-model="configDialog" max-width="600px">
+    <v-dialog v-model="configDialog" max-width="800px">
       <v-card>
         <v-card-title class="text-h5 bg-surface pa-4 d-flex justify-space-between align-center">
-          Configurar Agente Analista
+          Configurações de Analytics
           <v-btn icon="mdi-close" variant="text" @click="configDialog = false"></v-btn>
         </v-card-title>
-        <v-card-text class="pa-4">
-          <v-form ref="configForm">
-            <v-row>
-              <v-col cols="12">
-                <v-switch
-                  v-model="config.is_active"
-                  label="Motor Analista Ativo"
-                  color="primary"
-                ></v-switch>
-              </v-col>
-              <v-col cols="12" md="8">
-                <v-select
-                  v-model="config.agent_id"
-                  :items="availableAgents"
-                  item-title="name"
-                  item-value="id"
-                  label="Selecione o Agente Analista"
-                  placeholder="Ex: Agente Analista de Perfis"
-                  variant="outlined"
-                  :disabled="!config.is_active"
-                ></v-select>
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="config.cron_time"
-                  label="Horário de Disparo"
-                  type="time"
-                  variant="outlined"
-                  :disabled="!config.is_active"
-                ></v-text-field>
-              </v-col>
-            </v-row>
-          </v-form>
+        
+        <v-tabs v-model="configTab" bg-color="surface">
+          <v-tab value="motor">Motor de IA</v-tab>
+          <v-tab value="crm">Mapeamento CRM</v-tab>
+          <v-tab value="metrics">Mapeamento Métricas</v-tab>
+        </v-tabs>
+
+        <v-card-text class="pa-4" style="min-height: 300px; max-height: 60vh; overflow-y: auto;">
+          <v-window v-model="configTab">
+            <!-- ABA 1: MOTOR DE IA -->
+            <v-window-item value="motor">
+              <v-form ref="configForm">
+                <v-row class="mt-2">
+                  <v-col cols="12">
+                    <v-switch
+                      v-model="config.is_active"
+                      label="Motor Analista Ativo"
+                      color="primary"
+                    ></v-switch>
+                  </v-col>
+                  <v-col cols="12" md="8">
+                    <v-select
+                      v-model="config.agent_id"
+                      :items="availableAgents"
+                      item-title="name"
+                      item-value="id"
+                      label="Selecione o Agente Analista"
+                      placeholder="Ex: Agente Analista de Perfis"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                    ></v-select>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field
+                      v-model="config.cron_time"
+                      label="Horário de Disparo"
+                      type="time"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                    ></v-text-field>
+                  </v-col>
+                </v-row>
+              </v-form>
+            </v-window-item>
+
+            <!-- ABA 2: MAPEAMENTO CRM -->
+            <v-window-item value="crm">
+              <div class="d-flex justify-space-between align-center mb-4 mt-2">
+                <div>
+                  <h3 class="text-subtitle-1 font-weight-bold">Campos do CRM</h3>
+                  <p class="text-caption text-medium-emphasis">Configure quais chaves do Payload preenchem a Zona CRM.</p>
+                </div>
+                <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-plus" @click="addMapping('crm')">Adicionar Campo</v-btn>
+              </div>
+              
+              <v-row v-for="(item, index) in config.crm_mapping" :key="'crm'+index" class="align-center mb-2">
+                <v-col cols="12" md="5" class="py-1">
+                  <v-text-field v-model="item.dest_key" label="Chave de Destino (Ex: Nome)" variant="outlined" density="compact" hide-details></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6" class="py-1">
+                  <v-text-field v-model="item.source_path" label="Caminho no Payload (Ex: member.fullname)" variant="outlined" density="compact" hide-details></v-text-field>
+                </v-col>
+                <v-col cols="12" md="1" class="py-1 text-center">
+                  <v-btn icon="mdi-delete" color="error" variant="text" size="small" @click="removeMapping('crm', index)"></v-btn>
+                </v-col>
+              </v-row>
+              <div v-if="config.crm_mapping.length === 0" class="text-center pa-4 text-medium-emphasis">
+                Nenhum mapeamento configurado. O sistema usará os campos padrão (Nome, Telefone, Igreja, etc).
+              </div>
+            </v-window-item>
+
+            <!-- ABA 3: MAPEAMENTO MÉTRICAS -->
+            <v-window-item value="metrics">
+              <div class="d-flex justify-space-between align-center mb-4 mt-2">
+                <div>
+                  <h3 class="text-subtitle-1 font-weight-bold">Métricas Extras</h3>
+                  <p class="text-caption text-medium-emphasis">Extraia dados brutos do Payload para a Zona de Métricas (Apenas valores diretos).</p>
+                </div>
+                <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-plus" @click="addMapping('metrics')">Adicionar Campo</v-btn>
+              </div>
+              
+              <v-row v-for="(item, index) in config.metrics_mapping" :key="'met'+index" class="align-center mb-2">
+                <v-col cols="12" md="5" class="py-1">
+                  <v-text-field v-model="item.dest_key" label="Chave de Destino (Ex: ID da Origem)" variant="outlined" density="compact" hide-details></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6" class="py-1">
+                  <v-text-field v-model="item.source_path" label="Caminho no Payload (Ex: origin_id)" variant="outlined" density="compact" hide-details></v-text-field>
+                </v-col>
+                <v-col cols="12" md="1" class="py-1 text-center">
+                  <v-btn icon="mdi-delete" color="error" variant="text" size="small" @click="removeMapping('metrics', index)"></v-btn>
+                </v-col>
+              </v-row>
+              <div v-if="config.metrics_mapping.length === 0" class="text-center pa-4 text-medium-emphasis">
+                Nenhum mapeamento extra. O sistema contará sessões automaticamente.
+              </div>
+            </v-window-item>
+          </v-window>
         </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
+        
+        <v-divider></v-divider>
+        <v-card-actions class="pa-4">
           <v-spacer></v-spacer>
           <v-btn color="grey" variant="text" @click="configDialog = false">Cancelar</v-btn>
           <v-btn color="primary" @click="saveConfig" :loading="savingConfig">Salvar Configuração</v-btn>
@@ -149,13 +215,16 @@ const dialog = ref(false)
 const selectedUser = ref(null)
 
 // Config states
+const configTab = ref('motor')
 const configDialog = ref(false)
 const savingConfig = ref(false)
 const availableAgents = ref([])
 const config = ref({
   is_active: false,
   agent_id: null,
-  cron_time: '03:00'
+  cron_time: '03:00',
+  crm_mapping: [],
+  metrics_mapping: []
 })
 
 const headers = [
@@ -216,11 +285,29 @@ const openConfig = async () => {
       config.value.is_active = configResp.data.is_active
       config.value.agent_id = configResp.data.agent_id
       config.value.cron_time = configResp.data.cron_time
+      config.value.crm_mapping = configResp.data.crm_mapping || []
+      config.value.metrics_mapping = configResp.data.metrics_mapping || []
     }
     
     configDialog.value = true
   } catch (error) {
     console.error('Failed to load config or agents', error)
+  }
+}
+
+const addMapping = (type) => {
+  if (type === 'crm') {
+    config.value.crm_mapping.push({ dest_key: '', source_path: '' })
+  } else if (type === 'metrics') {
+    config.value.metrics_mapping.push({ dest_key: '', source_path: '' })
+  }
+}
+
+const removeMapping = (type, index) => {
+  if (type === 'crm') {
+    config.value.crm_mapping.splice(index, 1)
+  } else if (type === 'metrics') {
+    config.value.metrics_mapping.splice(index, 1)
   }
 }
 
