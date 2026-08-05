@@ -353,7 +353,7 @@ onMounted(() => {
               icon
               variant="text"
               size="small"
-              color="info"
+              color="white"
               @click="openWebhookInfo(item)"
             >
               <v-icon icon="mdi-web"></v-icon>
@@ -363,7 +363,7 @@ onMounted(() => {
               icon
               variant="text"
               size="small"
-              color="secondary"
+              color="white"
               @click="duplicateConfig(item)"
             >
               <v-icon :icon="mdiContentCopy"></v-icon>
@@ -373,7 +373,7 @@ onMounted(() => {
               icon
               variant="text"
               size="small"
-              color="primary"
+              color="white"
               @click="editConfig(item)"
             >
               <v-icon :icon="mdiPencilOutline"></v-icon>
@@ -383,7 +383,7 @@ onMounted(() => {
               icon
               variant="text"
               size="small"
-              color="error"
+              color="white"
               @click="confirmDelete(item)"
             >
               <v-icon :icon="mdiTrashCanOutline"></v-icon>
