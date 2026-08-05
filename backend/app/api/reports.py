@@ -330,13 +330,24 @@ async def list_church_attendances(
     church_identifier: str,
     start_date: Optional[str] = Query(None, description="Data/Hora inicial no formato ISO (ex: 2026-07-01T00:00:00)"),
     end_date: Optional[str] = Query(None, description="Data/Hora final no formato ISO (ex: 2026-07-31T23:59:59)"),
+    session_id: Optional[str] = Query(None, description="Filtrar por Session ID exato"),
+    job_id: Optional[str] = Query(None, description="Filtrar por Job ID exato"),
+    webhook_path: Optional[str] = Query(None, description="Filtrar por nome do Webhook/Fluxo"),
+    member_name: Optional[str] = Query(None, description="Filtrar por nome do membro"),
+    member_phone: Optional[str] = Query(None, description="Filtrar por telefone do membro"),
+    member_role: Optional[str] = Query(None, description="Filtrar por cargo/perfil (Pastor, Membro, etc)"),
+    user_message: Optional[str] = Query(None, description="Filtrar por trecho da mensagem do usuário"),
+    agent_response: Optional[str] = Query(None, description="Filtrar por trecho da resposta do agente"),
+    status: Optional[str] = Query(None, description="Status do job (ex: completed, failed)"),
+    min_duration_seconds: Optional[float] = Query(None, description="Duração mínima em segundos"),
+    max_duration_seconds: Optional[float] = Query(None, description="Duração máxima em segundos"),
     limit: int = Query(50, le=500),
     skip: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Retorna a lista de atendimentos realizados para os fiéis/visitantes da igreja, 
-    filtrando por intervalo de data/hora.
+    com suporte a filtros avançados de payload, metadados e intervalo de data/hora.
     """
     condition = _build_church_filter(church_identifier)
 
@@ -346,6 +357,30 @@ async def list_church_attendances(
         condition = and_(condition, JobLog.created_at >= st)
     if et:
         condition = and_(condition, JobLog.created_at <= et)
+
+    if session_id:
+        condition = and_(condition, JobLog.session_id == session_id)
+    if job_id:
+        condition = and_(condition, JobLog.job_id == job_id)
+    if webhook_path:
+        condition = and_(condition, JobLog.webhook_path.ilike(f"%{webhook_path}%"))
+    if member_name:
+        condition = and_(condition, JobLog.member_name.ilike(f"%{member_name}%"))
+    if user_message:
+        condition = and_(condition, JobLog.user_message.ilike(f"%{user_message}%"))
+    if agent_response:
+        condition = and_(condition, JobLog.agent_response.ilike(f"%{agent_response}%"))
+    if status:
+        condition = and_(condition, JobLog.status == status)
+    if min_duration_seconds is not None:
+        condition = and_(condition, JobLog.duration_ms >= (min_duration_seconds * 1000))
+    if max_duration_seconds is not None:
+        condition = and_(condition, JobLog.duration_ms <= (max_duration_seconds * 1000))
+        
+    if member_phone:
+        condition = and_(condition, cast(JobLog.request_data, String).ilike(f"%{member_phone}%"))
+    if member_role:
+        condition = and_(condition, cast(JobLog.request_data, String).ilike(f"%{member_role}%"))
 
     # Fetch attendances
     q = (
