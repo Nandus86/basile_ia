@@ -9,9 +9,14 @@
               Visão geral do engajamento e curadoria inteligente dos usuários.
             </p>
           </div>
-          <v-btn color="primary" prepend-icon="mdi-refresh" @click="fetchAnalytics">
-            Atualizar
-          </v-btn>
+          <div class="d-flex align-center ga-3">
+            <v-btn color="secondary" variant="outlined" prepend-icon="mdi-cog" @click="openConfig">
+              Configurar Analista
+            </v-btn>
+            <v-btn color="primary" prepend-icon="mdi-refresh" @click="fetchAnalytics">
+              Atualizar
+            </v-btn>
+          </div>
         </div>
       </v-col>
     </v-row>
@@ -82,6 +87,55 @@
         </v-card-text>
       </v-card>
     </v-dialog>
+
+    <!-- Dialog for Config -->
+    <v-dialog v-model="configDialog" max-width="600px">
+      <v-card>
+        <v-card-title class="text-h5 bg-surface pa-4 d-flex justify-space-between align-center">
+          Configurar Agente Analista
+          <v-btn icon="mdi-close" variant="text" @click="configDialog = false"></v-btn>
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <v-form ref="configForm">
+            <v-row>
+              <v-col cols="12">
+                <v-switch
+                  v-model="config.is_active"
+                  label="Motor Analista Ativo"
+                  color="primary"
+                ></v-switch>
+              </v-col>
+              <v-col cols="12" md="8">
+                <v-select
+                  v-model="config.agent_id"
+                  :items="availableAgents"
+                  item-title="name"
+                  item-value="id"
+                  label="Selecione o Agente Analista"
+                  placeholder="Ex: Agente Analista de Perfis"
+                  variant="outlined"
+                  :disabled="!config.is_active"
+                ></v-select>
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field
+                  v-model="config.cron_time"
+                  label="Horário de Disparo"
+                  type="time"
+                  variant="outlined"
+                  :disabled="!config.is_active"
+                ></v-text-field>
+              </v-col>
+            </v-row>
+          </v-form>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer></v-spacer>
+          <v-btn color="grey" variant="text" @click="configDialog = false">Cancelar</v-btn>
+          <v-btn color="primary" @click="saveConfig" :loading="savingConfig">Salvar Configuração</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -93,6 +147,16 @@ const loading = ref(false)
 const users = ref([])
 const dialog = ref(false)
 const selectedUser = ref(null)
+
+// Config states
+const configDialog = ref(false)
+const savingConfig = ref(false)
+const availableAgents = ref([])
+const config = ref({
+  is_active: false,
+  agent_id: null,
+  cron_time: '03:00'
+})
 
 const headers = [
   { title: 'Sessão', key: 'session_id' },
@@ -139,6 +203,40 @@ const fetchAnalytics = async () => {
 const viewDetails = (user) => {
   selectedUser.value = user
   dialog.value = true
+}
+
+const openConfig = async () => {
+  try {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    // Fetch available agents
+    const agentsResp = await axios.get(`${API_URL}/agents`)
+    availableAgents.value = agentsResp.data.agents || []
+    
+    // Fetch current config
+    const configResp = await axios.get(`${API_URL}/analytics/config`)
+    if (configResp.data) {
+      config.value.is_active = configResp.data.is_active
+      config.value.agent_id = configResp.data.agent_id
+      config.value.cron_time = configResp.data.cron_time
+    }
+    
+    configDialog.value = true
+  } catch (error) {
+    console.error('Failed to load config or agents', error)
+  }
+}
+
+const saveConfig = async () => {
+  savingConfig.value = true
+  try {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+    await axios.put(`${API_URL}/analytics/config`, config.value)
+    configDialog.value = false
+  } catch (error) {
+    console.error('Failed to save config', error)
+  } finally {
+    savingConfig.value = false
+  }
 }
 
 onMounted(() => {

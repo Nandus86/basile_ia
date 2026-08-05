@@ -58,3 +58,48 @@ async def get_analytics(session_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Perfil analítico não encontrado para esta sessão.")
         
     return analytics
+
+from app.models.analytics_config import AnalyticsConfig
+from app.schemas.analytics import AnalyticsConfigResponse, AnalyticsConfigUpdate
+
+@router.get("/config", response_model=AnalyticsConfigResponse, summary="Obter configuração do Agente Analista")
+async def get_analytics_config(db: AsyncSession = Depends(get_db)):
+    """Retorna as configurações atuais do Analista."""
+    query = select(AnalyticsConfig).limit(1)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        config = AnalyticsConfig()
+        db.add(config)
+        await db.commit()
+        await db.refresh(config)
+        
+    return config
+
+@router.put("/config", response_model=AnalyticsConfigResponse, summary="Atualizar configuração do Agente Analista")
+async def update_analytics_config(config_data: AnalyticsConfigUpdate, db: AsyncSession = Depends(get_db)):
+    """Atualiza a configuração do Analista (Agente e Horário) e sincroniza o Scheduler."""
+    query = select(AnalyticsConfig).limit(1)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        config = AnalyticsConfig()
+        db.add(config)
+        
+    if config_data.agent_id is not None:
+        config.agent_id = config_data.agent_id
+    if config_data.cron_time is not None:
+        config.cron_time = config_data.cron_time
+    if config_data.is_active is not None:
+        config.is_active = config_data.is_active
+        
+    await db.commit()
+    await db.refresh(config)
+    
+    # Sync Scheduler immediately
+    from app.services.analytics_scheduler import sync_analytics_scheduler
+    await sync_analytics_scheduler()
+    
+    return config

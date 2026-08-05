@@ -55,6 +55,9 @@ async def lifespan(app: FastAPI):
         from app.services.workflow_scheduler import workflow_scheduler
         workflow_scheduler.start()
         await workflow_scheduler.sync_all_workflows()
+        
+        from app.services.analytics_scheduler import sync_analytics_scheduler
+        await sync_analytics_scheduler()
     except Exception as e:
         logging.error(f"[Main startup] Failed to initialize workflow scheduler: {e}")
     

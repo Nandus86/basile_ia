@@ -37,3 +37,16 @@ class AnalyticsListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+class AnalyticsConfigUpdate(BaseModel):
+    agent_id: Optional[str] = None
+    cron_time: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class AnalyticsConfigResponse(BaseModel):
+    id: UUID
+    agent_id: Optional[str] = None
+    cron_time: str
+    is_active: bool
+
+    model_config = {"from_attributes": True}
