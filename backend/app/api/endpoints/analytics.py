@@ -94,6 +94,13 @@ async def update_analytics_config(config_data: AnalyticsConfigUpdate, db: AsyncS
         config.cron_time = config_data.cron_time
     if config_data.is_active is not None:
         config.is_active = config_data.is_active
+    from sqlalchemy.orm.attributes import flag_modified
+    if config_data.crm_mapping is not None:
+        config.crm_mapping = config_data.crm_mapping
+        flag_modified(config, "crm_mapping")
+    if config_data.metrics_mapping is not None:
+        config.metrics_mapping = config_data.metrics_mapping
+        flag_modified(config, "metrics_mapping")
         
     await db.commit()
     await db.refresh(config)
