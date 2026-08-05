@@ -141,7 +141,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import axios from '@/plugins/axios'
 
 const loading = ref(false)
 const users = ref([])
@@ -190,8 +190,7 @@ const formatDate = (dateString) => {
 const fetchAnalytics = async () => {
   loading.value = true
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-    const response = await axios.get(`${API_URL}/analytics/users`)
+    const response = await axios.get(`/analytics/users`)
     users.value = response.data.users
   } catch (error) {
     console.error('Failed to fetch analytics:', error)
@@ -207,13 +206,12 @@ const viewDetails = (user) => {
 
 const openConfig = async () => {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
     // Fetch available agents
-    const agentsResp = await axios.get(`${API_URL}/agents`)
+    const agentsResp = await axios.get(`/agents`)
     availableAgents.value = agentsResp.data.agents || []
     
     // Fetch current config
-    const configResp = await axios.get(`${API_URL}/analytics/config`)
+    const configResp = await axios.get(`/analytics/config`)
     if (configResp.data) {
       config.value.is_active = configResp.data.is_active
       config.value.agent_id = configResp.data.agent_id
@@ -229,8 +227,7 @@ const openConfig = async () => {
 const saveConfig = async () => {
   savingConfig.value = true
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-    await axios.put(`${API_URL}/analytics/config`, config.value)
+    await axios.put(`/analytics/config`, config.value)
     configDialog.value = false
   } catch (error) {
     console.error('Failed to save config', error)
