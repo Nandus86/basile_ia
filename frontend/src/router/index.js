@@ -68,6 +68,11 @@ const routes = [
         component: () => import('@/views/Acompanhamento.vue')
       },
       {
+        path: 'analytics',
+        name: 'Analytics',
+        component: () => import('@/views/Analytics.vue')
+      },
+      {
         path: 'vfs-knowledge',
         name: 'VFSKnowledge',
         component: () => import('@/views/VFSKnowledge.vue')
