@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import axios from '@/plugins/axios'
-import { mdiRocketLaunchOutline, mdiPlus, mdiTrashCanOutline, mdiPencilOutline } from '@mdi/js'
+import { mdiRocketLaunchOutline, mdiPlus, mdiTrashCanOutline, mdiPencilOutline, mdiContentCopy } from '@mdi/js'
 
 const configs = ref([])
 const totalConfigs = ref(0)
@@ -107,6 +107,18 @@ const closeDialog = () => {
 const editConfig = (item) => {
   editedItem.value = JSON.parse(JSON.stringify(item))
   isEditing.value = true
+  dialog.value = true
+}
+
+const duplicateConfig = (item) => {
+  const newItem = JSON.parse(JSON.stringify(item))
+  delete newItem.id
+  newItem.name = `${newItem.name} (Cópia)`
+  if (newItem.path) {
+    newItem.path = `${newItem.path}-copia`
+  }
+  editedItem.value = newItem
+  isEditing.value = false
   dialog.value = true
 }
 
@@ -346,6 +358,16 @@ onMounted(() => {
             >
               <v-icon icon="mdi-web"></v-icon>
               <v-tooltip activator="parent" location="top">Integração</v-tooltip>
+            </v-btn>
+            <v-btn
+              icon
+              variant="text"
+              size="small"
+              color="secondary"
+              @click="duplicateConfig(item)"
+            >
+              <v-icon :icon="mdiContentCopy"></v-icon>
+              <v-tooltip activator="parent" location="top">Duplicar</v-tooltip>
             </v-btn>
             <v-btn
               icon
