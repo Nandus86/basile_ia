@@ -78,6 +78,7 @@ async def list_agents(
             id=agent.id,
             name=agent.name,
             description=agent.description,
+            model=agent.model,
             is_active=agent.is_active,
             access_level=AccessLevelEnum(agent.access_level.value),
             collaboration_enabled=agent.collaboration_enabled,
