@@ -243,6 +243,7 @@ class AgentListItem(BaseModel):
     id: UUID
     name: str
     description: Optional[str]
+    model: Optional[str] = None
     is_active: bool
     access_level: AccessLevelEnum = AccessLevelEnum.NORMAL
     collaboration_enabled: bool = True
