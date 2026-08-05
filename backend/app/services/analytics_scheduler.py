@@ -23,33 +23,7 @@ async def run_analytics_agent():
                 return
                 
             from app.models.user_analytics import UserAnalytics
-            from app.models.conversation_message import ConversationMessage
-            from app.models.agent import Agent
             from sqlalchemy import select, and_, or_
-            from sqlalchemy.orm.attributes import flag_modified
-            from datetime import datetime, timezone
-            from langchain_openai import ChatOpenAI
-            from langchain_core.messages import SystemMessage, HumanMessage
-            from app.config import settings
-            import json
-
-            # 2. Fetch the Agent
-            agent_res = await session.execute(select(Agent).where(Agent.id == config.agent_id))
-            agent = agent_res.scalar_one_or_none()
-            if not agent:
-                logger.error(f"[AnalyticsScheduler] Agent {config.agent_id} not found.")
-                return
-
-            # Initialize LLM
-            llm = ChatOpenAI(
-                model=agent.model or "gpt-4o-mini",
-                temperature=float(agent.temperature) if agent.temperature else 0.7,
-                api_key=settings.OPENAI_API_KEY
-            )
-            
-            # If agent has structured output, bind it
-            if agent.output_schema:
-                llm = llm.with_structured_output(schema=agent.output_schema)
 
             # 3. Find eligible users
             query_users = select(UserAnalytics).where(
@@ -66,72 +40,24 @@ async def run_analytics_agent():
             
             logger.info(f"[AnalyticsScheduler] Found {len(users)} users pending analysis.")
             
+            from app.services.rabbitmq_service import rabbitmq_client
+            await rabbitmq_client.connect()
+            
             for user in users:
                 try:
-                    # Fetch recent messages
-                    msg_query = select(ConversationMessage).where(
-                        ConversationMessage.session_id == user.session_id
+                    payload = {
+                        "session_id": user.session_id,
+                        "agent_id": config.agent_id
+                    }
+                    await rabbitmq_client.publish_message(
+                        exchange_name="",
+                        routing_key="analytics_tasks",
+                        message_body=payload
                     )
-                    if user.last_analyzed_at:
-                        msg_query = msg_query.where(ConversationMessage.created_at > user.last_analyzed_at)
-                    msg_query = msg_query.order_by(ConversationMessage.created_at.asc())
-                    
-                    msg_res = await session.execute(msg_query)
-                    messages = msg_res.scalars().all()
-                    
-                    if not messages:
-                        continue # nothing to analyze
-                        
-                    # Format history
-                    history_text = "\n".join([f"[{m.created_at.strftime('%H:%M:%S')}] {m.role.upper()}: {m.content}" for m in messages])
-                    
-                    # Prepare Prompt
-                    sys_prompt = agent.system_prompt or "Você é um analista de dados."
-                    
-                    # User Context
-                    crm_data = user.profile_data.get("__zona_crm", {})
-                    aprendizado_data = user.profile_data.get("__zona_aprendizado", {})
-                    
-                    context = f"DADOS DO USUÁRIO (CRM):\n{json.dumps(crm_data, ensure_ascii=False, indent=2)}\n\n"
-                    context += f"APRENDIZADOS ANTERIORES (SE EXISTIREM):\n{json.dumps(aprendizado_data, ensure_ascii=False, indent=2)}\n\n"
-                    context += f"HISTÓRICO DE CONVERSAS RECENTES:\n{history_text}"
-                    
-                    langchain_msgs = [
-                        SystemMessage(content=sys_prompt),
-                        HumanMessage(content=context)
-                    ]
-                    
-                    logger.info(f"[AnalyticsScheduler] Analyzing session {user.session_id} with {len(messages)} new messages.")
-                    
-                    response = await llm.ainvoke(langchain_msgs)
-                    
-                    # Response might be a dict if structured output, or AIMessage if not
-                    new_aprendizado = {}
-                    if isinstance(response, dict):
-                        new_aprendizado = response
-                    elif hasattr(response, "content") and isinstance(response.content, str):
-                        try:
-                            text = response.content.strip()
-                            if text.startswith("```json"): text = text[7:-3]
-                            elif text.startswith("```"): text = text[3:-3]
-                            new_aprendizado = json.loads(text.strip())
-                        except:
-                            new_aprendizado = {"raw_analysis": response.content}
-                            
-                    # Merge with existing
-                    current_aprendizado = user.profile_data.get("__zona_aprendizado", {})
-                    current_aprendizado.update(new_aprendizado)
-                    user.profile_data["__zona_aprendizado"] = current_aprendizado
-                    
-                    user.last_analyzed_at = datetime.now(timezone.utc)
-                    flag_modified(user, "profile_data")
-                    
-                    await session.commit()
-                    logger.info(f"[AnalyticsScheduler] Successfully analyzed session {user.session_id}")
-                    
+                    logger.info(f"[AnalyticsScheduler] Queued session {user.session_id} for analysis")
                 except Exception as e:
-                    logger.error(f"[AnalyticsScheduler] Failed to analyze session {user.session_id}: {e}")
-                    await session.rollback()
+                    logger.error(f"[AnalyticsScheduler] Failed to queue session {user.session_id}: {e}")
+                    
             
     except Exception as e:
         logger.error(f"[AnalyticsScheduler] Error running analytics agent: {e}")
