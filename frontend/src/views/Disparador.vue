@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import axios from '@/plugins/axios'
-import { mdiRocketLaunchOutline, mdiPlus, mdiTrashCanOutline, mdiPencilOutline, mdiContentCopy } from '@mdi/js'
+// import { mdiRocketLaunchOutline, mdiPlus, mdiTrashCanOutline, mdiPencilOutline, mdiContentCopy } from '@mdi/js'
 
 const configs = ref([])
 const totalConfigs = ref(0)
@@ -267,7 +267,7 @@ onMounted(() => {
   <div class="disparador-container">
     <div class="d-flex align-center mb-6">
       <v-avatar color="primary" variant="tonal" rounded size="48" class="mr-4">
-        <v-icon :icon="mdiRocketLaunchOutline" size="24"></v-icon>
+        <v-icon icon="mdi-rocket-launch-outline" size="24"></v-icon>
       </v-avatar>
       <div>
         <h2 class="text-h4 font-weight-bold">Disparador</h2>
@@ -366,7 +366,7 @@ onMounted(() => {
               color="white"
               @click="duplicateConfig(item)"
             >
-              <v-icon :icon="mdiContentCopy"></v-icon>
+              <v-icon icon="mdi-content-copy"></v-icon>
               <v-tooltip activator="parent" location="top">Duplicar</v-tooltip>
             </v-btn>
             <v-btn
@@ -376,7 +376,7 @@ onMounted(() => {
               color="white"
               @click="editConfig(item)"
             >
-              <v-icon :icon="mdiPencilOutline"></v-icon>
+              <v-icon icon="mdi-pencil-outline"></v-icon>
               <v-tooltip activator="parent" location="top">Editar</v-tooltip>
             </v-btn>
             <v-btn
@@ -386,7 +386,7 @@ onMounted(() => {
               color="white"
               @click="confirmDelete(item)"
             >
-              <v-icon :icon="mdiTrashCanOutline"></v-icon>
+              <v-icon icon="mdi-trash-can-outline"></v-icon>
               <v-tooltip activator="parent" location="top">Excluir</v-tooltip>
             </v-btn>
           </div>
@@ -508,7 +508,7 @@ onMounted(() => {
                   <v-text-field v-model="btn.label" label="Label" variant="outlined" density="compact" hide-details></v-text-field>
                   <v-text-field v-model="btn.value" label="Value" variant="outlined" density="compact" hide-details></v-text-field>
                   <v-btn icon color="error" variant="text" @click="removeButton(index)">
-                    <v-icon :icon="mdiTrashCanOutline"></v-icon>
+                    <v-icon icon="mdi-trash-can-outline"></v-icon>
                   </v-btn>
                 </div>
                 <div v-if="editedItem.buttons.length === 0" class="text-caption text-medium-emphasis">
@@ -761,7 +761,7 @@ onMounted(() => {
                   </v-slider>
                 </div>
                 <v-btn icon color="error" variant="text" size="small" @click="removeRoutingRule(index)">
-                  <v-icon :icon="mdiTrashCanOutline"></v-icon>
+                  <v-icon icon="mdi-trash-can-outline"></v-icon>
                 </v-btn>
               </div>
             </div>
