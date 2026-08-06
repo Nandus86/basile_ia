@@ -52,10 +52,10 @@
               hover
             >
               <template v-slot:item.name="{ item }">
-                <span class="font-weight-medium">{{ (item.raw || item).profile_data?.__zona_crm?.first_name || (item.raw || item).profile_data?.__zona_crm?.name || (item.raw || item).profile_data?.__zona_crm?.nome || 'Desconhecido' }}</span>
+                <span class="font-weight-medium">{{ (item.raw || item).profile_data?.__zona_crm?.first_name || (item.raw || item).profile_data?.__zona_crm?.['Nome Completo'] || (item.raw || item).profile_data?.__zona_crm?.name || (item.raw || item).profile_data?.__zona_crm?.nome || 'Desconhecido' }}</span>
               </template>
               <template v-slot:item.church="{ item }">
-                {{ (item.raw || item).profile_data?.__zona_crm?.church_name || (item.raw || item).profile_data?.__zona_crm?.church_id || (item.raw || item).church_id || 'Não Informada' }}
+                {{ (item.raw || item).profile_data?.__zona_crm?.church_name || (item.raw || item).profile_data?.__zona_crm?.['Igreja Sede'] || (item.raw || item).profile_data?.__zona_crm?.church_id || (item.raw || item).church_id || 'Não Informada' }}
               </template>
               <template v-slot:item.engagement_score="{ item }">
                 <v-chip
