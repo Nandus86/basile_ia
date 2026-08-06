@@ -82,6 +82,32 @@ class RabbitMQClient:
             logger.error(f"Error publishing to RabbitMQ: {str(e)}")
             return False
 
+    async def publish_message(self, exchange_name: str, routing_key: str, message_body: dict) -> bool:
+        """Generic method to publish a JSON message to a specific exchange/routing_key"""
+        if not self.channel:
+            logger.error("Cannot publish message: RabbitMQ channel not initialized")
+            return False
+
+        try:
+            message = aio_pika.Message(
+                body=json.dumps(message_body).encode(),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                content_type="application/json"
+            )
+
+            exchange = self.channel.default_exchange
+            if exchange_name:
+                exchange = await self.channel.get_exchange(exchange_name)
+
+            await exchange.publish(
+                message,
+                routing_key=routing_key
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error publishing generic message to RabbitMQ: {str(e)}")
+            return False
+
 
 # Singleton instance
 rabbitmq_client = RabbitMQClient()
