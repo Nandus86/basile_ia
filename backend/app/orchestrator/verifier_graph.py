@@ -70,7 +70,7 @@ def _get_verifier_llm():
     Returns a dedicated gpt-4o-mini instance for verification.
     Fast, cheap, reliable — never depends on the agent's model.
     """
-    from langchain_openai import ChatOpenAI
+    from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
     from app.config import settings
 
     return ChatOpenAI(

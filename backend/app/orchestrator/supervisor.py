@@ -3,7 +3,7 @@ LangGraph Supervisor - Multi-Agent Orchestration Controller
 v0.0.9 - Reasoning Loop: evaluate node enables iterative multi-agent delegation
 """
 from typing import List, Optional, Dict, Any, Literal
-from langchain_openai import ChatOpenAI
+from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END

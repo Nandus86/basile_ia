@@ -3,7 +3,7 @@ Skill Router - Analisa mensagens e determina qual skill usar
 """
 import os
 from typing import Optional, Dict, List
-from langchain_openai import ChatOpenAI
+from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.schemas.skill import get_skills_capabilities_summary
 

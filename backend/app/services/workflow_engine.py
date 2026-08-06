@@ -1681,7 +1681,7 @@ class WorkflowEngine:
             full_system_prompt = inline_system_prompt + workflow_context_str
 
             try:
-                from langchain_openai import ChatOpenAI
+                from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
                 from langchain_core.messages import SystemMessage, HumanMessage
                 from app.config import settings
 
@@ -2211,7 +2211,7 @@ class WorkflowEngine:
             validation_prompt (str):  Custom evaluator criteria
         """
         from typing import TypedDict, Literal
-        from langchain_openai import ChatOpenAI
+        from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
         from langchain_core.tools import tool
         from langchain_core.runnables import RunnableConfig

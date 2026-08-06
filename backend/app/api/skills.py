@@ -19,7 +19,7 @@ from app.schemas.skill import (
 )
 from app.config import settings
 
-from langchain_openai import ChatOpenAI
+from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)

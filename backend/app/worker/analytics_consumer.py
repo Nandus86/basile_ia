@@ -9,7 +9,7 @@ import aio_pika
 from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
-from langchain_openai import ChatOpenAI
+from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.services.rabbitmq_service import rabbitmq_client

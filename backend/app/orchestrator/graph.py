@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional, Dict, Any
-from langchain_openai import ChatOpenAI
+from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.prebuilt import create_react_agent
 

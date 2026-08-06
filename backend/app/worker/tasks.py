@@ -1058,7 +1058,7 @@ async def _auto_summarize_mtm_to_ltm(agent_id: str, session_id: str):
     try:
         from app.models.conversation_message import ConversationMessage
         from sqlalchemy import select
-        from langchain_openai import ChatOpenAI
+        from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
         from app.weaviate_client import get_weaviate
         import uuid
@@ -1390,7 +1390,7 @@ async def _build_collaborator_tools(
                     
                     if _planner_enabled:
                         try:
-                            from langchain_openai import ChatOpenAI
+                            from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
                             from langchain_core.messages import SystemMessage, HumanMessage
                             from app.config import settings
                             import json
@@ -2731,7 +2731,7 @@ async def _check_anti_bot_guard(session_id: str, history: list, agent_config: Op
             "HUMAN_OK — se parecer ser um humano real"
         )
 
-        from langchain_openai import ChatOpenAI
+        from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
 
         llm = ChatOpenAI(
@@ -2773,7 +2773,7 @@ async def _generate_moment_message(
     Returns a short gerund phrase like: "verificando os visitantes da igreja"
     """
     try:
-        from langchain_openai import ChatOpenAI
+        from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         from langchain_core.messages import SystemMessage
         import asyncio
 
@@ -4533,7 +4533,7 @@ async def process_message_task(
 async def _invoke_recovery_agent(message: str, error_msg: str) -> str:
     """Invokes a recovery agent to provide a friendly response after a timeout/error."""
     try:
-        from langchain_openai import ChatOpenAI
+        from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
         from app.config import settings
         
@@ -4615,7 +4615,7 @@ async def _validate_response(system_prompt: str, agent_response: str, guardrail_
     if not system_prompt or not agent_response:
         return "VALID"
 
-    from langchain_openai import ChatOpenAI
+    from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage
     from app.config import settings
 

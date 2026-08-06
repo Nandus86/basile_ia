@@ -10,7 +10,7 @@ Extracts and saves different types of memories:
 import asyncio
 import logging
 from typing import List, Dict, Any, Optional
-from langchain_openai import ChatOpenAI
+from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.config import settings

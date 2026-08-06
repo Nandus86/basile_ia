@@ -117,7 +117,7 @@ async def _run_vfs_subagent(
     
     It returns a synthesized context string.
     """
-    from langchain_openai import ChatOpenAI
+    from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage
     from langchain_core.tools import tool
     from langchain_core.runnables import RunnableConfig

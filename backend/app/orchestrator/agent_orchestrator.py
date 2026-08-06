@@ -35,7 +35,7 @@ class AgentOrchestrator:
     def __init__(self, db: AsyncSession, monitor: Optional[Any] = None):
         self.db = db
         self.monitor = monitor
-        from langchain_openai import ChatOpenAI
+        from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0,
