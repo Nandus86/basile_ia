@@ -109,11 +109,19 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                         api_key=settings.OPENAI_API_KEY
                     )
                     if agent.output_schema:
-                        schema_dict = dict(agent.output_schema)
-                        if "title" not in schema_dict:
-                            schema_dict["title"] = "AnalyticsOutput"
-                        if "name" not in schema_dict:
-                            schema_dict["name"] = "AnalyticsOutput"
+                        raw_schema = dict(agent.output_schema)
+                        if "parameters" in raw_schema:
+                            # It's already an OpenAI Function-style dict
+                            schema_dict = raw_schema
+                            if "name" not in schema_dict:
+                                schema_dict["name"] = "AnalyticsOutput"
+                        else:
+                            # It's a raw JSON Schema, wrap it
+                            schema_dict = {
+                                "name": "AnalyticsOutput",
+                                "description": "Structured output for user analytics",
+                                "parameters": raw_schema
+                            }
                         llm = llm.with_structured_output(schema=schema_dict)
                         
                     sys_prompt = agent.system_prompt or "Você é um analista de dados."
