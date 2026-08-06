@@ -51,6 +51,12 @@
               class="elevation-0"
               hover
             >
+              <template v-slot:item.name="{ item }">
+                <span class="font-weight-medium">{{ item.profile_data?.__zona_crm?.name || item.profile_data?.__zona_crm?.nome || 'Desconhecido' }}</span>
+              </template>
+              <template v-slot:item.church="{ item }">
+                {{ item.profile_data?.__zona_crm?.church_id || item.church_id || 'Não Informada' }}
+              </template>
               <template v-slot:item.engagement_score="{ item }">
                 <v-chip
                   :color="getScoreColor(item.engagement_score)"
@@ -281,6 +287,8 @@ const config = ref({
 
 const headers = [
   { title: 'Sessão', key: 'session_id' },
+  { title: 'Nome', key: 'name' },
+  { title: 'Igreja', key: 'church' },
   { title: 'Interações', key: 'interaction_count' },
   { title: 'Score', key: 'engagement_score' },
   { title: 'Prioridade', key: 'care_priority' },
