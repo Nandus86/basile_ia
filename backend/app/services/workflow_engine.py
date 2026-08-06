@@ -2914,47 +2914,80 @@ Responda APENAS com uma das opções:
         t0 = time.time()
 
         try:
-            # First try using AsyncOpenAI if available
             try:
-                from openai import AsyncOpenAI
-                client = AsyncOpenAI(api_key=api_key)
-                with open(file_path, "rb") as audio_file:
-                    kwargs = {"model": model, "file": audio_file}
-                    if language:
-                        kwargs["language"] = language
-                    if prompt:
-                        kwargs["prompt"] = prompt
-                    transcription = await client.audio.transcriptions.create(**kwargs)
-                    text_result = transcription.text
-            except Exception as openai_err:
-                logger.warning(f"[WorkflowEngine] AsyncOpenAI client transcription failed/unavailable, falling back to httpx: {openai_err}")
-                # Fallback to direct HTTP request using httpx
-                filename = os.path.basename(file_path)
-                import mimetypes
-                mime_type = mimetypes.guess_type(file_path)[0] or "audio/mp3"
-
-                async with httpx.AsyncClient(timeout=120.0) as http_client:
-                    with open(file_path, "rb") as f:
-                        files = {"file": (filename, f, mime_type)}
-                        data = {"model": model}
+                # LAYER 1: First try using AsyncOpenAI if available
+                try:
+                    from openai import AsyncOpenAI
+                    client = AsyncOpenAI(api_key=api_key)
+                    with open(file_path, "rb") as audio_file:
+                        kwargs = {"model": model, "file": audio_file}
                         if language:
-                            data["language"] = language
+                            kwargs["language"] = language
                         if prompt:
-                            data["prompt"] = prompt
+                            kwargs["prompt"] = prompt
+                        transcription = await client.audio.transcriptions.create(**kwargs)
+                        text_result = transcription.text
+                except Exception as openai_err:
+                    logger.warning(f"[WorkflowEngine] AsyncOpenAI client transcription failed/unavailable, falling back to httpx: {openai_err}")
+                    # Fallback to direct HTTP request using httpx
+                    filename = os.path.basename(file_path)
+                    import mimetypes
+                    mime_type = mimetypes.guess_type(file_path)[0] or "audio/mp3"
 
-                        headers = {"Authorization": f"Bearer {api_key}"}
-                        response = await http_client.post(
-                            "https://api.openai.com/v1/audio/transcriptions",
-                            headers=headers,
-                            data=data,
-                            files=files
-                        )
+                    async with httpx.AsyncClient(timeout=120.0) as http_client:
+                        with open(file_path, "rb") as f:
+                            files = {"file": (filename, f, mime_type)}
+                            data = {"model": model}
+                            if language:
+                                data["language"] = language
+                            if prompt:
+                                data["prompt"] = prompt
 
-                        if response.status_code != 200:
-                            raise ValueError(f"OpenAI Transcription API error ({response.status_code}): {response.text}")
-                        
-                        resp_data = response.json()
-                        text_result = resp_data.get("text", "")
+                            headers = {"Authorization": f"Bearer {api_key}"}
+                            response = await http_client.post(
+                                "https://api.openai.com/v1/audio/transcriptions",
+                                headers=headers,
+                                data=data,
+                                files=files
+                            )
+
+                            if response.status_code != 200:
+                                raise ValueError(f"OpenAI Transcription API error ({response.status_code}): {response.text}")
+                            
+                            resp_data = response.json()
+                            text_result = resp_data.get("text", "")
+            except Exception as layer1_err:
+                logger.warning(f"[WorkflowEngine] Layer 1 (OpenAI) failed: {layer1_err}. Attempting Layer 2 (OpenRouter)...")
+                try:
+                    # LAYER 2: OpenRouter
+                    from openai import AsyncOpenAI
+                    client = AsyncOpenAI(api_key=settings.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
+                    with open(file_path, "rb") as audio_file:
+                        kwargs = {"model": "openai/whisper-large-v3", "file": audio_file}
+                        if language: kwargs["language"] = language
+                        if prompt: kwargs["prompt"] = prompt
+                        transcription = await client.audio.transcriptions.create(**kwargs)
+                        text_result = transcription.text
+                except Exception as layer2_err:
+                    logger.warning(f"[WorkflowEngine] Layer 2 (OpenRouter) failed: {layer2_err}. Attempting Layer 3 (Local faster-whisper)...")
+                    try:
+                        # LAYER 3: Local faster-whisper
+                        import asyncio
+                        from faster_whisper import WhisperModel
+
+                        def _run_local_transcribe():
+                            whisper_model = WhisperModel("base", device="auto", compute_type="default")
+                            segments, info = whisper_model.transcribe(
+                                file_path, 
+                                language=language if language else None, 
+                                initial_prompt=prompt if prompt else None
+                            )
+                            return " ".join([segment.text for segment in segments])
+
+                        text_result = await asyncio.to_thread(_run_local_transcribe)
+                    except Exception as layer3_err:
+                        logger.error(f"[WorkflowEngine] Layer 3 (Local) failed: {layer3_err}")
+                        raise RuntimeError(f"All transcription layers failed. Layer3: {layer3_err}") from layer3_err
         finally:
             # Delete temp file right after transcription if auto_delete is enabled
             if auto_delete and os.path.exists(file_path):
