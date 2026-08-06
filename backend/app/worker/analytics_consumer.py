@@ -102,12 +102,12 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     job_log.request_data["context"] = context
                     await session.commit()
                     
-                    # LLM
-                    llm = ChatOpenAI(
-                        model=agent.model or "gpt-4o-mini",
-                        temperature=float(agent.temperature) if agent.temperature else 0.7,
-                        api_key=settings.OPENAI_API_KEY
-                    )
+                    # Use AgentFactory to properly route to OpenRouter, Google, Custom endpoints, etc.
+                    from app.orchestrator.agent_factory import AgentFactory
+                    factory = AgentFactory(session)
+                    agent_config = await factory.get_agent_config(agent)
+                    llm = factory.create_llm(agent_config, session_id=session_id)
+
                     if agent.output_schema:
                         raw_schema = dict(agent.output_schema)
                         if "parameters" in raw_schema:
