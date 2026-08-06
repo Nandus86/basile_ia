@@ -3106,6 +3106,22 @@ Responda APENAS com uma das opções:
         if not audio_bytes:
             raise ValueError("OpenAI TTS returned empty audio content.")
 
+        # Convert raw PCM to WAV if necessary (e.g. Gemini fallback)
+        if fmt == "pcm":
+            import wave
+            import io
+            
+            # Gemini 3.1 Flash TTS PCM format: 24kHz, 16-bit, Mono
+            wav_io = io.BytesIO()
+            with wave.open(wav_io, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(24000)
+                wav_file.writeframes(audio_bytes)
+            
+            audio_bytes = wav_io.getvalue()
+            fmt = "wav"
+
         # Encode Base64 Data URL
         mime_type = f"audio/{fmt}" if fmt != "mp3" else "audio/mpeg"
         b64_str = base64.b64encode(audio_bytes).decode('utf-8')
