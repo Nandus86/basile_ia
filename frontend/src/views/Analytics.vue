@@ -52,31 +52,31 @@
               hover
             >
               <template v-slot:item.name="{ item }">
-                <span class="font-weight-medium">{{ item.profile_data?.__zona_crm?.first_name || item.profile_data?.__zona_crm?.name || item.profile_data?.__zona_crm?.nome || 'Desconhecido' }}</span>
+                <span class="font-weight-medium">{{ (item.raw || item).profile_data?.__zona_crm?.first_name || (item.raw || item).profile_data?.__zona_crm?.name || (item.raw || item).profile_data?.__zona_crm?.nome || 'Desconhecido' }}</span>
               </template>
               <template v-slot:item.church="{ item }">
-                {{ item.profile_data?.__zona_crm?.church_name || item.profile_data?.__zona_crm?.church_id || item.church_id || 'Não Informada' }}
+                {{ (item.raw || item).profile_data?.__zona_crm?.church_name || (item.raw || item).profile_data?.__zona_crm?.church_id || (item.raw || item).church_id || 'Não Informada' }}
               </template>
               <template v-slot:item.engagement_score="{ item }">
                 <v-chip
-                  :color="getScoreColor(item.engagement_score)"
+                  :color="getScoreColor((item.raw || item).engagement_score)"
                   size="small"
                   class="font-weight-medium"
                 >
-                  {{ item.engagement_score }}
+                  {{ (item.raw || item).engagement_score }}
                 </v-chip>
               </template>
               <template v-slot:item.care_priority="{ item }">
                 <v-chip
-                  :color="getPriorityColor(item.care_priority)"
+                  :color="getPriorityColor((item.raw || item).care_priority)"
                   size="small"
                   class="text-uppercase font-weight-bold"
                 >
-                  {{ item.care_priority }}
+                  {{ (item.raw || item).care_priority }}
                 </v-chip>
               </template>
               <template v-slot:item.last_seen_at="{ item }">
-                {{ formatDate(item.last_seen_at) }}
+                {{ formatDate((item.raw || item).last_seen_at) }}
               </template>
               <template v-slot:item.actions="{ item }">
                 <v-btn 
@@ -84,11 +84,11 @@
                   size="small" 
                   variant="text" 
                   color="success" 
-                  :loading="runningSessions[item.session_id]"
-                  @click="runAgent(item.session_id)"
+                  :loading="runningSessions[(item.raw || item).session_id]"
+                  @click="runAgent((item.raw || item).session_id)"
                   title="Rodar Analista Agora"
                 ></v-btn>
-                <v-btn icon="mdi-eye" size="small" variant="text" color="primary" @click="viewDetails(item)"></v-btn>
+                <v-btn icon="mdi-eye" size="small" variant="text" color="primary" @click="viewDetails(item.raw || item)"></v-btn>
               </template>
             </v-data-table-server>
           </v-card-text>
