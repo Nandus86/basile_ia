@@ -3037,44 +3037,66 @@ Responda APENAS com uma das opções:
 
         # Try AsyncOpenAI client first
         try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=api_key)
-            response = await client.audio.speech.create(
-                model=model,
-                voice=voice,
-                input=raw_text,
-                response_format=fmt,
-                speed=speed
-            )
-            if hasattr(response, 'content'):
-                audio_bytes = response.content
-            elif hasattr(response, 'read'):
-                audio_bytes = await response.read()
-            else:
-                audio_bytes = response
-        except Exception as openai_err:
-            logger.warning(f"[WorkflowEngine] AsyncOpenAI TTS failed/unavailable, falling back to httpx: {openai_err}")
-            # Fallback to direct HTTP request using httpx
-            async with httpx.AsyncClient(timeout=120.0) as http_client:
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": model,
-                    "input": raw_text,
-                    "voice": voice,
-                    "response_format": fmt,
-                    "speed": speed
-                }
-                resp = await http_client.post(
-                    "https://api.openai.com/v1/audio/speech",
-                    headers=headers,
-                    json=payload
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=api_key)
+                response = await client.audio.speech.create(
+                    model=model,
+                    voice=voice,
+                    input=raw_text,
+                    response_format=fmt,
+                    speed=speed
                 )
-                if resp.status_code != 200:
-                    raise ValueError(f"OpenAI TTS API error ({resp.status_code}): {resp.text}")
-                audio_bytes = resp.content
+                if hasattr(response, 'content'):
+                    audio_bytes = response.content
+                elif hasattr(response, 'read'):
+                    audio_bytes = await response.read()
+                else:
+                    audio_bytes = response
+            except Exception as openai_err:
+                logger.warning(f"[WorkflowEngine] AsyncOpenAI TTS failed/unavailable, falling back to httpx: {openai_err}")
+                # Fallback to direct HTTP request using httpx
+                async with httpx.AsyncClient(timeout=120.0) as http_client:
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": model,
+                        "input": raw_text,
+                        "voice": voice,
+                        "response_format": fmt,
+                        "speed": speed
+                    }
+                    resp = await http_client.post(
+                        "https://api.openai.com/v1/audio/speech",
+                        headers=headers,
+                        json=payload
+                    )
+                    if resp.status_code != 200:
+                        raise ValueError(f"OpenAI TTS API error ({resp.status_code}): {resp.text}")
+                    audio_bytes = resp.content
+        except Exception as layer1_err:
+            logger.warning(f"[WorkflowEngine] Layer 1 (OpenAI TTS) failed: {layer1_err}. Attempting Layer 2 (OpenRouter)...")
+            try:
+                from openai import AsyncOpenAI
+                client = AsyncOpenAI(api_key=settings.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
+                response = await client.audio.speech.create(
+                    model="google/gemini-3.1-flash-tts-preview",
+                    voice=voice,
+                    input=raw_text,
+                    response_format=fmt,
+                    speed=speed
+                )
+                if hasattr(response, 'content'):
+                    audio_bytes = response.content
+                elif hasattr(response, 'read'):
+                    audio_bytes = await response.read()
+                else:
+                    audio_bytes = response
+            except Exception as layer2_err:
+                logger.error(f"[WorkflowEngine] Layer 2 (OpenRouter TTS) failed: {layer2_err}")
+                raise RuntimeError(f"All TTS layers failed. Layer2: {layer2_err}") from layer2_err
 
         if not audio_bytes:
             raise ValueError("OpenAI TTS returned empty audio content.")
