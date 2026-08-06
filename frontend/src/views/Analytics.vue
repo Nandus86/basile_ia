@@ -84,7 +84,7 @@
                 ></v-btn>
                 <v-btn icon="mdi-eye" size="small" variant="text" color="primary" @click="viewDetails(item)"></v-btn>
               </template>
-            </v-data-table>
+            </v-data-table-server>
           </v-card-text>
         </v-card>
       </v-col>
