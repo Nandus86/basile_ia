@@ -22,13 +22,32 @@
     </v-row>
 
     <v-row>
+      <v-col cols="12" md="4" class="mb-2">
+        <v-text-field
+          v-model="search"
+          label="Buscar por ID da Sessão ou Nome"
+          prepend-inner-icon="mdi-magnify"
+          variant="outlined"
+          density="compact"
+          hide-details
+          clearable
+          @update:model-value="onSearch"
+        ></v-text-field>
+      </v-col>
+    </v-row>
+
+    <v-row>
       <v-col cols="12">
         <v-card class="elevation-2 border-radius-xl">
           <v-card-text class="pa-0">
-            <v-data-table
+            <v-data-table-server
               :headers="headers"
               :items="users"
+              :items-length="totalItems"
               :loading="loading"
+              v-model:items-per-page="itemsPerPage"
+              v-model:page="page"
+              @update:options="fetchAnalytics"
               class="elevation-0"
               hover
             >
@@ -54,6 +73,15 @@
                 {{ formatDate(item.last_seen_at) }}
               </template>
               <template v-slot:item.actions="{ item }">
+                <v-btn 
+                  icon="mdi-play" 
+                  size="small" 
+                  variant="text" 
+                  color="success" 
+                  :loading="runningSessions[item.session_id]"
+                  @click="runAgent(item.session_id)"
+                  title="Rodar Analista Agora"
+                ></v-btn>
                 <v-btn icon="mdi-eye" size="small" variant="text" color="primary" @click="viewDetails(item)"></v-btn>
               </template>
             </v-data-table>
@@ -202,6 +230,14 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+    
+    <!-- Snackbar for notifications -->
+    <v-snackbar v-model="snackbar" :color="snackbarColor" timeout="3000">
+      {{ snackbarText }}
+      <template v-slot:actions>
+        <v-btn variant="text" icon="mdi-close" @click="snackbar = false"></v-btn>
+      </template>
+    </v-snackbar>
   </v-container>
 </template>
 
@@ -213,6 +249,22 @@ const loading = ref(false)
 const users = ref([])
 const dialog = ref(false)
 const selectedUser = ref(null)
+
+const search = ref('')
+const page = ref(1)
+const itemsPerPage = ref(50)
+const totalItems = ref(0)
+const runningSessions = ref({})
+
+const snackbar = ref(false)
+const snackbarText = ref('')
+const snackbarColor = ref('success')
+
+const showSnackbar = (text, color = 'success') => {
+  snackbarText.value = text
+  snackbarColor.value = color
+  snackbar.value = true
+}
 
 // Config states
 const configTab = ref('motor')
@@ -256,15 +308,46 @@ const formatDate = (dateString) => {
   return new Date(dateString).toLocaleString('pt-BR')
 }
 
+let searchTimeout = null
+const onSearch = () => {
+  if (searchTimeout) clearTimeout(searchTimeout)
+  searchTimeout = setTimeout(() => {
+    page.value = 1
+    fetchAnalytics()
+  }, 500)
+}
+
 const fetchAnalytics = async () => {
   loading.value = true
   try {
-    const response = await axios.get(`/analytics/users`)
+    const skip = (page.value - 1) * itemsPerPage.value
+    const params = {
+      skip,
+      limit: itemsPerPage.value,
+      search: search.value || null
+    }
+    const response = await axios.get(`/analytics/users`, { params })
     users.value = response.data.users
+    totalItems.value = response.data.total
   } catch (error) {
     console.error('Failed to fetch analytics:', error)
+    showSnackbar('Erro ao carregar usuários.', 'error')
   } finally {
     loading.value = false
+  }
+}
+
+const runAgent = async (sessionId) => {
+  runningSessions.value[sessionId] = true
+  try {
+    await axios.post(`/analytics/users/${sessionId}/run`)
+    showSnackbar('Análise enviada para a fila de processamento!')
+  } catch (error) {
+    console.error('Failed to run agent:', error)
+    const msg = error.response?.data?.detail || 'Erro ao iniciar análise'
+    showSnackbar(msg, 'error')
+  } finally {
+    runningSessions.value[sessionId] = false
   }
 }
 

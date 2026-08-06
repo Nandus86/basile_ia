@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_, cast, String
 from typing import List, Optional
 import uuid
 
@@ -13,6 +13,7 @@ router = APIRouter()
 
 @router.get("/users", response_model=AnalyticsListResponse, summary="Listar Perfis Analíticos")
 async def list_analytics(
+    search: Optional[str] = None,
     church_id: Optional[str] = None,
     care_priority: Optional[str] = None,
     min_score: Optional[float] = None,
@@ -20,9 +21,17 @@ async def list_analytics(
     limit: int = Query(50, le=500),
     db: AsyncSession = Depends(get_db)
 ):
-    """Retorna perfis analíticos, suportando filtros por igreja, prioridade e score (consumido pelo CRM)."""
+    """Retorna perfis analíticos, suportando filtros por igreja, prioridade, score e pesquisa textual."""
     query = select(UserAnalytics)
     
+    if search:
+        query = query.where(
+            or_(
+                UserAnalytics.session_id.ilike(f"%{search}%"),
+                cast(UserAnalytics.profile_data, String).ilike(f"%{search}%")
+            )
+        )
+        
     if church_id:
         query = query.where(UserAnalytics.church_id == church_id)
     if care_priority:
@@ -110,3 +119,38 @@ async def update_analytics_config(config_data: AnalyticsConfigUpdate, db: AsyncS
     await sync_analytics_scheduler()
     
     return config
+
+@router.post("/users/{session_id}/run", summary="Forçar Análise Manual")
+async def run_analytics_manual(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Coloca o usuário na fila do RabbitMQ para ser analisado imediatamente."""
+    query = select(AnalyticsConfig).limit(1)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    
+    if not config or not config.agent_id:
+        raise HTTPException(status_code=400, detail="Nenhum agente analista configurado nas configurações de Analytics.")
+        
+    user_query = select(UserAnalytics).where(UserAnalytics.session_id == session_id)
+    user_res = await db.execute(user_query)
+    user = user_res.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        
+    from app.services.rabbitmq_service import rabbitmq_client
+    await rabbitmq_client.connect()
+    
+    payload = {
+        "session_id": session_id,
+        "agent_id": str(config.agent_id)
+    }
+    
+    try:
+        await rabbitmq_client.publish_message(
+            exchange_name="",
+            routing_key="analytics_tasks",
+            message_body=payload
+        )
+        return {"status": "queued", "message": "Análise enviada para a fila de processamento."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa: {str(e)}")
