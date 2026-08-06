@@ -3081,9 +3081,14 @@ Responda APENAS com uma das opções:
             try:
                 from openai import AsyncOpenAI
                 client = AsyncOpenAI(api_key=settings.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
+                
+                # Gemini TTS on OpenRouter only supports PCM format and we use Leda voice
+                fmt = "pcm"
+                voice_fallback = "Leda"
+                
                 response = await client.audio.speech.create(
                     model="google/gemini-3.1-flash-tts-preview",
-                    voice=voice,
+                    voice=voice_fallback,
                     input=raw_text,
                     response_format=fmt,
                     speed=speed
