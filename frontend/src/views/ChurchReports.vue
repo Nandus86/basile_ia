@@ -112,10 +112,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
-import { API_URL } from '@/config'
-import { format } from 'date-fns'
-import { ptBR } from 'date-fns/locale'
+import axios from '@/plugins/axios'
 
 const churches = ref([])
 const selectedChurch = ref(null)
@@ -143,7 +140,7 @@ const headers = [
 
 const fetchChurches = async () => {
   try {
-    const res = await axios.get(`${API_URL}/analytics/churches`)
+    const res = await axios.get(`/analytics/churches`)
     churches.value = res.data
     if (churches.value.length > 0) {
       selectedChurch.value = churches.value[0].id
@@ -162,7 +159,7 @@ const fetchReports = async (options = {}) => {
   loading.value = true
   
   try {
-    const res = await axios.get(`${API_URL}/analytics/reports`, {
+    const res = await axios.get(`/analytics/reports`, {
       params: {
         level: 'church',
         period_type: periodType.value,
@@ -198,7 +195,7 @@ const generateManual = async () => {
       end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
     }
 
-    await axios.post(`${API_URL}/analytics/reports/generate`, {
+    await axios.post(`/analytics/reports/generate`, {
       level: 'church',
       period_type: periodType.value,
       entity_id: selectedChurch.value,
@@ -222,7 +219,12 @@ const viewReport = (report) => {
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '-'
-  return format(new Date(dateStr), "dd 'de' MMMM, yyyy", { locale: ptBR })
+  const date = new Date(dateStr)
+  return new Intl.DateTimeFormat('pt-BR', { 
+    day: '2-digit', 
+    month: 'long', 
+    year: 'numeric' 
+  }).format(date)
 }
 
 const getStatusColor = (status) => {
