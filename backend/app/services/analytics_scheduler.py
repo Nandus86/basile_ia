@@ -218,7 +218,7 @@ async def sync_analytics_scheduler():
             hour, minute = config.cron_time.split(":")
             workflow_scheduler.scheduler.add_job(
                 run_analytics_agent,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *", timezone="America/Sao_Paulo"),
                 id="analytics_agent_job", replace_existing=True
             )
             
@@ -227,19 +227,19 @@ async def sync_analytics_scheduler():
             hour, minute = config.church_report_time.split(":")
             workflow_scheduler.scheduler.add_job(
                 run_church_daily_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *", timezone="America/Sao_Paulo"),
                 id="church_daily_report_job", replace_existing=True
             )
             # CHURCH WEEKLY (Sunday at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_church_weekly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * 0"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * 0", timezone="America/Sao_Paulo"),
                 id="church_weekly_report_job", replace_existing=True
             )
             # CHURCH MONTHLY (Day 1 at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_church_monthly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} 1 * *"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} 1 * *", timezone="America/Sao_Paulo"),
                 id="church_monthly_report_job", replace_existing=True
             )
             
@@ -248,19 +248,19 @@ async def sync_analytics_scheduler():
             hour, minute = config.system_report_time.split(":")
             workflow_scheduler.scheduler.add_job(
                 run_system_daily_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *", timezone="America/Sao_Paulo"),
                 id="system_daily_report_job", replace_existing=True
             )
-            # SYSTEM WEEKLY
+            # SYSTEM WEEKLY (Sunday at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_system_weekly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * 0"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * 0", timezone="America/Sao_Paulo"),
                 id="system_weekly_report_job", replace_existing=True
             )
-            # SYSTEM MONTHLY
+            # SYSTEM MONTHLY (Day 1 at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_system_monthly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} 1 * *"),
+                trigger=CronTrigger.from_crontab(f"{minute} {hour} 1 * *", timezone="America/Sao_Paulo"),
                 id="system_monthly_report_job", replace_existing=True
             )
             
