@@ -12,7 +12,12 @@ class AnalyticsConfig(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id = Column(String, nullable=True) # ID of the chosen Analyst Agent
+    church_agent_id = Column(String, nullable=True) # ID of the Church Supervisor Agent
+    system_agent_id = Column(String, nullable=True) # ID of the System Director Agent
+    
     cron_time = Column(String, default="03:00") # Format HH:MM
+    church_report_time = Column(String, default="04:00")
+    system_report_time = Column(String, default="04:30")
     is_active = Column(Boolean, default=True)
     crm_mapping = Column(JSONB, default=list)
     metrics_mapping = Column(JSONB, default=list)

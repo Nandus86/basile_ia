@@ -83,12 +83,14 @@ async def startup(ctx):
     logger.propagate = False
     
     from app.worker.analytics_consumer import start_analytics_consumer
+    from app.worker.reports_consumer import start_reports_consumer
     
-    logger.info("Starting RabbitMQ consumer in background...")
+    logger.info("Starting RabbitMQ consumers in background...")
     
     # Fire and forget the consumer loop in the background, but attach an error handler
     task = asyncio.create_task(start_rabbitmq_consumer())
     task_analytics = asyncio.create_task(start_analytics_consumer())
+    task_reports = asyncio.create_task(start_reports_consumer())
     
     def handle_exception(t):
         if not t.cancelled() and t.exception():
@@ -97,11 +99,17 @@ async def startup(ctx):
     def handle_exception_analytics(t):
         if not t.cancelled() and t.exception():
             logger.error(f"Analytics consumer loop failed: {t.exception()}")
+
+    def handle_exception_reports(t):
+        if not t.cancelled() and t.exception():
+            logger.error(f"Reports consumer loop failed: {t.exception()}")
     
     task.add_done_callback(handle_exception)
     task_analytics.add_done_callback(handle_exception_analytics)
+    task_reports.add_done_callback(handle_exception_reports)
     ctx["rabbitmq_task"] = task
     ctx["analytics_task"] = task_analytics
+    ctx["reports_task"] = task_reports
     
 async def shutdown(ctx):
     """Called when ARQ worker stops."""

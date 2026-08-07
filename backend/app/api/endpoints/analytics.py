@@ -154,3 +154,69 @@ async def run_analytics_manual(session_id: str, db: AsyncSession = Depends(get_d
         return {"status": "queued", "message": "Análise enviada para a fila de processamento."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa: {str(e)}")
+
+from app.models.analytics_report import AnalyticsReport
+from app.schemas.analytics import AnalyticsReportListResponse, AnalyticsReportResponse
+from datetime import datetime
+
+@router.get("/reports", response_model=AnalyticsReportListResponse, summary="Listar Relatórios")
+async def list_reports(
+    level: str = Query(..., description="user, church, ou system"),
+    period_type: str = Query(..., description="daily, weekly, ou monthly"),
+    entity_id: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(AnalyticsReport).where(
+        AnalyticsReport.level == level,
+        AnalyticsReport.period_type == period_type
+    )
+    
+    if entity_id:
+        query = query.where(AnalyticsReport.entity_id == entity_id)
+    if date_from:
+        query = query.where(AnalyticsReport.period_start >= date_from)
+    if date_to:
+        query = query.where(AnalyticsReport.period_start <= date_to)
+        
+    count_query = select(func.count()).select_from(query.subquery())
+    total = (await db.execute(count_query)).scalar_one()
+    
+    query = query.order_by(desc(AnalyticsReport.period_start)).offset(skip).limit(limit)
+    rows = (await db.execute(query)).scalars().all()
+    
+    return {"reports": rows, "total": total, "skip": skip, "limit": limit}
+
+@router.get("/reports/{report_id}", response_model=AnalyticsReportResponse, summary="Detalhes do Relatório")
+async def get_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    query = select(AnalyticsReport).where(AnalyticsReport.id == report_id)
+    report = (await db.execute(query)).scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Relatório não encontrado")
+    return report
+
+from pydantic import BaseModel
+class GenerateReportRequest(BaseModel):
+    level: str
+    period_type: str
+    entity_id: str
+    entity_name: str
+    start_time: datetime
+    end_time: datetime
+
+@router.post("/reports/generate", summary="Gerar Relatório Manual")
+async def generate_report_manual(req: GenerateReportRequest, db: AsyncSession = Depends(get_db)):
+    from app.services.analytics_scheduler import queue_report_task
+    await queue_report_task(req.level, req.period_type, req.entity_id, req.entity_name, req.start_time, req.end_time)
+    return {"status": "queued", "message": "Geração do relatório iniciada."}
+
+@router.get("/churches", summary="Listar Igrejas para Filtro")
+async def list_churches(db: AsyncSession = Depends(get_db)):
+    # Busca IDs distintos do UserAnalytics
+    query = select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct()
+    church_ids = (await db.execute(query)).scalars().all()
+    # Em um sistema real, poderíamos ter uma tabela de Igrejas. Aqui usamos o ID como nome temporariamente.
+    return [{"id": cid, "name": cid} for cid in church_ids if cid]

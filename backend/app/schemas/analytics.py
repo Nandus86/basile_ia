@@ -40,7 +40,11 @@ class AnalyticsListResponse(BaseModel):
 
 class AnalyticsConfigUpdate(BaseModel):
     agent_id: Optional[str] = None
+    church_agent_id: Optional[str] = None
+    system_agent_id: Optional[str] = None
     cron_time: Optional[str] = None
+    church_report_time: Optional[str] = None
+    system_report_time: Optional[str] = None
     is_active: Optional[bool] = None
     crm_mapping: Optional[List[Dict[str, Any]]] = None
     metrics_mapping: Optional[List[Dict[str, Any]]] = None
@@ -48,9 +52,37 @@ class AnalyticsConfigUpdate(BaseModel):
 class AnalyticsConfigResponse(BaseModel):
     id: UUID
     agent_id: Optional[str] = None
+    church_agent_id: Optional[str] = None
+    system_agent_id: Optional[str] = None
     cron_time: str
+    church_report_time: str
+    system_report_time: str
     is_active: bool
     crm_mapping: List[Dict[str, Any]]
     metrics_mapping: List[Dict[str, Any]]
 
     model_config = {"from_attributes": True}
+
+class AnalyticsReportResponse(BaseModel):
+    id: UUID
+    level: str
+    period_type: str
+    entity_id: str
+    entity_name: Optional[str] = None
+    period_start: datetime
+    period_end: datetime
+    stats: Dict[str, Any]
+    report_content: Optional[str] = None
+    agent_id: Optional[str] = None
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+class AnalyticsReportListResponse(BaseModel):
+    reports: List[AnalyticsReportResponse]
+    total: int
+    skip: int
+    limit: int

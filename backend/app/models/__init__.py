@@ -24,6 +24,7 @@ from app.models.dispatcher_webhook_log import DispatcherWebhookLog
 from app.models.qa_evaluation import QAEvaluation
 from app.models.user_analytics import UserAnalytics
 from app.models.analytics_config import AnalyticsConfig
+from app.models.analytics_report import AnalyticsReport
 
 __all__ = [
     "APIKey", 
@@ -36,6 +37,6 @@ __all__ = [
     "Skill", "SkillGroup", "InformationBase",
     "VFSKnowledgeBase", "VFSFile", "Workflow", "WorkflowExecution", "ConversationMessage",
     "DispatcherConfig", "User", "DispatcherWebhookLog",
-    "QAEvaluation", "UserAnalytics", "AnalyticsConfig"
+    "QAEvaluation", "UserAnalytics", "AnalyticsConfig", "AnalyticsReport"
 ]
 

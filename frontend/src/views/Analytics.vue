@@ -155,7 +155,7 @@
                       :items="availableAgents"
                       item-title="name"
                       item-value="id"
-                      label="Selecione o Agente Analista"
+                      label="Agente Analista de Usuários"
                       placeholder="Ex: Agente Analista de Perfis"
                       variant="outlined"
                       :disabled="!config.is_active"
@@ -164,7 +164,53 @@
                   <v-col cols="12" md="4">
                     <v-text-field
                       v-model="config.cron_time"
-                      label="Horário de Disparo"
+                      label="Horário (Usuários)"
+                      type="time"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                    ></v-text-field>
+                  </v-col>
+                  
+                  <v-col cols="12" md="8">
+                    <v-select
+                      v-model="config.church_agent_id"
+                      :items="availableAgents"
+                      item-title="name"
+                      item-value="id"
+                      label="Agente Supervisor da Igreja"
+                      placeholder="Ex: Agente Pastor"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                      clearable
+                    ></v-select>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field
+                      v-model="config.church_report_time"
+                      label="Horário (Igreja)"
+                      type="time"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                    ></v-text-field>
+                  </v-col>
+
+                  <v-col cols="12" md="8">
+                    <v-select
+                      v-model="config.system_agent_id"
+                      :items="availableAgents"
+                      item-title="name"
+                      item-value="id"
+                      label="Agente Diretor do Sistema"
+                      placeholder="Ex: Agente Diretor"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                      clearable
+                    ></v-select>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field
+                      v-model="config.system_report_time"
+                      label="Horário (Sistema)"
                       type="time"
                       variant="outlined"
                       :disabled="!config.is_active"
@@ -280,7 +326,11 @@ const availableAgents = ref([])
 const config = ref({
   is_active: false,
   agent_id: null,
+  church_agent_id: null,
+  system_agent_id: null,
   cron_time: '03:00',
+  church_report_time: '04:00',
+  system_report_time: '04:30',
   crm_mapping: [],
   metrics_mapping: []
 })
