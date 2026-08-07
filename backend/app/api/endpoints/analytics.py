@@ -99,8 +99,22 @@ async def update_analytics_config(config_data: AnalyticsConfigUpdate, db: AsyncS
         
     if config_data.agent_id is not None:
         config.agent_id = config_data.agent_id
+    if config_data.church_agent_id is not None:
+        config.church_agent_id = config_data.church_agent_id
+    if config_data.system_agent_id is not None:
+        config.system_agent_id = config_data.system_agent_id
     if config_data.cron_time is not None:
         config.cron_time = config_data.cron_time
+    if config_data.church_report_time is not None:
+        config.church_report_time = config_data.church_report_time
+    if config_data.system_report_time is not None:
+        config.system_report_time = config_data.system_report_time
+    if config_data.user_webhook_url is not None:
+        config.user_webhook_url = config_data.user_webhook_url
+    if config_data.church_webhook_url is not None:
+        config.church_webhook_url = config_data.church_webhook_url
+    if config_data.system_webhook_url is not None:
+        config.system_webhook_url = config_data.system_webhook_url
     if config_data.is_active is not None:
         config.is_active = config_data.is_active
     from sqlalchemy.orm.attributes import flag_modified
