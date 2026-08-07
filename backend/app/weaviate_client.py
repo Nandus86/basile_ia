@@ -35,6 +35,11 @@ class WeaviateClient:
                     if openai_key:
                         headers["X-Openai-Api-Key"] = openai_key
                     
+                    # Permite usar provedores compatíveis (ex: OpenRouter, Together, Ollama)
+                    base_url = os.environ.get("OPENAI_BASE_URL", "")
+                    if base_url:
+                        headers["X-Openai-Baseurl"] = base_url
+                    
                     # Auth: use API key from env if provided (for Weaviate Cloud)
                     auth_credentials = None
                     if settings.WEAVIATE_API_KEY:
