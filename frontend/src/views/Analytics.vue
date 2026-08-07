@@ -4,22 +4,31 @@
       <v-col cols="12">
         <div class="d-flex align-center justify-space-between mb-6">
           <div>
-            <h1 class="text-h4 font-weight-bold mb-2">User Analytics</h1>
+            <h1 class="text-h4 font-weight-bold mb-2">Analytics & Relatórios</h1>
             <p class="text-subtitle-1 text-medium-emphasis">
-              Visão geral do engajamento e curadoria inteligente dos usuários.
+              Visão geral de engajamento e relatórios do Basile.
             </p>
           </div>
           <div class="d-flex align-center ga-3">
             <v-btn color="secondary" variant="outlined" prepend-icon="mdi-cog" @click="openConfig">
-              Configurar Analista
+              Configurar Analistas
             </v-btn>
-            <v-btn color="primary" prepend-icon="mdi-refresh" @click="fetchAnalytics">
+            <v-btn color="primary" prepend-icon="mdi-refresh" @click="handleRefresh">
               Atualizar
             </v-btn>
           </div>
         </div>
       </v-col>
     </v-row>
+
+    <v-tabs v-model="activeTab" bg-color="surface" class="mb-6 border-radius-xl elevation-2">
+      <v-tab value="users">Usuários</v-tab>
+      <v-tab value="churches">Igrejas Locais</v-tab>
+      <v-tab value="system">Sistema Global</v-tab>
+    </v-tabs>
+
+    <v-window v-model="activeTab" class="bg-transparent" style="overflow: visible;">
+      <v-window-item value="users">
 
     <v-row>
       <v-col cols="12" md="4" class="mb-2">
@@ -95,6 +104,16 @@
         </v-card>
       </v-col>
     </v-row>
+  </v-window-item>
+
+      <v-window-item value="churches">
+        <ChurchReports ref="churchReportsRef" />
+      </v-window-item>
+
+      <v-window-item value="system">
+        <SystemReports ref="systemReportsRef" />
+      </v-window-item>
+    </v-window>
 
     <!-- Dialog for details -->
     <v-dialog v-model="dialog" max-width="800px">
@@ -149,7 +168,7 @@
                       color="primary"
                     ></v-switch>
                   </v-col>
-                  <v-col cols="12" md="8">
+                  <v-col cols="12" md="6">
                     <v-select
                       v-model="config.agent_id"
                       :items="availableAgents"
@@ -161,17 +180,31 @@
                       :disabled="!config.is_active"
                     ></v-select>
                   </v-col>
-                  <v-col cols="12" md="4">
+                  <v-col cols="12" md="2">
                     <v-text-field
                       v-model="config.cron_time"
-                      label="Horário (Usuários)"
+                      label="Horário"
                       type="time"
                       variant="outlined"
                       :disabled="!config.is_active"
                     ></v-text-field>
                   </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field
+                      v-model="config.user_webhook_url"
+                      label="Webhook Saída (Usuário)"
+                      placeholder="https://sua-automacao.com/webhook"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                      clearable
+                    ></v-text-field>
+                  </v-col>
                   
-                  <v-col cols="12" md="8">
+                  <v-col cols="12">
+                    <v-divider class="my-2"></v-divider>
+                    <h4 class="text-subtitle-1 mb-2">Motor de Relatórios: Igrejas</h4>
+                  </v-col>
+                  <v-col cols="12" md="6">
                     <v-select
                       v-model="config.church_agent_id"
                       :items="availableAgents"
@@ -184,17 +217,31 @@
                       clearable
                     ></v-select>
                   </v-col>
-                  <v-col cols="12" md="4">
+                  <v-col cols="12" md="2">
                     <v-text-field
                       v-model="config.church_report_time"
-                      label="Horário (Igreja)"
+                      label="Horário"
                       type="time"
                       variant="outlined"
                       :disabled="!config.is_active"
                     ></v-text-field>
                   </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field
+                      v-model="config.church_webhook_url"
+                      label="Webhook Saída (Igreja)"
+                      placeholder="https://sua-automacao.com/webhook"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                      clearable
+                    ></v-text-field>
+                  </v-col>
 
-                  <v-col cols="12" md="8">
+                  <v-col cols="12">
+                    <v-divider class="my-2"></v-divider>
+                    <h4 class="text-subtitle-1 mb-2">Motor de Relatórios: Sistema Global</h4>
+                  </v-col>
+                  <v-col cols="12" md="6">
                     <v-select
                       v-model="config.system_agent_id"
                       :items="availableAgents"
@@ -207,13 +254,23 @@
                       clearable
                     ></v-select>
                   </v-col>
-                  <v-col cols="12" md="4">
+                  <v-col cols="12" md="2">
                     <v-text-field
                       v-model="config.system_report_time"
-                      label="Horário (Sistema)"
+                      label="Horário"
                       type="time"
                       variant="outlined"
                       :disabled="!config.is_active"
+                    ></v-text-field>
+                  </v-col>
+                  <v-col cols="12" md="4">
+                    <v-text-field
+                      v-model="config.system_webhook_url"
+                      label="Webhook Saída (Sistema)"
+                      placeholder="https://sua-automacao.com/webhook"
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                      clearable
                     ></v-text-field>
                   </v-col>
                 </v-row>
@@ -294,8 +351,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import axios from '@/plugins/axios'
+import ChurchReports from './ChurchReports.vue'
+import SystemReports from './SystemReports.vue'
+
+const activeTab = ref('users')
+const churchReportsRef = ref(null)
+const systemReportsRef = ref(null)
 
 const loading = ref(false)
 const users = ref([])
@@ -331,6 +394,9 @@ const config = ref({
   cron_time: '03:00',
   church_report_time: '04:00',
   system_report_time: '04:30',
+  user_webhook_url: null,
+  church_webhook_url: null,
+  system_webhook_url: null,
   crm_mapping: [],
   metrics_mapping: []
 })
@@ -392,6 +458,16 @@ const fetchAnalytics = async () => {
     showSnackbar('Erro ao carregar usuários.', 'error')
   } finally {
     loading.value = false
+  }
+}
+
+const handleRefresh = () => {
+  if (activeTab.value === 'users') {
+    fetchAnalytics()
+  } else if (activeTab.value === 'churches') {
+    if (churchReportsRef.value?.fetchReports) churchReportsRef.value.fetchReports()
+  } else if (activeTab.value === 'system') {
+    if (systemReportsRef.value?.fetchReports) systemReportsRef.value.fetchReports()
   }
 }
 

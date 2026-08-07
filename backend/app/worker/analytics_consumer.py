@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+import httpx
 
 from app.services.rabbitmq_service import rabbitmq_client
 from app.database import async_session_maker
@@ -64,7 +65,13 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     request_data={"session_id": session_id, "agent": agent.name}
                 )
                 session.add(job_log)
+                    # Save to DB
                 await session.commit()
+                
+                # Fire webhook if configured
+                from app.models.config import Config
+                config_res = await session.execute(select(Config).where(Config.agent_id == agent.id))
+                config = config_res.scalar_one_or_none()
                 
                 start_time = datetime.now()
 
@@ -159,6 +166,22 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     
                     await session.commit()
                     logger.info(f"[AnalyticsConsumer] Successfully analyzed session {user.session_id}")
+                    
+                    # Fire webhook if configured
+                    if config and config.user_webhook_url:
+                        try:
+                            async with httpx.AsyncClient() as client:
+                                payload_out = {
+                                    "session_id": user.session_id,
+                                    "analytics": new_aprendizado,
+                                    "agent": agent.name,
+                                    "type": "user_analytics"
+                                }
+                                await client.post(config.user_webhook_url, json=payload_out, timeout=10.0)
+                                logger.info(f"[AnalyticsConsumer] Fired user webhook to {config.user_webhook_url}")
+                        except Exception as e:
+                            logger.error(f"[AnalyticsConsumer] Failed to fire user webhook: {e}")
+
 
                 except Exception as ex:
                     logger.error(f"[AnalyticsConsumer] Error running LLM for {session_id}: {ex}")

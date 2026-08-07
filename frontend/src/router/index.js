@@ -73,16 +73,6 @@ const routes = [
         component: () => import('@/views/Analytics.vue')
       },
       {
-        path: 'church-reports',
-        name: 'ChurchReports',
-        component: () => import('@/views/ChurchReports.vue')
-      },
-      {
-        path: 'system-reports',
-        name: 'SystemReports',
-        component: () => import('@/views/SystemReports.vue')
-      },
-      {
         path: 'vfs-knowledge',
         name: 'VFSKnowledge',
         component: () => import('@/views/VFSKnowledge.vue')

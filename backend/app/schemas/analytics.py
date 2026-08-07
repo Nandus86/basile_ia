@@ -45,6 +45,9 @@ class AnalyticsConfigUpdate(BaseModel):
     cron_time: Optional[str] = None
     church_report_time: Optional[str] = None
     system_report_time: Optional[str] = None
+    user_webhook_url: Optional[str] = None
+    church_webhook_url: Optional[str] = None
+    system_webhook_url: Optional[str] = None
     is_active: Optional[bool] = None
     crm_mapping: Optional[List[Dict[str, Any]]] = None
     metrics_mapping: Optional[List[Dict[str, Any]]] = None
@@ -57,6 +60,9 @@ class AnalyticsConfigResponse(BaseModel):
     cron_time: str
     church_report_time: str
     system_report_time: str
+    user_webhook_url: Optional[str] = None
+    church_webhook_url: Optional[str] = None
+    system_webhook_url: Optional[str] = None
     is_active: bool
     crm_mapping: List[Dict[str, Any]]
     metrics_mapping: List[Dict[str, Any]]

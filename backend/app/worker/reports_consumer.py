@@ -210,6 +210,27 @@ async def process_report_message(message: aio_pika.abc.AbstractIncomingMessage):
                     await session.commit()
                     logger.info(f"[ReportsConsumer] Successfully generated report {report_id}")
                     
+                    # Fire webhook if configured
+                    webhook_url = config.church_webhook_url if report.level == "church" else config.system_webhook_url
+                    if webhook_url:
+                        try:
+                            import httpx
+                            async with httpx.AsyncClient() as client:
+                                payload_out = {
+                                    "report_id": str(report.id),
+                                    "level": report.level,
+                                    "entity_id": report.entity_id,
+                                    "period_type": report.period_type,
+                                    "start_date": report.start_date.isoformat(),
+                                    "end_date": report.end_date.isoformat(),
+                                    "stats": report.stats,
+                                    "report_content": report.report_content
+                                }
+                                await client.post(webhook_url, json=payload_out, timeout=10.0)
+                                logger.info(f"[ReportsConsumer] Fired {report.level} webhook to {webhook_url}")
+                        except Exception as e:
+                            logger.error(f"[ReportsConsumer] Failed to fire {report.level} webhook: {e}")
+                    
                 except Exception as ex:
                     logger.error(f"[ReportsConsumer] Error running LLM for {report_id}: {ex}")
                     report.status = "failed"

@@ -18,6 +18,12 @@ class AnalyticsConfig(Base):
     cron_time = Column(String, default="03:00") # Format HH:MM
     church_report_time = Column(String, default="04:00")
     system_report_time = Column(String, default="04:30")
+    
+    # Webhooks (Outlets)
+    user_webhook_url = Column(String, nullable=True)
+    church_webhook_url = Column(String, nullable=True)
+    system_webhook_url = Column(String, nullable=True)
+    
     is_active = Column(Boolean, default=True)
     crm_mapping = Column(JSONB, default=list)
     metrics_mapping = Column(JSONB, default=list)

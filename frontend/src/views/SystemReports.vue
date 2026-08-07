@@ -1,17 +1,5 @@
 <template>
-  <v-container fluid class="pa-6">
-    <div class="d-flex align-center justify-space-between mb-6">
-      <div>
-        <h1 class="text-h4 font-weight-bold mb-2">Relatórios do Sistema</h1>
-        <p class="text-subtitle-1 text-medium-emphasis">
-          Visão global e estratégica de todas as igrejas do Basile
-        </p>
-      </div>
-      <v-btn color="primary" prepend-icon="mdi-refresh" @click="fetchReports">
-        Atualizar
-      </v-btn>
-    </div>
-
+  <div class="pa-2">
     <v-row class="mb-4">
       <v-col cols="12" md="3">
         <v-select
@@ -91,7 +79,7 @@
         </v-card-text>
       </v-card>
     </v-dialog>
-  </v-container>
+  </div>
 </template>
 
 <script setup>
@@ -205,6 +193,10 @@ const getStatusColor = (status) => {
 
 onMounted(() => {
   fetchReports()
+})
+
+defineExpose({
+  fetchReports
 })
 </script>
 
