@@ -229,8 +229,32 @@ async def generate_report_manual(req: GenerateReportRequest, db: AsyncSession = 
 
 @router.get("/churches", summary="Listar Igrejas para Filtro")
 async def list_churches(db: AsyncSession = Depends(get_db)):
-    # Busca IDs distintos do UserAnalytics
+    """Busca IDs distintos de igrejas e resolve seus nomes reais."""
     query = select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct()
     church_ids = (await db.execute(query)).scalars().all()
-    # Em um sistema real, poderíamos ter uma tabela de Igrejas. Aqui usamos o ID como nome temporariamente.
-    return [{"id": cid, "name": cid} for cid in church_ids if cid]
+    
+    results = []
+    for cid in church_ids:
+        if not cid:
+            continue
+        # Tenta resolver o nome a partir da zona CRM de qualquer usuário dessa igreja
+        user_res = await db.execute(
+            select(UserAnalytics.profile_data).where(UserAnalytics.church_id == cid).limit(1)
+        )
+        profile = user_res.scalar_one_or_none()
+        name = None
+        if profile and isinstance(profile, dict):
+            crm = profile.get("__zona_crm", {})
+            name = crm.get("church_name") or crm.get("Igreja Sede")
+        
+        # Fallback: tenta no job_logs
+        if not name:
+            from app.models.job_log import JobLog
+            log_res = await db.execute(
+                select(JobLog.church_name).where(JobLog.church_name != None, JobLog.church_name != "").limit(1)
+            )
+            name = log_res.scalar_one_or_none()
+        
+        results.append({"id": cid, "name": name or cid})
+    
+    return results

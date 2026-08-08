@@ -173,21 +173,25 @@ const generateManual = async () => {
     let start, end
     if (periodType.value === 'daily') {
       start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-      end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, -1)
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59)
     } else if (periodType.value === 'weekly') {
       const day = now.getDay()
       start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 7)
-      end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000 - 1)
+      end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59)
     } else {
       start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)
     }
+
+    // Resolve church name from the select options
+    const churchObj = churches.value.find(c => c.id === selectedChurch.value)
+    const churchName = churchObj ? churchObj.name : selectedChurch.value
 
     await axios.post(`/analytics/reports/generate`, {
       level: 'church',
       period_type: periodType.value,
       entity_id: selectedChurch.value,
-      entity_name: selectedChurch.value,
+      entity_name: churchName,
       start_time: start.toISOString(),
       end_time: end.toISOString()
     })

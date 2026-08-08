@@ -139,14 +139,14 @@ const generateManual = async () => {
     let start, end
     if (periodType.value === 'daily') {
       start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-      end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, -1)
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59)
     } else if (periodType.value === 'weekly') {
       const day = now.getDay()
       start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 7)
-      end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000 - 1)
+      end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59)
     } else {
       start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)
     }
 
     await axios.post(`/analytics/reports/generate`, {

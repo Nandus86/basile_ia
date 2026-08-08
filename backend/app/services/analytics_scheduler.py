@@ -7,6 +7,20 @@ from app.services.workflow_scheduler import workflow_scheduler
 
 logger = logging.getLogger(__name__)
 
+async def _resolve_church_name(session, church_id: str) -> str:
+    """Resolve o nome real da igreja a partir do profile_data dos usuários."""
+    from app.models.user_analytics import UserAnalytics
+    res = await session.execute(
+        select(UserAnalytics.profile_data).where(UserAnalytics.church_id == church_id).limit(1)
+    )
+    profile = res.scalar_one_or_none()
+    if profile and isinstance(profile, dict):
+        crm = profile.get("__zona_crm", {})
+        name = crm.get("church_name") or crm.get("Igreja Sede")
+        if name:
+            return name
+    return church_id
+
 async def run_analytics_agent():
     """
     Function that runs periodically (daily) to invoke the Analyst Agent for users.
@@ -71,18 +85,18 @@ async def queue_report_task(level: str, period_type: str, entity_id: str, entity
     import uuid
     
     async with AsyncSessionLocal() as session:
-        # Check if already generated for this exact period
-        from sqlalchemy import select
+        # Check if already generated for this exact period (normalize to date-only for dedup)
+        from sqlalchemy import select, func, cast, Date
         existing = await session.execute(
             select(AnalyticsReport).where(
                 AnalyticsReport.level == level,
                 AnalyticsReport.period_type == period_type,
                 AnalyticsReport.entity_id == entity_id,
-                AnalyticsReport.period_start == start_time
+                cast(AnalyticsReport.period_start, Date) == start_time.date()
             )
         )
         if existing.scalar_one_or_none():
-            logger.info(f"[AnalyticsScheduler] Report {level}/{period_type} for {entity_id} at {start_time} already exists.")
+            logger.info(f"[AnalyticsScheduler] Report {level}/{period_type} for {entity_id} at {start_time.date()} already exists.")
             return
 
         report = AnalyticsReport(
@@ -120,9 +134,9 @@ async def run_church_daily_reports():
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
         church_ids = churches_res.scalars().all()
         
-    for cid in church_ids:
-        # For now, entity_name = entity_id (frontend will map it, or we could fetch it)
-        await queue_report_task("church", "daily", cid, cid, start_time, end_time)
+        for cid in church_ids:
+            name = await _resolve_church_name(session, cid)
+            await queue_report_task("church", "daily", cid, name, start_time, end_time)
 
 async def run_system_daily_reports():
     logger.info("[AnalyticsScheduler] Starting system daily reports...")
@@ -149,8 +163,9 @@ async def run_church_weekly_reports():
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
         church_ids = churches_res.scalars().all()
         
-    for cid in church_ids:
-        await queue_report_task("church", "weekly", cid, cid, start_time, end_time)
+        for cid in church_ids:
+            name = await _resolve_church_name(session, cid)
+            await queue_report_task("church", "weekly", cid, name, start_time, end_time)
         
 async def run_system_weekly_reports():
     logger.info("[AnalyticsScheduler] Starting system weekly reports...")
@@ -176,8 +191,9 @@ async def run_church_monthly_reports():
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
         church_ids = churches_res.scalars().all()
         
-    for cid in church_ids:
-        await queue_report_task("church", "monthly", cid, cid, start_time, end_time)
+        for cid in church_ids:
+            name = await _resolve_church_name(session, cid)
+            await queue_report_task("church", "monthly", cid, name, start_time, end_time)
 
 async def run_system_monthly_reports():
     logger.info("[AnalyticsScheduler] Starting system monthly reports...")
