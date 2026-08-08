@@ -1096,7 +1096,17 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             agent_graph.add_node("force_end", force_end_node)
             agent_graph.add_edge(START, "agent")
             agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-            agent_graph.add_edge("tools", "agent")     # Sempre volta ao agente para formular resposta final
+            def route_after_tools(state: AgentExecState) -> str:
+                """Se a última tool executada for do tipo always_end_queue, encerra o orquestrador imediatamente."""
+                for msg in reversed(state["messages"]):
+                    if getattr(msg, "type", "") != "tool":
+                        break
+                    if getattr(msg, "name", None) in always_end_queue:
+                        logger.info(f"[AgentFactory] 🏁 Tool de saída final '{msg.name}' concluída. Encerrando o orquestrador.")
+                        return END
+                return "agent"
+
+            agent_graph.add_conditional_edges("tools", route_after_tools, ["agent", END])
             agent_graph.add_edge("force_end", "tools") # Força execução da always_end e volta para agent finalizar
 
             react_agent = agent_graph.compile()
