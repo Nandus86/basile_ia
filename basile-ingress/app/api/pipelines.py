@@ -181,6 +181,53 @@ async def get_ingress_log_details(
     return log
 
 
+@router.post("/logs/{log_id}/retrigger")
+async def retrigger_ingress_log(
+    log_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.models.ingress_log import IngressLog
+    from app.models.pipeline import WebhookPipeline
+    import httpx
+    import time
+    
+    query = select(IngressLog).where(IngressLog.id == log_id)
+    result = await db.execute(query)
+    log_entry = result.scalar_one_or_none()
+    
+    if not log_entry:
+        raise HTTPException(status_code=404, detail="Ingress log not found")
+        
+    # Find the pipeline config to use API key if needed
+    query_pipeline = select(WebhookPipeline).where(WebhookPipeline.path == log_entry.pipeline_path)
+    res_pipeline = await db.execute(query_pipeline)
+    pipeline = res_pipeline.scalar_one_or_none()
+    
+    headers = {}
+    if pipeline and pipeline.auth_token:
+        headers["X-API-Key"] = pipeline.auth_token
+        
+    url = f"http://127.0.0.1:8000/webhook/{log_entry.pipeline_path}"
+    
+    start_time = time.time()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            resp = await client.post(url, json=log_entry.raw_payload, headers=headers)
+            
+            try:
+                response_data = resp.json()
+            except Exception:
+                response_data = {"text": resp.text}
+                
+            return {
+                "success": resp.status_code < 400,
+                "status_code": resp.status_code,
+                "response": response_data
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to communicate with ingress endpoint: {e}")
+
+
 @router.get("/{pipeline_id}", response_model=WebhookPipelineResponse)
 async def get_pipeline(pipeline_id: UUID, db: AsyncSession = Depends(get_db)):
     query = select(WebhookPipeline).where(WebhookPipeline.id == pipeline_id)

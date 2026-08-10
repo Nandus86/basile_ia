@@ -1643,8 +1643,17 @@
         </v-card-text>
 
         <v-card-actions class="pa-4 border-t">
+          <v-btn
+            color="success"
+            variant="flat"
+            prepend-icon="mdi-send-clock"
+            :loading="retriggeringIngress"
+            @click="retriggerIngress(selectedIngressLog.id)"
+          >
+            Refazer
+          </v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="ingressDialog = false">Fechar</v-btn>
+          <v-btn variant="text" @click="ingressDialog = false" :disabled="retriggeringIngress">Fechar</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1792,6 +1801,7 @@ const ingressStatusFilter = ref(null)
 const ingressDialog = ref(false)
 const selectedIngressLog = ref(null)
 const ingressDetailTab = ref('general')
+const retriggeringIngress = ref(false)
 
 // Gatilhos Disparador State
 const gatilhosLogs = ref([])
@@ -2886,6 +2896,23 @@ const retriggerGatilho = async (logId) => {
     showSnackbar(e.response?.data?.detail || 'Erro ao re-disparar gatilho', 'error')
   } finally {
     retriggeringGatilho.value = false
+  }
+}
+
+const retriggerIngress = async (logId) => {
+  retriggeringIngress.value = true
+  try {
+    const { data } = await ingressAxios.post(`/pipelines/logs/${logId}/retrigger`)
+    if (data.success) {
+      showSnackbar(`Refazer realizado com sucesso! Status: ${data.status_code}`, 'success')
+    } else {
+      showSnackbar(`Refazer retornou status ${data.status_code}`, 'warning')
+    }
+    await fetchIngressLogs()
+  } catch (e) {
+    showSnackbar(e.response?.data?.detail || 'Erro ao refazer entrada', 'error')
+  } finally {
+    retriggeringIngress.value = false
   }
 }
 
