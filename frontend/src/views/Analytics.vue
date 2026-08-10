@@ -43,6 +43,27 @@
           @update:model-value="onSearch"
         ></v-text-field>
       </v-col>
+      <v-spacer></v-spacer>
+      <v-col cols="12" md="3" class="mb-2 d-flex align-center">
+        <v-text-field
+          v-model="targetDate"
+          type="date"
+          label="Data Retroativa (Opcional)"
+          variant="outlined"
+          density="compact"
+          hide-details
+          class="mr-2"
+        ></v-text-field>
+        <v-btn
+          color="warning"
+          prepend-icon="mdi-play-box-multiple"
+          :loading="runningAll"
+          @click="runAllManual"
+          :disabled="!targetDate"
+        >
+          Rodar Todos
+        </v-btn>
+      </v-col>
     </v-row>
 
     <v-row>
@@ -364,12 +385,14 @@ const loading = ref(false)
 const users = ref([])
 const dialog = ref(false)
 const selectedUser = ref(null)
+const runningSessions = ref({})
+const runningAll = ref(false)
+const targetDate = ref(new Date().toISOString().substring(0, 10))
 
 const search = ref('')
 const page = ref(1)
 const itemsPerPage = ref(50)
 const totalItems = ref(0)
-const runningSessions = ref({})
 
 const snackbar = ref(false)
 const snackbarText = ref('')
@@ -482,6 +505,24 @@ const runAgent = async (sessionId) => {
     showSnackbar(msg, 'error')
   } finally {
     runningSessions.value[sessionId] = false
+  }
+}
+
+const runAllManual = async () => {
+  if (!targetDate.value) {
+    showSnackbar('Selecione uma data.', 'warning')
+    return
+  }
+  runningAll.value = true
+  try {
+    const res = await axios.post(`/analytics/users/run-all`, { target_date: targetDate.value })
+    showSnackbar(res.data.message)
+  } catch (error) {
+    console.error('Failed to run all agents:', error)
+    const msg = error.response?.data?.detail || 'Erro ao enfileirar análises'
+    showSnackbar(msg, 'error')
+  } finally {
+    runningAll.value = false
   }
 }
 

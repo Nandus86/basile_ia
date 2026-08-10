@@ -11,7 +11,16 @@
           @update:modelValue="fetchReports"
         ></v-select>
       </v-col>
-      <v-col cols="12" md="9" class="d-flex align-center justify-end">
+      <v-col cols="12" md="3">
+        <v-text-field
+          v-model="targetDate"
+          type="date"
+          label="Data Base do Relatório"
+          variant="outlined"
+          density="comfortable"
+        ></v-text-field>
+      </v-col>
+      <v-col cols="12" md="6" class="d-flex align-center justify-end">
         <v-btn color="secondary" prepend-icon="mdi-flash" @click="generateManual" :loading="generating">
           Gerar Relatório Agora
         </v-btn>
@@ -93,9 +102,11 @@ const periodOptions = [
   { title: 'Mensal', value: 'monthly' }
 ]
 
-const reports = ref([])
-const totalItems = ref(0)
 const itemsPerPage = ref(10)
+const totalItems = ref(0)
+
+const reports = ref([])
+const targetDate = ref(new Date().toISOString().substring(0, 10))
 const loading = ref(false)
 const generating = ref(false)
 const dialog = ref(false)
@@ -135,18 +146,18 @@ const fetchReports = async (options = {}) => {
 const generateManual = async () => {
   generating.value = true
   try {
-    const now = new Date()
+    const baseDate = targetDate.value ? new Date(targetDate.value + 'T12:00:00') : new Date()
     let start, end
     if (periodType.value === 'daily') {
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59)
+      start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate())
+      end = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 23, 59, 59)
     } else if (periodType.value === 'weekly') {
-      const day = now.getDay()
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 7)
+      const day = baseDate.getDay()
+      start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() - day)
       end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59)
     } else {
-      start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)
+      start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1)
+      end = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0, 23, 59, 59)
     }
 
     await axios.post(`/analytics/reports/generate`, {

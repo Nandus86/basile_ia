@@ -169,6 +169,50 @@ async def run_analytics_manual(session_id: str, db: AsyncSession = Depends(get_d
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa: {str(e)}")
 
+@router.post("/users/run-all", summary="Forçar Análise de Todos os Usuários")
+async def run_all_analytics_manual(target_date: str = Body(..., embed=True), db: AsyncSession = Depends(get_db)):
+    """
+    Busca todos os usuários com interaction_count >= 3 e os coloca na fila
+    para análise manual forçada (útil para retroativos).
+    A 'target_date' aqui serve apenas como referência para log,
+    ou para usar futuramente na lógica de filtragem se necessário.
+    """
+    query = select(AnalyticsConfig).limit(1)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    
+    if not config or not config.agent_id:
+        raise HTTPException(status_code=400, detail="Nenhum agente analista configurado nas configurações de Analytics.")
+        
+    user_query = select(UserAnalytics).where(UserAnalytics.interaction_count >= 3)
+    user_res = await db.execute(user_query)
+    users = user_res.scalars().all()
+    
+    if not users:
+        return {"status": "success", "message": "Nenhum usuário elegível encontrado para análise.", "queued": 0}
+        
+    from app.services.rabbitmq_service import rabbitmq_client
+    await rabbitmq_client.connect()
+    
+    queued = 0
+    for user in users:
+        payload = {
+            "session_id": user.session_id,
+            "agent_id": str(config.agent_id),
+            "target_date": target_date
+        }
+        try:
+            await rabbitmq_client.publish_message(
+                exchange_name="",
+                routing_key="analytics_tasks",
+                message_body=payload
+            )
+            queued += 1
+        except Exception as e:
+            print(f"Error queueing user {user.session_id}: {e}")
+            
+    return {"status": "success", "message": f"{queued} usuários enviados para a fila de processamento.", "queued": queued}
+
 from app.models.analytics_report import AnalyticsReport
 from app.schemas.analytics import AnalyticsReportListResponse, AnalyticsReportResponse
 from datetime import datetime

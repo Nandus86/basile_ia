@@ -23,7 +23,16 @@
           @update:modelValue="fetchReports"
         ></v-select>
       </v-col>
-      <v-col cols="12" md="6" class="d-flex align-center justify-end">
+      <v-col cols="12" md="3">
+        <v-text-field
+          v-model="targetDate"
+          type="date"
+          label="Data Base do Relatório"
+          variant="outlined"
+          density="comfortable"
+        ></v-text-field>
+      </v-col>
+      <v-col cols="12" md="3" class="d-flex align-center justify-end">
         <v-btn color="secondary" prepend-icon="mdi-flash" @click="generateManual" :disabled="!selectedChurch" :loading="generating">
           Gerar Relatório Agora
         </v-btn>
@@ -104,6 +113,7 @@ import axios from '@/plugins/axios'
 
 const churches = ref([])
 const selectedChurch = ref(null)
+const targetDate = ref(new Date().toISOString().substring(0, 10))
 const periodType = ref('daily')
 const periodOptions = [
   { title: 'Diário', value: 'daily' },
@@ -169,18 +179,18 @@ const generateManual = async () => {
   if (!selectedChurch.value) return
   generating.value = true
   try {
-    const now = new Date()
+    const baseDate = targetDate.value ? new Date(targetDate.value + 'T12:00:00') : new Date()
     let start, end
     if (periodType.value === 'daily') {
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
-      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59)
+      start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate())
+      end = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), 23, 59, 59)
     } else if (periodType.value === 'weekly') {
-      const day = now.getDay()
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 7)
+      const day = baseDate.getDay()
+      start = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() - day)
       end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59)
     } else {
-      start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)
+      start = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1)
+      end = new Date(baseDate.getFullYear(), baseDate.getMonth() + 1, 0, 23, 59, 59)
     }
 
     // Resolve church name from the select options
