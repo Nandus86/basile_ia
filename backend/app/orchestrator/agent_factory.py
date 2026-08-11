@@ -913,9 +913,21 @@ Cite a fonte quando usar informações do contexto acima.
                     
                     fp = _fingerprint_tool_call(tool.name, kwargs)
                     if fp in seen_fps:
-                        return "Tool call blocked: repeated same arguments in current turn."
+                        import json
+                        return json.dumps({
+                            "status": "erro",
+                            "motivo": "chamada_repetida",
+                            "detalhe": "Você já chamou esta ferramenta com os exatos mesmos argumentos neste turno.",
+                            "acao_recomendada": "Não repita a chamada. Use os dados que já recebeu ou mude os parâmetros."
+                        }, ensure_ascii=False)
                     if not budget.consume("collab" if is_collab else "tool"):
-                        return f"Tool call blocked: {budget.stop_reason()}."
+                        import json
+                        return json.dumps({
+                            "status": "erro",
+                            "motivo": budget.stop_reason(),
+                            "detalhe": "O limite de chamadas para este turno foi atingido.",
+                            "acao_recomendada": "Pare de chamar ferramentas. Sintetize as informações que já possui e responda ao usuário."
+                        }, ensure_ascii=False)
                     seen_fps.add(fp)
                     # Delegate to original tool
                     if hasattr(tool, "ainvoke"):
@@ -944,9 +956,21 @@ Cite a fonte quando usar informações do contexto acima.
                     
                     fp = _fingerprint_tool_call(tool.name, kwargs)
                     if fp in seen_fps:
-                        return "Tool call blocked: repeated same arguments in current turn."
+                        import json
+                        return json.dumps({
+                            "status": "erro",
+                            "motivo": "chamada_repetida",
+                            "detalhe": "Você já chamou esta ferramenta com os exatos mesmos argumentos neste turno.",
+                            "acao_recomendada": "Não repita a chamada. Use os dados que já recebeu ou mude os parâmetros."
+                        }, ensure_ascii=False)
                     if not budget.consume("collab" if is_collab else "tool"):
-                        return f"Tool call blocked: {budget.stop_reason()}."
+                        import json
+                        return json.dumps({
+                            "status": "erro",
+                            "motivo": budget.stop_reason(),
+                            "detalhe": "O limite de chamadas para este turno foi atingido.",
+                            "acao_recomendada": "Pare de chamar ferramentas. Sintetize as informações que já possui e responda ao usuário."
+                        }, ensure_ascii=False)
                     seen_fps.add(fp)
                     if hasattr(tool, "invoke"):
                         return tool.invoke(kwargs)
@@ -1067,6 +1091,14 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
                             logger.info(f"[AgentFactory] 🔒 LLM tentou parar sem chamar always_end '{t_name}', redirecionando para force_end.")
                             return "force_end"
                     return END
+                
+                # Se houver chamadas para colaboradores, roteamos para o nó do respectivo colaborador.
+                for tc in last_msg.tool_calls:
+                    for t_name, c_node_name in collab_node_names:
+                        if tc["name"] == t_name:
+                            logger.info(f"[AgentFactory] 🔀 Routing to Sub-graph Node: {c_node_name}")
+                            return c_node_name
+                            
                 return "tools"
 
 
@@ -1094,8 +1126,56 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             agent_graph.add_node("agent", call_model_node)
             agent_graph.add_node("tools", tool_node)  # ToolNode nativo, sem customização
             agent_graph.add_node("force_end", force_end_node)
+            
+            # --- DYNAMIC COLLABORATOR NODES (SUB-GRAPHS) ---
+            collaborators_list = agent_config.get("collaborators_list", [])
+            collab_node_names = []
+            
+            def make_collab_node(collab_agent, c_name):
+                async def _collab_node(state: AgentExecState):
+                    last_msg = state["messages"][-1]
+                    tc = next((t for t in getattr(last_msg, "tool_calls", []) if t["name"] == c_name), None)
+                    if not tc:
+                        return {"messages": []}
+                    
+                    instrucao = tc["args"].get("instrucao", "")
+                    from app.services.collaborator_executor import CollaboratorExecutor
+                    executor = CollaboratorExecutor(db=self.db, monitor=getattr(self, "monitor", None))
+                    
+                    try:
+                        logger.info(f"[AgentFactory] 🚀 Executing Sub-graph Node for '{collab_agent.name}'")
+                        name, response = await executor.invoke(
+                            collaborator=collab_agent,
+                            instruction=instrucao,
+                            session_id=context_data.get("session_id") if context_data else None,
+                            context_data=context_data,
+                            response_style=getattr(collab_agent, "response_style", "structured"),
+                            history=list(state["messages"])
+                        )
+                    except Exception as e:
+                        logger.error(f"[AgentFactory] ❌ Error in collab node '{collab_agent.name}': {e}")
+                        response = f"Erro ao consultar agente {collab_agent.name}: {str(e)}"
+                        
+                    from langchain_core.messages import ToolMessage
+                    return {"messages": [ToolMessage(content=response, tool_call_id=tc["id"], name=tc["name"])]}
+                return _collab_node
+
+            for collab in collaborators_list:
+                import re
+                safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', collab.name or "agent")
+                safe_name = re.sub(r'^[^a-zA-Z_]', '_', safe_name)
+                safe_name = re.sub(r'_+', '_', safe_name).strip('_')[:64]
+                t_name = f"consultar_{safe_name}"
+                c_node_name = f"collab_{safe_name}"
+                collab_node_names.append((t_name, c_node_name))
+                
+                agent_graph.add_node(c_node_name, make_collab_node(collab, t_name))
+                agent_graph.add_edge(c_node_name, "agent")
+
             agent_graph.add_edge(START, "agent")
-            agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
+            
+            valid_destinations = ["tools", "force_end", END] + [c[1] for c in collab_node_names]
+            agent_graph.add_conditional_edges("agent", should_continue_edge, valid_destinations)
             def route_after_tools(state: AgentExecState) -> str:
                 """Se a última tool executada for do tipo always_end_queue, encerra o orquestrador imediatamente."""
                 for msg in reversed(state["messages"]):
