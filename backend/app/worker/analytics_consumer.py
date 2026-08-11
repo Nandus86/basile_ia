@@ -69,8 +69,8 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                 await session.commit()
                 
                 # Fire webhook if configured
-                from app.models.config import Config
-                config_res = await session.execute(select(Config).where(Config.agent_id == agent.id))
+                from app.models.analytics_config import AnalyticsConfig
+                config_res = await session.execute(select(AnalyticsConfig).where(AnalyticsConfig.agent_id == str(agent.id)))
                 config = config_res.scalar_one_or_none()
                 
                 start_time = datetime.now()
