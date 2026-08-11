@@ -207,6 +207,10 @@ async def start_analytics_consumer():
         return
         
     queue = await channel.declare_queue("analytics_tasks", durable=True)
+    
+    # Limit concurrent tasks to avoid hitting LLM rate limits and crashing the event loop
+    await channel.set_qos(prefetch_count=5)
+    
     await queue.consume(process_analytics_message)
     
     logger.info("[AnalyticsConsumer] Listening for analytics_tasks...")

@@ -781,6 +781,10 @@ async def start_rabbitmq_consumer():
             delay = base_delay
 
             queue = await rabbitmq_client.channel.get_queue(rabbitmq_client.webhook_queue_name)
+            
+            # Limit concurrent tasks to avoid hitting DB connection limits or crashing event loop
+            await rabbitmq_client.channel.set_qos(prefetch_count=10)
+            
             await queue.consume(process_webhook_message)
             logger.info(f"Started consuming messages from {rabbitmq_client.webhook_queue_name}")
 
