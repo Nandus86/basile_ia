@@ -627,8 +627,28 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             logger.info(f"[Guard] Draining {len(buffered_items)} buffered messages for session {session_id}")
 
                             # Build replay payload from buffered entries.
-                            # Preferred path: use latest full payload (preserves global/system/church/member/ai_params).
-                            # Legacy fallback: rebuild minimal payload and combine only messages.
+                            # We extract and concatenate the text messages from ALL buffered items.
+                            # Preferred path: copy the latest full payload structure, and update the message field.
+                            # Legacy fallback: rebuild minimal payload from scratch.
+                            
+                            combined_parts = []
+                            for i, item_json in enumerate(buffered_items):
+                                try:
+                                    item = json.loads(item_json)
+                                    payload_obj = item.get("payload") if isinstance(item, dict) and "payload" in item else item
+                                    msg = payload_obj.get("message", "") if isinstance(payload_obj, dict) else ""
+                                    if msg:
+                                        combined_parts.append(f"Mensagem {i+1}: \"{msg}\"")
+                                except Exception:
+                                    pass
+
+                            combined_message = ""
+                            if combined_parts:
+                                combined_message = (
+                                    "[O usuário enviou mensagens adicionais enquanto o atendimento anterior estava em andamento]\n\n"
+                                    + "\n".join(combined_parts)
+                                )
+
                             latest_item = json.loads(buffered_items[-1])
                             latest_payload = latest_item.get("payload") if isinstance(latest_item, dict) else None
 
@@ -637,25 +657,16 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                 new_payload = dict(latest_payload)
                                 new_payload.pop("original_job_id", None)
                                 new_payload["session_id"] = session_id
+                                if combined_message:
+                                    new_payload["message"] = combined_message
                             else:
-                                combined_parts = []
                                 first_item = json.loads(buffered_items[0])
                                 new_agent_id = first_item.get("agent_id")
                                 new_callback_url = first_item.get("callback_url")
                                 new_context_data = first_item.get("context_data")
                                 new_transition_data = first_item.get("transition_data")
                                 new_user_access_level = first_item.get("user_access_level", "normal")
-
-                                for i, item_json in enumerate(buffered_items):
-                                    item = json.loads(item_json)
-                                    msg = item.get("message", "")
-                                    if msg:
-                                        combined_parts.append(f"Mensagem {i+1}: \"{msg}\"")
-
-                                combined_message = (
-                                    "[O usuário enviou mensagens adicionais enquanto o atendimento anterior estava em andamento]\n\n"
-                                    + "\n".join(combined_parts)
-                                )
+                                
                                 new_payload = {
                                     "message": combined_message,
                                     "agent_id": new_agent_id,
