@@ -4095,9 +4095,40 @@ async def process_message_task(
                         final_result = response
                         agent_used = agent_config["name"]
                         output_text = str(final_result)
-                except asyncio.TimeoutError:
-                    print(f"[Task] ⏱️ Agent execution timed out after {timeout_seconds}s")
-                    raise
+                except Exception as e:
+                    print(f"[Task] ⚠️ Agent execution failed (attempt {retry_count+1}/{max_retries+1}): {e}")
+                    if retry_count < max_retries:
+                        if agent_config and resilience_cfg.get("fallback_enabled"):
+                            fallback_model = resilience_cfg.get("fallback_model")
+                            if fallback_model and fallback_model != agent_config.get("model"):
+                                print(f"[Task] 🔄 Switching to fallback model '{fallback_model}' due to instability.")
+                                agent_config["model"] = fallback_model
+                                if "fallback_temperature" in resilience_cfg:
+                                    agent_config["temperature"] = resilience_cfg["fallback_temperature"]
+                        retry_count += 1
+                        continue
+                    else:
+                        print(f"[Task] ❌ Max retries reached.")
+                        if isinstance(e, asyncio.TimeoutError):
+                            raise TimeoutError("Timeout reached after retries") from e
+                        raise e
+
+                # ── Check for internal budget timeout ──
+                if "Execução interrompida: timeout" in output_text:
+                    print(f"[Task] ⏱️ Agent execution hit budget timeout (attempt {retry_count+1}/{max_retries+1}).")
+                    if retry_count < max_retries:
+                        if agent_config and resilience_cfg.get("fallback_enabled"):
+                            fallback_model = resilience_cfg.get("fallback_model")
+                            if fallback_model and fallback_model != agent_config.get("model"):
+                                print(f"[Task] 🔄 Switching to fallback model '{fallback_model}' due to timeout.")
+                                agent_config["model"] = fallback_model
+                                if "fallback_temperature" in resilience_cfg:
+                                    agent_config["temperature"] = resilience_cfg["fallback_temperature"]
+                        retry_count += 1
+                        continue
+                    else:
+                        print(f"[Task] ❌ Max retries reached for budget timeout.")
+                        raise TimeoutError("Internal budget timeout")
 
                 # ── Check if direct payload config result was set (e.g. from collaborator tool execution) ──
                 if agent_config and agent_config.get("__direct_payload_result"):
