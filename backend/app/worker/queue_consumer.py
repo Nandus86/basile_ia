@@ -191,12 +191,14 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             # ═══════════════════════════════════════════════════════
             # GUARD 2: Concurrency Guard (Lock)
             # ═══════════════════════════════════════════════════════
+            agent_id_key = agent_id if agent_id else "default"
+            
             if session_id and job_id:
-                lock_acquired = await redis_client.acquire_user_lock(session_id, job_id)
+                lock_acquired = await redis_client.acquire_user_lock(session_id, job_id, agent_id=agent_id_key)
 
                 if not lock_acquired:
-                    lock_owner = await redis_client.get_user_lock_owner(session_id)
-                    already_buffered = await redis_client.is_job_already_buffered(session_id, job_id)
+                    lock_owner = await redis_client.get_user_lock_owner(session_id, agent_id=agent_id_key)
+                    already_buffered = await redis_client.is_job_already_buffered(session_id, job_id, agent_id=agent_id_key)
                     logger.info(
                         f"[Guard] Session {session_id} is LOCKED by {lock_owner}. "
                         f"Buffering job {job_id}. already_buffered={already_buffered}"
@@ -210,7 +212,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "original_job_id": job_id,
                             "payload": payload_for_buffer,
                         })
-                        await redis_client.push_to_buffer(session_id, buffer_data)
+                        await redis_client.push_to_buffer(session_id, buffer_data, agent_id=agent_id_key)
 
                     # Mark job as buffered
                     await redis_client.set(
@@ -618,10 +620,10 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     # Check if agent was paused DURING processing (human took over)
                     if not ignore_pause and await redis_client.is_agent_paused(session_id):
                         logger.info(f"[Guard] Agent was paused during processing of {job_id}. Releasing lock without draining buffer.")
-                        await redis_client.release_user_lock(session_id)
+                        await redis_client.release_user_lock(session_id, agent_id=agent_id_key)
                     else:
                         # Drain buffer — check for accumulated messages
-                        buffered_items = await redis_client.drain_buffer(session_id)
+                        buffered_items = await redis_client.drain_buffer(session_id, agent_id=agent_id_key)
 
                         if buffered_items:
                             logger.info(f"[Guard] Draining {len(buffered_items)} buffered messages for session {session_id}")
@@ -679,7 +681,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
 
                             if not isinstance(new_payload, dict):
                                 logger.error("[Guard] Failed to build drained payload. Releasing lock only.")
-                                await redis_client.release_user_lock(session_id)
+                                await redis_client.release_user_lock(session_id, agent_id=agent_id_key)
                             else:
                                 # Re-publish as a new job to RabbitMQ
                                 import uuid as uuid_mod
@@ -719,7 +721,7 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                     logger.error(f"[Guard] Failed to create JobLog for drained job: {e}")
 
                                 # Release lock before enqueuing drained job to avoid re-buffer loop
-                                await redis_client.release_user_lock(session_id)
+                                await redis_client.release_user_lock(session_id, agent_id=agent_id_key)
 
                                 # Publish new drained job to SSE stream for realtime UI visibility
                                 try:
@@ -751,13 +753,13 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                                     logger.error(f"[Guard] Failed to re-publish drained buffer {new_job_id}!")
                         else:
                             # No buffer — simply release lock
-                            await redis_client.release_user_lock(session_id)
+                            await redis_client.release_user_lock(session_id, agent_id=agent_id_key)
                             logger.info(f"[Guard] Lock released for session {session_id}")
                 except Exception as guard_err:
                     logger.error(f"[Guard] Error in drain/release: {guard_err}")
                     # Safety: always release lock on error
                     try:
-                        await redis_client.release_user_lock(session_id)
+                        await redis_client.release_user_lock(session_id, agent_id=agent_id_key)
                     except Exception:
                         pass
 

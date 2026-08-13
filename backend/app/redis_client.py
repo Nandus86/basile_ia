@@ -155,39 +155,45 @@ class RedisClient:
 
     # ─── Job Concurrency Guard ───────────────────────────────
 
-    async def acquire_user_lock(self, session_id: str, job_id: str, ttl: int = 1800) -> bool:
+    async def acquire_user_lock(self, session_id: str, job_id: str, ttl: int = 1800, agent_id: str = "default") -> bool:
         """
-        Attempt to acquire an exclusive lock for a session_id.
+        Attempt to acquire an exclusive lock for a session_id and agent_id.
         Uses SET NX EX (atomic set-if-not-exists with expiry).
         Returns True if lock was acquired, False if another job holds it.
         """
         client = await self.connect()
         result = await client.set(
-            f"user_lock:{session_id}", job_id, nx=True, ex=ttl
+            f"user_lock:{session_id}:{agent_id}", job_id, nx=True, ex=ttl
         )
         return result is not None
 
-    async def release_user_lock(self, session_id: str):
-        """Release the concurrency lock for a session_id."""
+    async def release_user_lock(self, session_id: str, agent_id: str = None):
+        """Release the concurrency lock for a session_id (and optionally a specific agent)."""
         client = await self.connect()
-        await client.delete(f"user_lock:{session_id}")
+        if agent_id:
+            await client.delete(f"user_lock:{session_id}:{agent_id}")
+        else:
+            # Clean all locks for this session if agent_id is not specified
+            keys = await client.keys(f"user_lock:{session_id}:*")
+            if keys:
+                await client.delete(*keys)
 
-    async def get_user_lock_owner(self, session_id: str) -> Optional[str]:
+    async def get_user_lock_owner(self, session_id: str, agent_id: str = "default") -> Optional[str]:
         """Return the current job_id owner of a session lock, if any."""
         client = await self.connect()
-        return await client.get(f"user_lock:{session_id}")
+        return await client.get(f"user_lock:{session_id}:{agent_id}")
 
-    async def push_to_buffer(self, session_id: str, data_json: str):
+    async def push_to_buffer(self, session_id: str, data_json: str, agent_id: str = "default"):
         """Push a message payload to the session's pending buffer (FIFO list)."""
         client = await self.connect()
-        key = f"msg_buffer:{session_id}"
+        key = f"msg_buffer:{session_id}:{agent_id}"
         await client.rpush(key, data_json)
         await client.expire(key, 7200)  # 2h safety TTL
 
-    async def is_job_already_buffered(self, session_id: str, original_job_id: str) -> bool:
+    async def is_job_already_buffered(self, session_id: str, original_job_id: str, agent_id: str = "default") -> bool:
         """Check if original_job_id already exists in session buffer payloads."""
         client = await self.connect()
-        key = f"msg_buffer:{session_id}"
+        key = f"msg_buffer:{session_id}:{agent_id}"
         items = await client.lrange(key, 0, -1)
         for item in items:
             try:
@@ -205,14 +211,26 @@ class RedisClient:
                 continue
         return False
 
-    async def drain_buffer(self, session_id: str) -> List[str]:
+    async def drain_buffer(self, session_id: str, agent_id: str = None) -> List[str]:
         """
         Atomically read all buffered messages and clear the list.
         Uses a pipeline to ensure LRANGE + DEL are executed together.
         Returns list of JSON strings.
+        If agent_id is None, it drains the "default" buffer for backwards compatibility with single calls,
+        or we could make it drain all of them, but usually we need them distinct. Let's default to draining
+        all if None, but returning them flat. Actually, to keep it simple, if None we drain "default".
+        Wait, tracking.py calls drain_buffer with None. It probably wants to clear all.
+        Let's clear all if None, but wait: drain_buffer returns a list. We'd have to concatenate multiple lists.
+        Since tracking.py ignores the return value, returning an empty list if None is fine, just delete all keys.
         """
         client = await self.connect()
-        key = f"msg_buffer:{session_id}"
+        if agent_id is None:
+            keys = await client.keys(f"msg_buffer:{session_id}:*")
+            if keys:
+                await client.delete(*keys)
+            return []
+            
+        key = f"msg_buffer:{session_id}:{agent_id}"
         pipe = client.pipeline(transaction=True)
         pipe.lrange(key, 0, -1)
         pipe.delete(key)
