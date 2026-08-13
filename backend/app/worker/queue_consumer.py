@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 # Controla as tasks rodando por job para podermos interceder via sinal de abort
 active_jobs = {}
 
+# Motivo do abort por job: "buffer" (join automático com novas mensagens) ou "manual"
+abort_reasons = {}
+
 
 async def _publish_job_update(job_id, status, webhook_path=None, request_data=None, response_data=None, error_message=None, duration_ms=None, created_at=None):
     """Publish a job status update to the SSE Redis channel for real-time frontend updates."""
@@ -59,10 +62,24 @@ async def _listen_for_aborts():
                 
                 if data.startswith("abort:"):
                     job_to_abort = data.split(":", 1)[1]
+                    abort_reasons[job_to_abort] = "manual"
                     logger.warning(f"Recebido pedido de ABORT para o job: {job_to_abort}")
                     task = active_jobs.get(job_to_abort)
                     if task:
                         logger.warning(f"Cancelando task do job {job_to_abort} imediatamente!")
+                        task.cancel()
+                    else:
+                        logger.info(f"Job {job_to_abort} nao esta ativo neste worker.")
+                elif data.startswith("buffer_abort:"):
+                    # Abort disparado pelo Concurrency Guard quando uma nova mensagem
+                    # chega enquanto o job atual ainda está em execução. O job abortado
+                    # fará o join da própria mensagem com as novas do buffer.
+                    job_to_abort = data.split(":", 1)[1]
+                    abort_reasons[job_to_abort] = "buffer"
+                    logger.warning(f"Recebido pedido de BUFFER_ABORT para o job: {job_to_abort}")
+                    task = active_jobs.get(job_to_abort)
+                    if task:
+                        logger.warning(f"Cancelando task do job {job_to_abort} para join de mensagens!")
                         task.cancel()
                     else:
                         logger.info(f"Job {job_to_abort} nao esta ativo neste worker.")
@@ -103,6 +120,38 @@ async def _save_to_mtm(agent_id: str, session_id: str, role: str, content: str, 
             await db_session.commit()
     except Exception as e:
         logger.error(f"Failed to save {role} message to MTM: {e}")
+
+
+async def _rollback_last_mtm_message(agent_id: str, session_id: str, content: str):
+    """Delete the last user message matching content from MTM.
+
+    Used to rollback a message saved by a job that was aborted for buffering/join,
+    avoiding duplication when the combined job reprocesses it.
+    """
+    try:
+        from sqlalchemy import select
+        from app.models.conversation_message import ConversationMessage
+        async with async_session_maker() as db_session:
+            query = (
+                select(ConversationMessage)
+                .where(
+                    ConversationMessage.session_id == str(session_id),
+                    ConversationMessage.role == "user",
+                    ConversationMessage.content == content,
+                )
+                .order_by(ConversationMessage.created_at.desc())
+                .limit(1)
+            )
+            res = await db_session.execute(query)
+            row = res.scalar_one_or_none()
+            if row:
+                await db_session.delete(row)
+                await db_session.commit()
+                logger.info(f"[Guard] MTM rollback: removed last user message of aborted job")
+                return True
+    except Exception as e:
+        logger.error(f"[Guard] MTM rollback failed: {e}")
+    return False
 
 
 async def _mark_job_status(job_id: str, status: str, payload: dict = None, error_msg: str = None):
@@ -213,6 +262,15 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                             "payload": payload_for_buffer,
                         })
                         await redis_client.push_to_buffer(session_id, buffer_data, agent_id=agent_id_key)
+
+                    # Abort the currently running job so it stops producing and joins
+                    # its in-flight message with the new buffered messages.
+                    if lock_owner:
+                        try:
+                            await redis_client.publish("job_control", f"buffer_abort:{lock_owner}")
+                            logger.info(f"[Guard] Published buffer_abort for running job {lock_owner}")
+                        except Exception as abort_err:
+                            logger.error(f"[Guard] Failed to publish buffer_abort for {lock_owner}: {abort_err}")
 
                     # Mark job as buffered
                     await redis_client.set(
@@ -571,38 +629,111 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
             job_id = body.get("job_id") if body else None
             if job_id:
                 try:
-                    await redis_client.set(
-                        f"job:{job_id}",
-                        json.dumps({
-                            "job_id": job_id,
-                            "status": "failed",
-                            "error": "Aborted by user"
-                        }),
-                        expire=3600
-                    )
-                    from sqlalchemy.future import select
-                    from app.models.job_log import JobLog
-                    from datetime import datetime, timezone
-                    async with async_session_maker() as db_session:
-                        query = select(JobLog).where(JobLog.job_id == job_id)
-                        res = await db_session.execute(query)
-                        job_log = res.scalar_one_or_none()
-                        if job_log:
-                            job_log.status = "failed"
-                            job_log.error_message = "Aborted by user"
-                            job_log.completed_at = datetime.now(timezone.utc)
-                            if job_log.created_at:
-                                job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
-                            await db_session.commit()
-                            # SSE: publish job aborted
-                            await _publish_job_update(
-                                job_id=job_id, status="failed",
-                                webhook_path=job_log.webhook_path,
-                                request_data=body.get("payload", {}),
-                                error_message="Aborted by user",
-                                duration_ms=job_log.duration_ms,
-                                created_at=job_log.created_at.isoformat() if job_log.created_at else None,
-                            )
+                    abort_reason = abort_reasons.pop(job_id, "manual")
+
+                    if abort_reason == "buffer":
+                        # ── BUFFER JOIN ──
+                        # Uma nova mensagem chegou enquanto este job produzia.
+                        # Re-enfileira a PRÓPRIA mensagem (em andamento) no FRENTE do
+                        # buffer para que o drain faça o join dela com as novas
+                        # mensagens e re-publique um único job consolidado.
+                        cur_payload = body.get("payload", {}) if body else {}
+                        cur_payload = cur_payload if isinstance(cur_payload, dict) else {}
+                        cur_session = session_id
+                        cur_agent_key = agent_id_key if 'agent_id_key' in locals() else "default"
+                        msg_text = cur_payload.get("message")
+
+                        if cur_session:
+                            # 1) Re-queue own message at the FRONT of the buffer
+                            payload_for_buffer = dict(cur_payload)
+                            payload_for_buffer["original_job_id"] = job_id
+                            buffer_data = json.dumps({
+                                "original_job_id": job_id,
+                                "payload": payload_for_buffer,
+                            })
+                            await redis_client.push_to_buffer_front(cur_session, buffer_data, agent_id=cur_agent_key)
+                            logger.info(f"[Guard] Job {job_id} re-enqueued own message for join (buffer_abort)")
+
+                            # 2) Rollback STM/MTM of own message to avoid duplication
+                            if msg_text:
+                                try:
+                                    await redis_client.pop_last_message_if_matches(cur_session, msg_text, role="user")
+                                except Exception as rb_err:
+                                    logger.error(f"[Guard] STM rollback failed: {rb_err}")
+                                try:
+                                    cur_agent_id = cur_payload.get("agent_id")
+                                    if cur_agent_id:
+                                        await _rollback_last_mtm_message(cur_agent_id, cur_session, msg_text)
+                                except Exception as rb_err2:
+                                    logger.error(f"[Guard] MTM rollback failed: {rb_err2}")
+
+                        await redis_client.set(
+                            f"job:{job_id}",
+                            json.dumps({
+                                "job_id": job_id,
+                                "status": "aborted",
+                                "result": None,
+                                "error": "Aborted: novas mensagens chegaram — job re-enfileirado para join"
+                            }),
+                            expire=3600
+                        )
+                        from sqlalchemy.future import select
+                        from app.models.job_log import JobLog
+                        from datetime import datetime, timezone
+                        async with async_session_maker() as db_session:
+                            query = select(JobLog).where(JobLog.job_id == job_id)
+                            res = await db_session.execute(query)
+                            job_log = res.scalar_one_or_none()
+                            if job_log:
+                                job_log.status = "aborted"
+                                job_log.error_message = "Aborted: novas mensagens chegaram — job re-enfileirado para join"
+                                job_log.completed_at = datetime.now(timezone.utc)
+                                if job_log.created_at:
+                                    job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                                await db_session.commit()
+                                # SSE: publish job aborted
+                                await _publish_job_update(
+                                    job_id=job_id, status="aborted",
+                                    webhook_path=job_log.webhook_path,
+                                    request_data=body.get("payload", {}),
+                                    error_message="Aborted: novas mensagens chegaram — job re-enfileirado para join",
+                                    duration_ms=job_log.duration_ms,
+                                    created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                                )
+                    else:
+                        # ── MANUAL ABORT ── (comportamento original)
+                        await redis_client.set(
+                            f"job:{job_id}",
+                            json.dumps({
+                                "job_id": job_id,
+                                "status": "failed",
+                                "error": "Aborted by user"
+                            }),
+                            expire=3600
+                        )
+                        from sqlalchemy.future import select
+                        from app.models.job_log import JobLog
+                        from datetime import datetime, timezone
+                        async with async_session_maker() as db_session:
+                            query = select(JobLog).where(JobLog.job_id == job_id)
+                            res = await db_session.execute(query)
+                            job_log = res.scalar_one_or_none()
+                            if job_log:
+                                job_log.status = "failed"
+                                job_log.error_message = "Aborted by user"
+                                job_log.completed_at = datetime.now(timezone.utc)
+                                if job_log.created_at:
+                                    job_log.duration_ms = int((job_log.completed_at - job_log.created_at).total_seconds() * 1000)
+                                await db_session.commit()
+                                # SSE: publish job aborted
+                                await _publish_job_update(
+                                    job_id=job_id, status="failed",
+                                    webhook_path=job_log.webhook_path,
+                                    request_data=body.get("payload", {}),
+                                    error_message="Aborted by user",
+                                    duration_ms=job_log.duration_ms,
+                                    created_at=job_log.created_at.isoformat() if job_log.created_at else None,
+                                )
                 except Exception:
                     pass
             # Devemos retornar normalmente para que aio_pika considere a msg processada e nao entre em loop

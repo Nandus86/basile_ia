@@ -190,6 +190,48 @@ class RedisClient:
         await client.rpush(key, data_json)
         await client.expire(key, 7200)  # 2h safety TTL
 
+    async def push_to_buffer_front(self, session_id: str, data_json: str, agent_id: str = "default"):
+        """Push a message payload to the FRONT of the session's pending buffer (LIFO prepend).
+
+        Used when an aborted job re-queues its own in-flight message so that the
+        buffer drain can join it with the newer buffered messages in order.
+        """
+        client = await self.connect()
+        key = f"msg_buffer:{session_id}:{agent_id}"
+        await client.lpush(key, data_json)
+        await client.expire(key, 7200)  # 2h safety TTL
+
+    async def pop_last_message_if_matches(self, session_id: str, content: str, role: str = "user") -> bool:
+        """Remove the LAST message matching (role, content) from conversation history,
+        including anything appended after it (e.g. an orphan assistant response).
+
+        Used to rollback a message that was saved to STM by a job that was aborted
+        for buffering/join, avoiding duplication when the combined job reprocesses it.
+        """
+        client = await self.connect()
+        key = f"conversation:{session_id}"
+        items = await client.lrange(key, 0, -1)
+        if not items:
+            return False
+        match_idx = -1
+        for idx, raw in enumerate(items):
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                continue
+            if parsed.get("role") == role and parsed.get("content") == content:
+                match_idx = idx
+        if match_idx < 0:
+            return False
+        # Mantém apenas o que veio ANTES da mensagem correspondente.
+        # No Redis, LTRIM key 0 -1 mantém a lista inteira, então para o
+        # caso em que a mensagem é o primeiro item usamos DELETE direto.
+        if match_idx == 0:
+            await client.delete(key)
+        else:
+            await client.ltrim(key, 0, match_idx - 1)
+        return True
+
     async def is_job_already_buffered(self, session_id: str, original_job_id: str, agent_id: str = "default") -> bool:
         """Check if original_job_id already exists in session buffer payloads."""
         client = await self.connect()
