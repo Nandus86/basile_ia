@@ -210,6 +210,18 @@
               <v-icon size="18">mdi-database-clock-outline</v-icon>
               <v-tooltip activator="parent" location="top">Ver MTM (Histórico)</v-tooltip>
             </v-btn>
+            <v-btn
+              v-if="item.callback_url && item.response_data"
+              icon
+              variant="text"
+              size="small"
+              color="success"
+              :loading="resendingJobs[item.job_id]"
+              @click="resendJobFromList(item)"
+            >
+              <v-icon size="18">mdi-send-variant</v-icon>
+              <v-tooltip activator="parent" location="top">Reenviar</v-tooltip>
+            </v-btn>
           </div>
         </template>
       </v-data-table-server>
@@ -2547,6 +2559,9 @@ const abortCurrentJob = async () => {
   }
 }
 
+const resendingJob = ref(false)
+const resendingJobs = ref({})
+
 const resendCurrentJob = async () => {
   if (!selectedJob.value) return;
   resendingJob.value = true;
@@ -2558,6 +2573,20 @@ const resendCurrentJob = async () => {
     showSnackbar(error.response?.data?.detail || 'Falha ao reenviar response', 'error');
   } finally {
     resendingJob.value = false;
+  }
+}
+
+const resendJobFromList = async (item) => {
+  if (!item || !item.job_id) return;
+  resendingJobs.value[item.job_id] = true;
+  try {
+    const { data } = await axiosInstance.post(`/tracking/jobs/${item.job_id}/resend`);
+    showSnackbar(data.message || 'Job reenviado com sucesso!', 'success');
+  } catch (error) {
+    console.error("Erro ao reenviar job da lista:", error);
+    showSnackbar(error.response?.data?.detail || 'Falha ao reenviar job', 'error');
+  } finally {
+    resendingJobs.value[item.job_id] = false;
   }
 }
 
