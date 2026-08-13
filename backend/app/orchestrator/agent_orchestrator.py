@@ -616,12 +616,13 @@ Responda APENAS em JSON válido com este formato exato:
                 # Fetch fresh agent model with its own collaborators loaded
                 nested_agent_with_settings = await self.get_agent_with_collaborators(agent.id)
                 if nested_agent_with_settings:
-                    collab_tools, mandatory_instructions, _, _, _ = await _build_collaborator_tools(
+                    collab_tools, mandatory_instructions, _, _, _, all_collaborators = await _build_collaborator_tools(
                         self.db, nested_agent_with_settings, orientation or message, context_data, user_access_level="normal"
                     )
                     if collab_tools:
                         existing_tools = agent_config.get("tools", []) or []
                         agent_config["tools"] = existing_tools + collab_tools
+                        agent_config["collaborators_list"] = all_collaborators
                         agent_config["has_tools"] = True
                         
                         collab_names = [t.name for t in collab_tools]

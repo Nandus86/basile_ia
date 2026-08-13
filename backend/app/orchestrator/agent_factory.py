@@ -658,521 +658,6 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             
         return injection_text
     
-    async def invoke_agent(
-        self,
-        agent_config: Dict[str, Any],
-        messages: List[Any],
-        rag_context: Optional[str] = None,
-        context_data: Optional[Dict[str, Any]] = None,
-        execution_mode_override: Optional[str] = None,
-    ) -> str:
-        """
-        Invoke an agent with messages and return response.
-        Uses ReAct if agent has tools, otherwise simple LLM call.
-        """
-        from app.schemas.structured_output import format_context_data_for_prompt
-        
-        session_id = context_data.get("session_id") if context_data else None
-        llm = self.create_llm(agent_config, session_id=session_id)
-        run_config = self.get_run_config(agent_config, context_data)
-
-        resolved_execution_mode = (
-            (execution_mode_override or "").strip().lower()
-            or str(agent_config.get("execution_mode") or "balanced").strip().lower()
-        )
-        if resolved_execution_mode not in {"balanced", "tools_first", "orchestrator_first"}:
-            resolved_execution_mode = "balanced"
-
-        agent_extra_config = agent_config.get("config") or {}
-        budget_cfg = agent_extra_config.get("execution_budget") or {}
-        allow_specialist_switching = agent_extra_config.get("allow_specialist_switching", False)
-
-        budget = ExecutionBudget(
-            max_total_actions=int(budget_cfg.get("max_total_actions_per_turn", 7)),
-            max_tool_calls=int(budget_cfg.get("max_tool_calls_per_turn", 5)),
-            max_collab_calls=int(budget_cfg.get("max_collab_calls_per_turn", 2)),
-            max_wall_time_seconds=int(budget_cfg.get("max_wall_time_per_turn_seconds", 35)),
-        )
-        seen_fingerprints = set()
-
-        # Build system prompt
-        system_prompt = agent_config["system_prompt"]
-        
-        # Inject context data if provided
-        if context_data:
-            input_schema = agent_config.get("input_schema")
-            context_section = None  # Initialize before try to avoid UnboundLocalError
-            
-            # --- Ultra-strict filtering based on MCP metadata ---
-            try:
-                from app.services.mcp_tools import get_agent_mcp_metadata
-                mcp_meta = await get_agent_mcp_metadata(self.db, str(agent_config["id"]))
-                
-                from_ai_names = mcp_meta["from_ai_names"]
-                request_only_paths = mcp_meta["request_paths"] - from_ai_names
-                
-                # Add global safety paths that should ALMOST NEVER be seen by AI
-                # unless they are explicitly marked as $fromAI (unlikely)
-                global_safe_prune = {"system.apikey", "system.baseUrlBasileia", "church._id", "member.phone"}
-                request_only_paths.update(global_safe_prune - from_ai_names)
-                
-                # 1. Enrichment: Ensure $fromAI fields are in the context prompt if they exist in source
-                # Only inject if the user hasn't explicitly defined a strict input_schema
-                effective_input_schema = input_schema.copy() if isinstance(input_schema, dict) else {}
-                if not input_schema:
-                    for name in from_ai_names:
-                        if name not in effective_input_schema:
-                            effective_input_schema[name] = {"type": "string", "description": "Campo dinâmico para ferramenta"}
-                
-                # Update input_schema reference for format_context_data_for_prompt
-                input_schema = effective_input_schema
-
-                # 2. Pruning: Identify fields that are ONLY for $request (system) and NOT for $fromAI (agent)
-                # These should be HIDDEN from the agent to prevent "IA decision" leaks.
-                if request_only_paths:
-                    # Create a DEEP copy to avoid mutating original context_data shared across agents/turns
-                    context_data_for_prompt = copy.deepcopy(context_data)
-                    
-                    def prune_path(data, parts):
-                        if not parts or not isinstance(data, dict):
-                            return
-                        key = parts[0]
-                        if len(parts) == 1:
-                            if key in data:
-                                del data[key]
-                        else:
-                            if key in data and isinstance(data[key], dict):
-                                prune_path(data[key], parts[1:])
-
-                    def is_path_in_schema(schema, path_str):
-                        if not schema or not isinstance(schema, dict):
-                            return False
-                        current = schema
-                        if current.get("type") == "object" and "properties" in current:
-                            current = current.get("properties", {})
-                        parts = path_str.split('.')
-                        for part in parts:
-                            if not isinstance(current, dict):
-                                return False
-                            if part not in current:
-                                return False
-                            current = current[part]
-                            if isinstance(current, dict) and current.get("type") == "object" and "properties" in current:
-                                current = current.get("properties", {})
-                        return True
-                    
-                    paths_pruned_count = 0
-                    for path in request_only_paths:
-                        # Skip pruning if the user explicitly requested this field in their input schema
-                        if not is_path_in_schema(input_schema, path):
-                            prune_path(context_data_for_prompt, path.split('.'))
-                            paths_pruned_count += 1
-                    
-                    logger.info(f"[AgentFactory] 🛡️ Pruned {paths_pruned_count} request-only field(s) from prompt context.")
-                    
-                    # Use the pruned copy for formatting
-                    context_section = format_context_data_for_prompt(context_data_for_prompt, input_schema)
-                else:
-                    context_section = format_context_data_for_prompt(context_data, input_schema)
-            except Exception as e:
-                logger.warning(f"[AgentFactory] Failed to get MCP metadata for strict filtering: {e}")
-                # Fallback: format context without pruning so the agent still works
-                context_section = format_context_data_for_prompt(context_data, input_schema)
-            
-            if context_section:
-                system_prompt += context_section
-        
-        # Inject HITL Sentinel Rules
-        if agent_config.get("resilience"):
-            res_cfg = agent_config["resilience"]
-            hitl_user = res_cfg.get("hitl_user_approval_enabled", False)
-            hitl_admin = res_cfg.get("hitl_admin_approval_enabled", False)
-            
-            if hitl_user or hitl_admin:
-                hitl_msg = res_cfg.get("hitl_message_template") or ""
-                system_prompt += "\n\n## 🛑 INTERVENÇÃO HUMANA OBRIGATÓRIA (HITL ATIVO)\n"
-                system_prompt += "Você **DEVE** interromper sua execução e aguardar a aprovação ou resposta de um humano antes de tomar a ação final desta tarefa.\n"
-                system_prompt += "Para solicitar esta aprovação, você deve formular sua pergunta para o humano e OBRIGATORIAMENTE incluir a tag `{{ $HITL }}` ao final de sua fala.\n"
-                if hitl_msg:
-                    system_prompt += f"Template sugerido para sua pergunta (Adapte conforme o contexto, mas mantenha o sentido da aprovação): \"{hitl_msg}\"\n"
-                system_prompt += "REGRA CRÍTICA: Se a resposta do humano já foi fornecida acima no histórico (ex: você já fez a pergunta e ele acabou de responder aprovando), NÃO PARE. Vá em frente e execute a ação utilizando a tag `[FIM_DE_INTERACAO]` caso não haja mais o que fazer após a ação.\n"
-
-        # Inject RLHF Training Rules
-        system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
-        
-        # Get Dynamic Skills Prompt (we will append it at the VERY END for maximum attention)
-        dynamic_skills_prompt = await self._get_dynamic_skills_prompt(agent_config, messages)
-        
-        # Add RAG context if available
-        if rag_context:
-            system_prompt += f"""
-
-## Contexto da Base de Conhecimento
-
-Use as seguintes informações para responder:
-
-{rag_context}
-
----
-
-Cite a fonte quando usar informações do contexto acima.
-"""
-
-        # Resolve global macros like {{ $now }} before execution
-        from app.utils.macros import resolve_global_macros
-        system_prompt = resolve_global_macros(system_prompt, context_data)
-
-        system_prompt += (
-            "\n\n## Modo de Execução (Determinístico)\n"
-            f"- Modo resolvido deste turno: {resolved_execution_mode}\n"
-            "- Você deve obedecer os limites de execução e evitar chamadas redundantes.\n"
-            "- Nunca repita a mesma ferramenta com os mesmos argumentos no mesmo turno.\n"
-        )
-
-        if agent_config["has_tools"]:
-            tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
-            skills_reminder = ""
-            if agent_config.get("skills_summary"):
-                skill_names = [s["name"] for s in agent_config["skills_summary"]]
-                skills_reminder = (
-                    f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\n"
-                    f"Você TEM skills ativas: {', '.join(skill_names)}.\n"
-                    f"Consulte e aplique RIGOROSAMENTE as instruções das skills ANTES de responder.\n"
-                    f"Se uma skill define um passo-a-passo, siga-o na ORDEM EXATA.\n"
-                )
-
-            resilience_cfg = agent_config.get("resilience", {})
-            max_retries = resilience_cfg.get("max_retries", 3)
-            timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
-
-            if resolved_execution_mode == "tools_first":
-                planner_llm = llm.with_structured_output(ToolFirstPlan)
-                planner_messages = [
-                    SystemMessage(content=(
-                        "Gere um plano curto para usar ferramentas com prioridade. "
-                        "Responda apenas no schema fornecido."
-                    )),
-                    HumanMessage(content=f"Solicitação atual: {messages[-1].content if messages else ''}"),
-                ]
-                try:
-                    plan = await planner_llm.ainvoke(planner_messages, config=run_config)
-                    if isinstance(plan, ToolFirstPlan):
-                        budget.max_tool_calls = min(budget.max_tool_calls, int(plan.max_tool_calls))
-                        budget.max_collab_calls = min(budget.max_collab_calls, int(plan.max_collab_calls))
-                        logger.info(
-                            "[AgentFactory] 🧭 tools_first plan=%s max_tool_calls=%s max_collab_calls=%s",
-                            plan.steps,
-                            budget.max_tool_calls,
-                            budget.max_collab_calls,
-                        )
-                except Exception as planner_err:
-                    logger.warning(f"[AgentFactory] planner tools_first fallback: {planner_err}")
-
-            def _select_tools_for_mode(mode: str):
-                tools = agent_config["tools"]
-                if mode == "orchestrator_first":
-                    return [t for t in tools if str(getattr(t, "name", "")).startswith("consultar_")] or tools
-                if mode == "tools_first":
-                    return [t for t in tools if not str(getattr(t, "name", "")).startswith("consultar_")] or tools
-                return tools
-
-            selected_tools = _select_tools_for_mode(resolved_execution_mode)
-
-            # 🔥 STATE E TRAVAS LÓGICAS (LangGraph)
-            locks = {
-                "selected_agent": None,
-                "tool_called": False,
-                "collab_called": False
-            }
-
-            always_start_queue = agent_config.get("always_start_tools", [])
-            always_end_queue = agent_config.get("always_end_tools", [])
-
-            def is_mandatory_tool(name: str) -> bool:
-                return name in always_start_queue or name in always_end_queue
-
-            # Enforce budget and anti-loop by wrapping each tool in a proxy
-            # We create proper StructuredTool instances so langgraph ToolNode recognises them
-            from langchain_core.tools import StructuredTool
-
-            def _make_guarded_tool(tool, budget, seen_fps, is_collab):
-                """Create a StructuredTool wrapper with budget/anti-loop enforcement."""
-
-                async def _guarded_ainvoke(**kwargs):
-                    if is_collab:
-                        detected_agent = tool.name
-                        if not is_mandatory_tool(detected_agent) and not allow_specialist_switching:
-                            if locks["selected_agent"] is None:
-                                locks["selected_agent"] = detected_agent
-                            elif locks["selected_agent"] != detected_agent:
-                                return f"Erro: Troca de especialista não permitida. Você já chamou o especialista '{locks['selected_agent']}' neste turno."
-                        locks["collab_called"] = True
-                    
-                    if not is_mandatory_tool(tool.name):
-                        locks["tool_called"] = True
-                    
-                    fp = _fingerprint_tool_call(tool.name, kwargs)
-                    if fp in seen_fps:
-                        return "Tool call blocked: repeated same arguments in current turn."
-                    if not budget.consume("collab" if is_collab else "tool"):
-                        return f"Tool call blocked: {budget.stop_reason()}."
-                    seen_fps.add(fp)
-                    # Delegate to original tool
-                    if hasattr(tool, "ainvoke"):
-                        return await tool.ainvoke(kwargs)
-                    elif hasattr(tool, "_arun"):
-                        return await tool._arun(**kwargs)
-                    elif hasattr(tool, "invoke"):
-                        return tool.invoke(kwargs)
-                    elif hasattr(tool, "_run"):
-                        return tool._run(**kwargs)
-                    else:
-                        raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
-
-                def _guarded_invoke(**kwargs):
-                    if is_collab:
-                        detected_agent = tool.name
-                        if not is_mandatory_tool(detected_agent) and not allow_specialist_switching:
-                            if locks["selected_agent"] is None:
-                                locks["selected_agent"] = detected_agent
-                            elif locks["selected_agent"] != detected_agent:
-                                return f"Erro: Troca de especialista não permitida. Você já chamou o especialista '{locks['selected_agent']}' neste turno."
-                        locks["collab_called"] = True
-                        
-                    if not is_mandatory_tool(tool.name):
-                        locks["tool_called"] = True
-                    
-                    fp = _fingerprint_tool_call(tool.name, kwargs)
-                    if fp in seen_fps:
-                        return "Tool call blocked: repeated same arguments in current turn."
-                    if not budget.consume("collab" if is_collab else "tool"):
-                        return f"Tool call blocked: {budget.stop_reason()}."
-                    seen_fps.add(fp)
-                    if hasattr(tool, "invoke"):
-                        return tool.invoke(kwargs)
-                    elif hasattr(tool, "_run"):
-                        return tool._run(**kwargs)
-                    else:
-                        raise AttributeError(f"Tool '{tool.name}' has no invoke/_run method")
-
-                return StructuredTool(
-                    name=tool.name,
-                    description=getattr(tool, "description", "") or tool.name,
-                    func=_guarded_invoke,
-                    coroutine=_guarded_ainvoke,
-                    args_schema=getattr(tool, "args_schema", None),
-                )
-
-            selected_tools = [
-                _make_guarded_tool(t, budget, seen_fingerprints, t.name.startswith("consultar_"))
-                for t in selected_tools
-            ]
-
-            tool_instructions = f"""
-{skills_reminder}
-## Árvore de Ferramentas / MCPs Disponíveis
-Você tem acesso às seguintes ferramentas (MCPs). Relacione os passos solicitados nas suas skills com os nomes listados abaixo, que são os métodos reais que você pode invocar:
-{tool_list}
-
-## Instruções de Ferramentas e Resiliência (MUITO IMPORTANTE)
-
-Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que necessário para completar suas tarefas ou consultar o banco.
- REGRA CRÍTICA DE RETENTATIVA: Se a execução de uma ferramenta retornar explicitamente um campo "error" ou status de falha, você **NÃO DEVE DESISTIR** imediatamente.
-- Você DEVE TENTAR EXECUTAR A FERRAMENTA NOVAMENTE, corrigindo os parâmetros com base na mensagem de erro.
-- O limite máximo de tentativas para uma mesma ferramenta é de {max_retries} tentativas.
-- Se uma ferramenta retornar dados válidos (lista, objeto, mensagem de sucesso), NÃO repita a chamada. Avance para o próximo passo.
-- Somente se falhar definitivamente após {max_retries} tentativas, explique ao usuário o motivo da falha.
-- **NUNCA chame a mesma ferramenta com os mesmos argumentos repetidamente.**
-- ⏱️ LIMITE DE TEMPO: Você tem no máximo {timeout_seconds} segundos para completar toda a execução. Priorize as ações mais importantes e evite chamadas desnecessárias de ferramentas.
-- ✅ REGRA DE FINALIZAÇÃO: Se você já possui informação suficiente para responder o usuário, NÃO solicite mais passos. Responda imediatamente com a resposta final, mesmo que você achasse que precisaria de mais dados.
-"""
-            full_prompt = system_prompt + tool_instructions
-            
-            # AGORA ANEXA AS SKILLS NO FIM DE TUDO!
-            if dynamic_skills_prompt:
-                full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
-                
-            from langchain_core.messages import ToolMessage, AIMessage
-            
-            # Higienização de histórico: remover tool_calls antigas e podar contexto
-            cleaned_messages = []
-            for msg in messages:
-                if isinstance(msg, ToolMessage):
-                    continue
-                if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                    if msg.content:
-                        cleaned_messages.append(AIMessage(content=msg.content))
-                    continue
-                cleaned_messages.append(msg)
-                
-            trimmed_messages = cleaned_messages[-8:] if len(cleaned_messages) > 8 else cleaned_messages
-            
-            agent_messages = [SystemMessage(content=full_prompt)] + trimmed_messages
-
-            # --- CUSTOM LANGGRAPH STATE GRAPH ---
-            from langgraph.graph import StateGraph, START, END
-            from langgraph.graph.message import add_messages
-            from langgraph.prebuilt import ToolNode
-            from typing import Annotated, Sequence
-
-            class AgentExecState(TypedDict, total=False):
-                messages: Annotated[Sequence[Any], add_messages]
-
-            llm_with_tools = llm.bind_tools(selected_tools)
-            # ToolNode puro: sem injeção de mensagem falsa
-            tool_node = ToolNode(selected_tools)
-
-            def _get_called_tool_names(state: AgentExecState) -> set:
-                called = set()
-                for msg in state["messages"]:
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            called.add(tc["name"])
-                return called
-
-            async def call_model_node(state: AgentExecState):
-                if agent_config.get("__direct_payload_result"):
-                    return {"messages": [AIMessage(content="[DIRECT_PAYLOAD_BYPASS_STOP]")]}
-
-                if not budget.can_continue():
-                    return {"messages": [AIMessage(content=f"Execução interrompida: {budget.stop_reason()}.")]}
-
-                # Forçar always_start se ainda não foi chamada
-                called_tools = _get_called_tool_names(state)
-                for t_name in always_start_queue:
-                    if t_name not in called_tools:
-                        logger.info(f"[AgentFactory] 🔒 Forcing always_start tool: {t_name}")
-                        forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
-                        if forced_tool_obj:
-                            llm_forced = llm.bind_tools([forced_tool_obj])
-                            force_msg = SystemMessage(
-                                content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA MESMO. Não faça mais nada e não responda com texto livre."
-                            )
-                            response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
-                            return {"messages": [response]}
-
-                response = await llm_with_tools.ainvoke(state["messages"], config=run_config)
-                return {"messages": [response]}
-
-            def should_continue_edge(state: AgentExecState) -> str:
-                """Aresta do agente: se o LLM não pediu nenhuma tool, verifica se always_end está pendente."""
-                if agent_config.get("__direct_payload_result"):
-                    return END
-
-                last_msg = state["messages"][-1]
-                if not getattr(last_msg, "tool_calls", None):
-                    called_tools = _get_called_tool_names(state)
-                    for t_name in always_end_queue:
-                        if t_name not in called_tools:
-                            logger.info(f"[AgentFactory] 🔒 LLM tentou parar sem chamar always_end '{t_name}', redirecionando para force_end.")
-                            return "force_end"
-                    return END
-                return "tools"
-
-
-
-            async def force_end_node(state: AgentExecState):
-                """Intercept quando o LLM tentou parar sem chamar always_end_queue.
-                Força o LLM a chamar a ferramenta obrigatória de finalização.
-                """
-                called_tools = _get_called_tool_names(state)
-                for t_name in always_end_queue:
-                    if t_name not in called_tools:
-                        logger.info(f"[AgentFactory] 🔒 Forcing always_end tool: {t_name}")
-                        forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
-                        if forced_tool_obj:
-                            llm_forced = llm.bind_tools([forced_tool_obj])
-                            force_msg = SystemMessage(
-                                content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR O ATENDIMENTO. Sintetize todo o contexto da conversa e dos especialistas já consultados para gerar a instrução final. Não responda com texto livre."
-                            )
-                            response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
-                            return {"messages": [response]}
-                # Sem pending, retorna vazio (não deve acontecer)
-                return {"messages": []}
-
-            agent_graph = StateGraph(AgentExecState)
-            agent_graph.add_node("agent", call_model_node)
-            agent_graph.add_node("tools", tool_node)  # ToolNode nativo, sem customização
-            agent_graph.add_node("force_end", force_end_node)
-            agent_graph.add_edge(START, "agent")
-            agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-            def route_after_tools(state: AgentExecState) -> str:
-                """Se a última tool executada for do tipo always_end_queue, encerra o orquestrador imediatamente."""
-                for msg in reversed(state["messages"]):
-                    if getattr(msg, "type", "") != "tool":
-                        break
-                    if getattr(msg, "name", None) in always_end_queue:
-                        logger.info(f"[AgentFactory] 🏁 Tool de saída final '{msg.name}' concluída. Encerrando o orquestrador.")
-                        return END
-                return "agent"
-
-            agent_graph.add_conditional_edges("tools", route_after_tools, ["agent", END])
-            agent_graph.add_edge("force_end", "tools") # Força execução da always_end e volta para agent finalizar
-
-            react_agent = agent_graph.compile()
-
-            logger.info(
-                "[AgentFactory] 🤖 Invocando Custom Agent Graph='%s' model='%s' mode=%s tools=%s",
-                agent_config["name"],
-                agent_config["model"],
-                resolved_execution_mode,
-                [t.name for t in selected_tools],
-            )
-
-            recursion_limit = max(150, max_retries * 10 + 50)
-
-            # Tratamento para erro "need more steps" do LangGraph
-            from langgraph.errors import GraphRecursionError
-
-            try:
-                result = await react_agent.ainvoke(
-                    {"messages": agent_messages},
-                    config={**run_config, "recursion_limit": recursion_limit},
-                )
-            except GraphRecursionError as recursion_err:
-                logger.warning(f"[AgentFactory] ⚠️ LangGraph recursion limit atingido, extraindo última resposta válida: {recursion_err}")
-                # Extraímos o estado parcial que o LangGraph retorna mesmo no erro
-                if hasattr(recursion_err, 'args') and len(recursion_err.args) > 1 and 'state' in recursion_err.args[1]:
-                    result = recursion_err.args[1]['state']
-                    logger.info("[AgentFactory] ✅ Recuperado estado parcial do agente")
-                else:
-                    # Fallback: executar LLM diretamente sem ReAct
-                    try:
-                        logger.info("[AgentFactory] 🔄 Fallback para LLM direto sem ferramentas")
-                        response = await llm.ainvoke([SystemMessage(content=full_prompt)] + messages, config=run_config)
-                        return response.content
-                    except Exception as fallback_err:
-                        logger.error(f"[AgentFactory] ❌ Fallback também falhou: {fallback_err}")
-                        return "Desculpe, não consegui processar esta solicitação completamente. Por favor, reformule sua pergunta ou tente novamente."
-
-            final_messages = result.get("messages", [])
-            for msg in final_messages:
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        logger.info(
-                            "[AgentFactory] 🛠️ TOOL_CALL agent='%s' mode=%s tool=%r args=%s",
-                            agent_config["name"],
-                            resolved_execution_mode,
-                            tc.get("name"),
-                            json.dumps(tc.get("args", {}), default=str, ensure_ascii=False)[:400],
-                        )
-                if isinstance(msg, ToolMessage):
-                    logger.info(
-                        "[AgentFactory] 📨 TOOL_RESULT mode=%s tool_call_id=%r preview=%r",
-                        resolved_execution_mode,
-                        msg.tool_call_id,
-                        str(msg.content)[:400],
-                    )
-
-            logger.info(
-                "[AgentFactory] 📊 execution mode=%s actions=%s tool_calls=%s collab_calls=%s stop_reason=%s",
-                resolved_execution_mode,
-                budget.actions_used,
-                budget.tool_calls_used,
-                budget.collab_calls_used,
-                budget.stop_reason(),
-            )
-
     async def _prepare_agent_run(
         self,
         agent_config: Dict[str, Any],
@@ -1451,12 +936,20 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
             return {"messages": [response]}
 
         def should_continue_edge(state: AgentExecState) -> str:
+            if agent_config.get("__direct_payload_result"):
+                return END
             last_msg = state["messages"][-1]
             if not getattr(last_msg, "tool_calls", None):
                 called_tools = _get_called_tool_names(state)
                 for t_name in always_end_queue:
                     if t_name not in called_tools: return "force_end"
                 return END
+            # Se houver chamadas para colaboradores, roteamos para o nó do respectivo colaborador.
+            for tc in last_msg.tool_calls:
+                for t_name, c_node_name in collab_node_names:
+                    if tc["name"] == t_name:
+                        logger.info(f"[AgentFactory] 🔀 Routing to Sub-graph Node: {c_node_name}")
+                        return c_node_name
             return "tools"
 
         async def force_end_node(state: AgentExecState):
@@ -1477,9 +970,87 @@ Você tem ferramentas locais e remotas (MCP) disponíveis. USE-AS SEMPRE que nec
         agent_graph.add_node("agent", call_model_node)
         agent_graph.add_node("tools", tool_node)
         agent_graph.add_node("force_end", force_end_node)
+
+        # --- DYNAMIC COLLABORATOR NODES (SUB-GRAPHS) ---
+        collaborators_list = agent_config.get("collaborators_list", [])
+        collab_node_names = []
+
+        def make_collab_node(collab_agent, c_name):
+            async def _collab_node(state: AgentExecState):
+                last_msg = state["messages"][-1]
+                tc = next((t for t in getattr(last_msg, "tool_calls", []) if t["name"] == c_name), None)
+                if not tc:
+                    return {"messages": []}
+
+                instrucao = tc["args"].get("instrucao", "")
+
+                # Budget enforcement — o guard da tool não roda porque o intercept
+                # desvia a chamada antes do ToolNode.
+                if not budget.consume("collab"):
+                    return {"messages": [ToolMessage(
+                        content=f"Erro: {budget.stop_reason()}. Limite de consultas a especialistas atingido. Sintetize a resposta com os dados que já possui.",
+                        tool_call_id=tc["id"],
+                        name=tc["name"],
+                    )]}
+
+                from app.services.collaborator_executor import CollaboratorExecutor
+                executor = CollaboratorExecutor(db=self.db)
+
+                try:
+                    logger.info(f"[AgentFactory] 🚀 Executing Sub-graph Node for '{collab_agent.name}'")
+                    name, response = await executor.invoke(
+                        collaborator=collab_agent,
+                        instruction=instrucao,
+                        session_id=context_data.get("session_id") if context_data else None,
+                        context_data=context_data,
+                        response_style=getattr(collab_agent, "response_style", "structured"),
+                    )
+                except Exception as e:
+                    logger.error(f"[AgentFactory] ❌ Error in collab node '{collab_agent.name}': {e}")
+                    response = f"Erro ao consultar agente {collab_agent.name}: {str(e)}"
+
+                # Intercept direct payload in the collaborator's final response
+                if response and isinstance(response, str) and '"__direct_payload"' in response:
+                    import json as _dp_json
+                    try:
+                        parsed = _dp_json.loads(response)
+                        if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                            logger.info(f"[AgentFactory] ⚡ Direct payload response from collaborator '{collab_agent.name}' intercepted")
+                            agent_config["__direct_payload_result"] = parsed
+                    except Exception:
+                        pass
+
+                return {"messages": [ToolMessage(content=response, tool_call_id=tc["id"], name=tc["name"])]}
+            return _collab_node
+
+        import re as _re
+        for collab in collaborators_list:
+            safe_name = _re.sub(r'[^a-zA-Z0-9_]', '_', collab.name or "agent")
+            safe_name = _re.sub(r'^[^a-zA-Z_]', '_', safe_name)
+            safe_name = _re.sub(r'_+', '_', safe_name).strip('_')[:64]
+            t_name = f"consultar_{safe_name}"
+            c_node_name = f"collab_{safe_name}"
+            collab_node_names.append((t_name, c_node_name))
+
+            agent_graph.add_node(c_node_name, make_collab_node(collab, t_name))
+            agent_graph.add_edge(c_node_name, "agent")
+
         agent_graph.add_edge(START, "agent")
-        agent_graph.add_conditional_edges("agent", should_continue_edge, ["tools", "force_end", END])
-        agent_graph.add_edge("tools", "agent")     # Sempre volta ao agente para formular resposta final
+
+        valid_destinations = ["tools", "force_end", END] + [c[1] for c in collab_node_names]
+        agent_graph.add_conditional_edges("agent", should_continue_edge, valid_destinations)
+
+        def route_after_tools(state: AgentExecState) -> str:
+            """Se a última tool executada for do tipo always_end_queue, encerra o orquestrador imediatamente."""
+            for msg in reversed(state["messages"]):
+                if getattr(msg, "type", "") != "tool":
+                    break
+                if getattr(msg, "name", None) in always_end_queue:
+                    logger.info(f"[AgentFactory] 🏁 Tool de saída final '{msg.name}' concluída. Encerrando o orquestrador.")
+                    return END
+            return "agent"
+
+        agent_graph.add_conditional_edges("tools", route_after_tools, ["agent", END])
         agent_graph.add_edge("force_end", "tools")
 
         return {

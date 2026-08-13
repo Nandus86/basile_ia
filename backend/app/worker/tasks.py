@@ -660,7 +660,7 @@ async def _enrich_agent_prompt(
             traceback.print_exc()
 
         try:
-            collab_tools, mandatory_instructions, deterministic_matches, always_start, always_end = await _build_collaborator_tools(
+            collab_tools, mandatory_instructions, deterministic_matches, always_start, always_end, all_collaborators = await _build_collaborator_tools(
                 db, agent_model, message, context_data, user_access_level=user_access_level, agent_config=agent_config
             )
 
@@ -723,6 +723,7 @@ async def _enrich_agent_prompt(
             if collab_tools:
                 existing_tools = agent_config.get("tools", []) or []
                 agent_config["tools"] = existing_tools + collab_tools
+                agent_config["collaborators_list"] = all_collaborators
                 agent_config["has_tools"] = True
                 print(f"[Task] 🎭 Added {len(collab_tools)} collaborator tools to '{agent_config['name']}'")
                 
@@ -1230,7 +1231,7 @@ async def _build_collaborator_tools(
     context_data: Optional[Dict[str, Any]] = None,
     user_access_level: str = "normal",
     agent_config: Optional[Dict[str, Any]] = None,
-) -> tuple[list, list, list, list, list]:
+) -> tuple[list, list, list, list, list, list]:
     """
     Build LangChain tools from an orchestrator's collaborators.
     
@@ -1248,7 +1249,7 @@ async def _build_collaborator_tools(
     orchestrator = AgentOrchestrator(db)
     agent_with_settings = await orchestrator.get_agent_with_collaborators(agent_model.id)
     if not agent_with_settings or not agent_with_settings.collaborator_settings:
-        return [], [], [], [], []
+        return [], [], [], [], [], []
 
     enabled = []
     neutral = []
@@ -1265,7 +1266,7 @@ async def _build_collaborator_tools(
             always_end.append(setting.collaborator)
     all_collaborators = always_start + enabled + neutral + always_end
     if not all_collaborators:
-        return [], [], [], [], []
+        return [], [], [], [], [], []
 
     # [VERTICAL HIERARCHY] Filter collaborators by user access level
     from app.models.agent import AccessLevel
@@ -1280,7 +1281,7 @@ async def _build_collaborator_tools(
     ]
 
     if not all_collaborators:
-        return [], [], [], [], []
+        return [], [], [], [], [], []
 
     tools = []
     mandatory_instructions = []
@@ -1380,107 +1381,16 @@ async def _build_collaborator_tools(
         # Previously, these were default parameters (e.g. _agent=_collab)
         # which StructuredTool.from_function included in the args_schema,
         # confusing the LLM into NOT calling the tool.
-        def _make_collab_invoker(
-            _agent, _database, _ctx, _planner_enabled, _p_prompt, _p_model, _r_style, _parent_config
-        ):
+        # A invocação real acontece no nó de sub-graph do LangGraph
+        # (agent_factory._prepare_agent_run). Se a tool cair aqui, significa
+        # que o intercept não roteou a chamada — retorna um sinalizador.
+        def _make_collab_invoker(_agent):
             async def _invoke_collab(instrucao: str) -> str:
-                """Invoke a collaborator agent with the given instruction."""
-                try:
-                    final_instruction = instrucao
-                    
-                    if _planner_enabled:
-                        try:
-                            from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
-                            from langchain_core.messages import SystemMessage, HumanMessage
-                            from app.config import settings
-                            import json
-                            
-                            planner_llm = ChatOpenAI(
-                                model=_p_model or "gpt-4o-mini",
-                                temperature=0.7,
-                                api_key=settings.OPENAI_API_KEY
-                            )
-                            
-                            planner_prompt = _p_prompt or (
-                                "Você é o Planejador Mestre do Orquestrador. "
-                                "Sua função é pegar uma instrução e quebrá-la em um checklist de passos granulares (Tasks) "
-                                "para outro agente técnico executar. O agente que receberá isto só terminará o trabalho quando finalizar todas as tarefas. "
-                                "Responda APENAS com o texto a ser enviado, incluindo o checklist em formato Markdown '- [ ] Nome da tarefa'."
-                            )
-                            
-                            planner_resp = await planner_llm.ainvoke([
-                                SystemMessage(content=planner_prompt),
-                                HumanMessage(content=f"Crie as tasks para a seguinte instrução:\n{instrucao}")
-                            ])
-                            
-                            tasks_str = planner_resp.content
-                            final_instruction = f"INSTRUÇÃO ORIGINAL:\n{instrucao}\n\nO ORQUESTRADOR DEFINIU AS SEGUINTES TAREFAS (RESOLVA-AS E RESPONDA COM O RESULTADO):\n{tasks_str}"
-                            print(f"[CollabTool] 📋 Planner gerou tasks para '{_agent.name}'")
-                        except Exception as planner_err:
-                            print(f"[CollabTool] ⚠️ Erro no Planner LLM, enviando instrução original. Erro: {planner_err}")
-
-                    from app.services.collaborator_executor import CollaboratorExecutor
-                    
-                    # ── EARLY CHECK: Workflow Direct Triggers on Collaborator (Orchestrator path) ──
-                    try:
-                        from app.worker.tasks import _check_workflow_direct_triggers
-                        wf_direct = await _check_workflow_direct_triggers(
-                            _database, str(_agent.id), instrucao, _ctx
-                        )
-                        if wf_direct is not None:
-                            if isinstance(wf_direct, dict) and wf_direct.get("__direct_payload"):
-                                import json as _wf_json
-                                print(f"[CollabTool] ⚡ Workflow direct payload bypass for '{_agent.name}'")
-                                if _parent_config is not None:
-                                    _parent_config["__direct_payload_result"] = wf_direct
-                                return _wf_json.dumps(wf_direct, ensure_ascii=False)
-                            elif isinstance(wf_direct, str):
-                                print(f"[CollabTool] ⚡ Workflow trigger bypass for '{_agent.name}'")
-                                return wf_direct
-                    except Exception as _wf_err:
-                        print(f"[CollabTool] ⚠️ Error checking workflow triggers: {_wf_err}")
-                    
-                    executor = CollaboratorExecutor(db=_database)
-                    name, response = await executor.invoke(
-                        collaborator=_agent,
-                        instruction=final_instruction,
-                        session_id=_ctx.get("session_id") if _ctx else None,
-                        context_data=_ctx,
-                        response_style=_r_style,
-                    )
-                    print(f"[CollabTool] ✅ '{name}' responded to orchestrator")
-                    
-                    # Intercept direct payload in the collaborator's final response
-                    if response and isinstance(response, str) and '"__direct_payload"' in response:
-                        import json as _dp_json
-                        try:
-                            parsed = _dp_json.loads(response)
-                            if isinstance(parsed, dict) and parsed.get("__direct_payload"):
-                                print(f"[CollabTool] ⚡ Direct payload response from collaborator '{name}' intercepted")
-                                if _parent_config is not None:
-                                    _parent_config["__direct_payload_result"] = parsed
-                        except Exception:
-                            pass
-
-                    # NOTE: Do NOT sanitize here — the orchestrator LLM needs the full
-                    # structured data (achados/dados/recomendacao) to synthesize the
-                    # final response. Sanitization happens at the final output stage
-                    # in process_message_task, not at the intermediate tool-response stage.
-                    return response or f"Agente {name} não retornou resposta."
-                except Exception as e:
-                    print(f"[CollabTool] ❌ Error invoking '{_agent.name}': {e}")
-                    return f"Erro ao consultar agente {_agent.name}: {str(e)}"
+                return f"[INTERCEPT_REQUIRED] {_agent.name}"
             return _invoke_collab
 
         invoker = _make_collab_invoker(
             _agent=collab,
-            _database=db,
-            _ctx=context_data,
-            _planner_enabled=getattr(collab, "is_planner", False),
-            _p_prompt=getattr(collab, "planner_prompt", None),
-            _p_model=getattr(collab, "planner_model", None),
-            _r_style=getattr(collab, "response_style", "structured"),
-            _parent_config=agent_config,
         )
 
         tool = StructuredTool.from_function(
@@ -1494,7 +1404,7 @@ async def _build_collaborator_tools(
         print(f"[Task] 🔧 Collaborator tool created: {tool_name} → '{collab.name}'")
 
     deterministic_matches.sort(key=lambda m: (m["priority"], -m["keyword_len"], (m["agent"].name or "").lower()))
-    return tools, mandatory_instructions, deterministic_matches, always_start, always_end
+    return tools, mandatory_instructions, deterministic_matches, always_start, always_end, all_collaborators
 
 
 # ─────────────────────────────────────────────────────────────
