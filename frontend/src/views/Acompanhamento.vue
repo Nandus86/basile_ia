@@ -211,7 +211,7 @@
               <v-tooltip activator="parent" location="top">Ver MTM (Histórico)</v-tooltip>
             </v-btn>
             <v-btn
-              v-if="item.callback_url && item.response_data"
+              v-if="item.callback_url"
               icon
               variant="text"
               size="small"
@@ -401,7 +401,7 @@
             Testar Job
           </v-btn>
           <v-btn
-            v-if="selectedJob.callback_url && selectedJob.response_data"
+            v-if="selectedJob.callback_url"
             color="success"
             variant="tonal"
             prepend-icon="mdi-send-variant"
