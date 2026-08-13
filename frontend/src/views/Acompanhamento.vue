@@ -2559,9 +2559,7 @@ const abortCurrentJob = async () => {
   }
 }
 
-const resendingJob = ref(false)
 const resendingJobs = ref({})
-
 const resendCurrentJob = async () => {
   if (!selectedJob.value) return;
   resendingJob.value = true;
