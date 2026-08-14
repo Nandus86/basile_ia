@@ -1085,24 +1085,27 @@ class WorkflowEngine:
         try:
             while current_block_id:
                 # Check database to see if execution was cancelled/stopped externally
-                await self.db.refresh(execution)
-                if execution.status == "cancelled":
-                    logger.info(f"[WorkflowEngine] 🛑 Execution {execution.id} has been cancelled externally.")
-                    # Clean active session mapping if completed/cancelled
-                    session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
-                    if session_id:
-                        from app.redis_client import redis_client
-                        current_active = await redis_client.get(f"active_workflow_run:{session_id}")
-                        if current_active == str(execution.id):
-                            await redis_client.delete(f"active_workflow_run:{session_id}")
-                    return {
-                        'result': None,
-                        'context': {k.lstrip('$'): v for k, v in context.items()},
-                        'status': 'cancelled',
-                        'last_block': last_output_key,
-                        'store_in_memory': store_in_memory,
-                        'response_config': response_config,
-                    }
+                try:
+                    await self.db.refresh(execution)
+                    if execution.status == "cancelled":
+                        logger.info(f"[WorkflowEngine] 🛑 Execution {execution.id} has been cancelled externally.")
+                        # Clean active session mapping if completed/cancelled
+                        session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+                        if session_id:
+                            from app.redis_client import redis_client
+                            current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                            if current_active == str(execution.id):
+                                await redis_client.delete(f"active_workflow_run:{session_id}")
+                        return {
+                            'result': None,
+                            'context': {k.lstrip('$'): v for k, v in context.items()},
+                            'status': 'cancelled',
+                            'last_block': last_output_key,
+                            'store_in_memory': store_in_memory,
+                            'response_config': response_config,
+                        }
+                except Exception as refresh_err:
+                    logger.debug(f"[WorkflowEngine] External status check skipped: {refresh_err}")
 
                 block = blocks.get(current_block_id)
                 if not block:
@@ -1270,21 +1273,28 @@ class WorkflowEngine:
             raise
         except Exception as e:
             total_duration = int((time.time() - t0) * 1000)
-            execution.status = "failed"
-            execution.error_message = f"{type(e).__name__}: {str(e)}"
-            execution.blocks_executed = make_json_safe(blocks_log)
-            execution.context = make_json_safe({k.lstrip('$'): v for k, v in context.items()})
-            execution.completed_at = datetime.now(timezone.utc)
-            execution.duration_ms = (execution.duration_ms or 0) + total_duration
-            await self.db.commit()
+            try:
+                execution.status = "failed"
+                execution.error_message = f"{type(e).__name__}: {str(e)}"
+                execution.blocks_executed = make_json_safe(blocks_log)
+                execution.context = make_json_safe({k.lstrip('$'): v for k, v in context.items()})
+                execution.completed_at = datetime.now(timezone.utc)
+                curr_dur = execution.__dict__.get('duration_ms') or 0
+                execution.duration_ms = curr_dur + total_duration
+                await self.db.commit()
+            except Exception as persist_err:
+                logger.warning(f"[WorkflowEngine] Could not persist failure state to DB: {persist_err}")
 
             # Clean active session mapping if failed
             session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
             if session_id:
-                from app.redis_client import redis_client
-                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
-                if current_active == str(execution.id):
-                    await redis_client.delete(f"active_workflow_run:{session_id}")
+                try:
+                    from app.redis_client import redis_client
+                    current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                    if current_active == str(execution.id):
+                        await redis_client.delete(f"active_workflow_run:{session_id}")
+                except Exception:
+                    pass
 
             logger.error(f"[WorkflowEngine] ❌ Workflow execution {execution.id} failed: {e}")
             traceback.print_exc()

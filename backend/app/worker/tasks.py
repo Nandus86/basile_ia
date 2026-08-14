@@ -12,6 +12,7 @@ import time
 import json
 import re
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
@@ -2289,13 +2290,15 @@ async def _check_workflow_direct_triggers(
         if is_direct_payload:
             direct_payload = {
                 "__direct_payload": True,
-                "status": "completed",
+                "status": result_ctx.get("status", "completed"),
                 "agent_used": f"Workflow Automation ({wf.name})",
                 "workflow_name": wf.name,
                 "matched_keyword": best_match["keyword"],
                 "store_in_memory": result_ctx.get("store_in_memory", True),
                 "response_config": result_ctx.get("response_config", {}),
             }
+            if result_ctx.get("status") == "paused":
+                direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
             if isinstance(final_result, dict):
                 # Merge all automation fields at root level
                 direct_payload.update(final_result)
@@ -2707,7 +2710,7 @@ async def _generate_moment_message(
             "- NUNCA mencione o nome do agente ou a palavra 'agente' na frase. Foco apenas na AÇÃO.\n"
             "- Adicione um tom neutro, empático e humano (ex: verificando seus dados, ajustando as informações, analisando os registros) integrado à ação técnica, mas NUNCA seja agressivo ou irônico.\n\n"
             "Exemplo:\n"
-            "verificando a fase em que se encontra o processo|analisando os visitantes|ajustando as informações para analisar os registros|organizando a lista de presença\n\n"
+            "verificando as informações solicitadas|analisando os dados da requisição|consultando os registros necessários\n\n"
             f"Agente: {agent_name}\n"
             f"Descrição: {(agent_description or 'N/A')[:200]}\n"
         )
@@ -2789,17 +2792,53 @@ async def process_message_task(
                 active_wf_run = await redis_client.get(f"active_workflow_run:{session_id}")
                 if active_wf_run:
                     print(f"[Task] ⚡ Found active paused workflow execution {active_wf_run} for session {session_id}. Resuming...")
-                    try:
-                        from app.services.workflow_engine import WorkflowEngine
-                        from uuid import UUID
-                        
-                        input_data = {
-                            "message": message,
-                            **(context_data or {})
-                        }
-                        
-                        engine = WorkflowEngine(db)
-                        res_ctx = await engine.resume(UUID(active_wf_run), input_data)
+                    from app.services.workflow_engine import WorkflowEngine
+                    from uuid import UUID
+                    
+                    input_data = {
+                        "message": message,
+                        **(context_data or {})
+                    }
+                    
+                    max_resume_retries = 3
+                    retry_delay = 1.0
+                    res_ctx = None
+                    last_resume_err = None
+                    
+                    for attempt in range(1, max_resume_retries + 1):
+                        current_db = None
+                        should_close = False
+                        try:
+                            if attempt == 1:
+                                current_db = db
+                            else:
+                                current_db = AsyncSessionLocal()
+                                should_close = True
+
+                            engine = WorkflowEngine(current_db)
+                            res_ctx = await engine.resume(UUID(active_wf_run), input_data)
+                            last_resume_err = None
+                            break
+                        except Exception as resume_err:
+                            last_resume_err = resume_err
+                            err_str = str(resume_err).lower()
+                            is_db_err = any(k in err_str for k in [
+                                "too many clients", "connection", "greenlet", "closed", "pool", "timeout", "operationalerror", "cannotconnect"
+                            ])
+                            print(f"[Task] ⚠️ Attempt {attempt}/{max_resume_retries} failed to resume active workflow {active_wf_run}: {resume_err}")
+                            if attempt < max_resume_retries and is_db_err:
+                                await asyncio.sleep(retry_delay)
+                                retry_delay *= 2
+                            else:
+                                break
+                        finally:
+                            if should_close and current_db:
+                                try:
+                                    await current_db.close()
+                                except Exception:
+                                    pass
+
+                    if res_ctx is not None:
                         wf_name = res_ctx.get("context", {}).get("workflow", {}).get("name", "Unknown Workflow")
                         store_in_mem = res_ctx.get("store_in_memory", True)
                         
@@ -2856,6 +2895,7 @@ async def process_message_task(
                             next_block_id = res_ctx.get("current_block_id")
                             if next_block_id:
                                 print(f"[Task] Continuing loop in background from block {next_block_id}...")
+                                engine = WorkflowEngine(db)
                                 await engine.continue_background_execution(UUID(active_wf_run), next_block_id)
                                 
                             return response_data
@@ -2885,7 +2925,7 @@ async def process_message_task(
                                 _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
                                 await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
 
-                             # Save user message to MTM too
+                                # Save user message to MTM too
                                 if store_in_mem:
                                     await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
 
@@ -2983,12 +3023,22 @@ async def process_message_task(
                             # Inject workflow result into the user's message so the AI agent knows what happened
                             if response_text:
                                 message = f"{message}\n\n[Sistema: Automação '{wf_name}' foi finalizada com o seguinte resultado: {response_text}]"
-                        
-                    except Exception as e:
-                        print(f"[Task] ❌ Error resuming active workflow {active_wf_run}: {e}")
+                    else:
+                        print(f"[Task] ❌ Failed to resume active workflow {active_wf_run} after {max_resume_retries} attempts: {last_resume_err}")
                         import traceback
                         traceback.print_exc()
-                        # Fall through to normal execution if resume fails
+
+                        err_str = str(last_resume_err).lower()
+                        is_infra_err = any(k in err_str for k in [
+                            "too many clients", "connection", "greenlet", "closed", "pool", "timeout", "operationalerror", "cannotconnect"
+                        ])
+
+                        if is_infra_err:
+                            # Do NOT fall through to AI agent on DB/infrastructure failure; raise so job can retry or halt cleanly
+                            raise Exception(f"Falha de infraestrutura ao retomar automação ativa: {last_resume_err}")
+                        else:
+                            # Non-infra error (e.g. invalid state): clear key and allow fallback
+                            await redis_client.delete(f"active_workflow_run:{session_id}")
 
             from app.orchestrator.agent_factory import AgentFactory
             from langchain_core.messages import HumanMessage, AIMessage

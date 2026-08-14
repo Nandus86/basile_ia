@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://basile:basile123@localhost:5533/basile_db"
+    DB_POOL_SIZE: int = 30
+    DB_MAX_OVERFLOW: int = 20
     
     # Redis
     REDIS_URL: str = "redis://localhost:6480"
