@@ -721,11 +721,16 @@ class WorkflowEngine:
 
         session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
         if not session_id:
-            context['$msgRequest'] = {'User': {'last': ''}, 'AI': {'last': ''}}
+            context['$msgRequest'] = {
+                'User': {'last': '', 'created_at': '', 'timestamp': None},
+                'AI': {'last': '', 'created_at': '', 'timestamp': None}
+            }
             return
 
         # Fetch last user message
         user_msg = ""
+        user_created_at = ""
+        user_timestamp = None
         result_user = await self.db.execute(
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
@@ -734,11 +739,17 @@ class WorkflowEngine:
             .limit(1)
         )
         msg_user = result_user.scalar_one_or_none()
-        if msg_user and msg_user.content:
-            user_msg = msg_user.content
+        if msg_user:
+            if msg_user.content:
+                user_msg = msg_user.content
+            if msg_user.created_at:
+                user_created_at = msg_user.created_at.isoformat()
+                user_timestamp = int(msg_user.created_at.timestamp())
 
         # Fetch last AI message
         ai_msg = ""
+        ai_created_at = ""
+        ai_timestamp = None
         result_ai = await self.db.execute(
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
@@ -747,12 +758,24 @@ class WorkflowEngine:
             .limit(1)
         )
         msg_ai = result_ai.scalar_one_or_none()
-        if msg_ai and msg_ai.content:
-            ai_msg = msg_ai.content
+        if msg_ai:
+            if msg_ai.content:
+                ai_msg = msg_ai.content
+            if msg_ai.created_at:
+                ai_created_at = msg_ai.created_at.isoformat()
+                ai_timestamp = int(msg_ai.created_at.timestamp())
 
         context['$msgRequest'] = {
-            'User': {'last': user_msg},
-            'AI': {'last': ai_msg}
+            'User': {
+                'last': user_msg,
+                'created_at': user_created_at,
+                'timestamp': user_timestamp
+            },
+            'AI': {
+                'last': ai_msg,
+                'created_at': ai_created_at,
+                'timestamp': ai_timestamp
+            }
         }
 
     async def execute(
