@@ -29,6 +29,11 @@ class Workflow(Base):
     
     # Direct payload return — bypass LLM and merge automation result into API response
     return_direct_payload = Column(Boolean, default=False, nullable=False)
+
+    # Strict Workflow Mode (locks conversation inside workflow, blocking AI agent and handling invalid retries)
+    strict_mode = Column(Boolean, default=False, nullable=False)
+    strict_fallback_message = Column(Text, nullable=True)
+    strict_exit_keywords = Column(JSON, default=lambda: ["sair", "cancelar", "menu", "parar", "encerrar"])
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

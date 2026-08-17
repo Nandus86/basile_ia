@@ -2944,6 +2944,36 @@ async def process_message_task(
                                 await _send_callback(callback_url, response_data)
                             return response_data
                         
+                        if final_status == "cancelled":
+                            print(f"[Task] 🛑 Workflow '{wf_name}' was cancelled by user.")
+                            processing_time = (time.time() - start_time) * 1000
+                            cancel_response = "Atendimento automatizado encerrado. Como posso te ajudar?"
+                            if store_in_mem:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=cancel_response, ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                                import uuid as _uuid
+                                _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
+                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", cancel_response)
+
+                            current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                            if current_active == str(res_ctx.get("execution_id")):
+                                await redis_client.delete(f"active_workflow_run:{session_id}")
+
+                            response_data = {
+                                "status": "cancelled",
+                                "processing_time_ms": processing_time,
+                                "workflow_name": wf_name,
+                                "response": cancel_response,
+                                "is_hitl_pause": False,
+                            }
+                            if callback_url:
+                                from app.worker.tasks import _send_callback
+                                await _send_callback(callback_url, response_data)
+                            return response_data
+
                         # Completed or Failed
                         final_result = res_ctx.get("result")
                         response_text = ""
@@ -2962,6 +2992,7 @@ async def process_message_task(
                         from uuid import UUID
                         
                         is_direct = res_ctx.get("response_config", {}).get("retornar_payload_direto", False)
+                        is_strict = res_ctx.get("strict_mode", False)
                         
                         try:
                             exec_record = await db.scalar(sa_select(WorkflowExecution).where(WorkflowExecution.id == UUID(active_wf_run)))
@@ -2969,12 +3000,21 @@ async def process_message_task(
                                 if context_data is not None and isinstance(context_data, dict):
                                     context_data["__resumed_workflow_id"] = str(exec_record.workflow_id)
                                     
-                                if not is_direct:
-                                    wf_record = await db.scalar(sa_select(Workflow).where(Workflow.id == exec_record.workflow_id))
-                                    if wf_record:
+                                wf_record = await db.scalar(sa_select(Workflow).where(Workflow.id == exec_record.workflow_id))
+                                if wf_record:
+                                    if not is_direct:
                                         is_direct = getattr(wf_record, "return_direct_payload", False)
+                                    if not is_strict:
+                                        is_strict = bool(
+                                            getattr(wf_record, "strict_mode", False) or
+                                            (wf_record.definition or {}).get("strict_mode", False) or
+                                            (wf_record.definition or {}).get("settings", {}).get("strict_mode", False)
+                                        )
                         except Exception as db_err:
                             print(f"[Task] Could not fetch workflow for direct payload check: {db_err}")
+                        
+                        if is_strict:
+                            is_direct = True
                         
                         if is_direct:
                             if response_text and store_in_mem:

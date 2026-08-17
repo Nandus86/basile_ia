@@ -710,6 +710,37 @@ class WorkflowEngine:
 
     # ── Public API ─────────────────────────────────────────────
 
+    def _get_strict_config(self, workflow: Workflow) -> Dict[str, Any]:
+        """Extract Strict Workflow Mode settings from Workflow model or JSON definition."""
+        definition = workflow.definition or {}
+        settings_dict = definition.get('settings', {}) if isinstance(definition.get('settings'), dict) else {}
+
+        strict_mode = bool(
+            getattr(workflow, 'strict_mode', False) or
+            definition.get('strict_mode', False) or
+            settings_dict.get('strict_mode', False)
+        )
+        strict_fallback_message = (
+            getattr(workflow, 'strict_fallback_message', None) or
+            definition.get('strict_fallback_message') or
+            settings_dict.get('strict_fallback_message') or
+            "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
+        )
+        raw_exit_kws = (
+            getattr(workflow, 'strict_exit_keywords', None) or
+            definition.get('strict_exit_keywords') or
+            settings_dict.get('strict_exit_keywords') or
+            ["sair", "cancelar", "menu", "parar", "encerrar", "exit", "cancel", "stop"]
+        )
+        if isinstance(raw_exit_kws, str):
+            raw_exit_kws = [k.strip() for k in raw_exit_kws.split(",") if k.strip()]
+
+        return {
+            'strict_mode': strict_mode,
+            'strict_fallback_message': strict_fallback_message,
+            'strict_exit_keywords': raw_exit_kws,
+        }
+
     async def _preload_msg_request_context(self, context: Dict[str, Any], blocks: Dict[str, Any]) -> None:
         """
         Scan blocks for $msgRequest and proactively fetch the last user and AI message from MTM if needed.
@@ -843,6 +874,8 @@ class WorkflowEngine:
 
         await self._preload_msg_request_context(context, blocks)
 
+        strict_cfg = self._get_strict_config(workflow)
+
         try:
             if not trigger_block:
                 raise ValueError("No trigger block found in workflow definition")
@@ -856,6 +889,7 @@ class WorkflowEngine:
                 blocks=blocks,
                 edges=edges,
                 blocks_log=blocks_log,
+                strict_cfg=strict_cfg,
             )
         except WorkflowEarlyResponseException as early:
             return {
@@ -916,35 +950,43 @@ class WorkflowEngine:
         context['$request'] = req_ctx
         context['request'] = req_ctx
 
-        # Check for cancel signal ("sair")
+        # Load strict mode configuration
+        strict_cfg = self._get_strict_config(workflow)
+        exit_keywords = [str(k).strip().lower() for k in strict_cfg.get('strict_exit_keywords', []) if k]
+        if not exit_keywords:
+            exit_keywords = ["sair", "cancelar", "menu", "parar", "encerrar", "exit", "cancel", "stop"]
+
+        def _is_exit_match(text_val: Any) -> bool:
+            if not text_val or not isinstance(text_val, str):
+                return False
+            return text_val.strip().lower() in exit_keywords
+
+        # Check for cancel signal
         is_cancel = False
-        if isinstance(input_data, str) and input_data.strip().lower() == 'sair':
+        if isinstance(input_data, str) and _is_exit_match(input_data):
             is_cancel = True
         elif isinstance(input_data, dict):
             # Check system.button_response
             sys_data = input_data.get('system')
-            if isinstance(sys_data, dict):
-                btn_resp = sys_data.get('button_response')
-                if isinstance(btn_resp, str) and btn_resp.strip().lower() == 'sair':
-                    is_cancel = True
+            if isinstance(sys_data, dict) and _is_exit_match(sys_data.get('button_response')):
+                is_cancel = True
             
             # Fallback checks (e.g. global.button_response or direct message/button response)
             if not is_cancel:
                 glob_data = input_data.get('global')
-                if isinstance(glob_data, dict):
-                    btn_resp = glob_data.get('button_response')
-                    if isinstance(btn_resp, str) and btn_resp.strip().lower() == 'sair':
-                        is_cancel = True
-                
-            if not is_cancel:
-                msg_val = input_data.get('message')
-                if isinstance(msg_val, str) and msg_val.strip().lower() == 'sair':
+                if isinstance(glob_data, dict) and _is_exit_match(glob_data.get('button_response')):
                     is_cancel = True
+                
+            if not is_cancel and _is_exit_match(input_data.get('button_response')):
+                is_cancel = True
+
+            if not is_cancel and _is_exit_match(input_data.get('message')):
+                is_cancel = True
 
         if is_cancel:
-            logger.info(f"[WorkflowEngine] 🛑 Workflow execution {execution_id} cancelled by user input ('sair')")
+            logger.info(f"[WorkflowEngine] 🛑 Workflow execution {execution_id} cancelled by user input ('sair'/exit keyword)")
             execution.status = "cancelled"
-            execution.error_message = "Execution cancelled by user ('sair')"
+            execution.error_message = "Execution cancelled by user exit keyword"
             execution.completed_at = datetime.now(timezone.utc)
             
             # Clean active session mapping in redis if applicable
@@ -955,10 +997,13 @@ class WorkflowEngine:
                 session_id = input_data.get('session_id')
                 
             if session_id:
-                from app.redis_client import redis_client
-                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
-                if current_active == str(execution.id):
-                    await redis_client.delete(f"active_workflow_run:{session_id}")
+                try:
+                    from app.redis_client import redis_client
+                    current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                    if current_active == str(execution.id):
+                        await redis_client.delete(f"active_workflow_run:{session_id}")
+                except Exception as redis_err:
+                    logger.debug(f"[WorkflowEngine] Could not clean active_workflow_run in Redis on cancel: {redis_err}")
                 
             await self.db.commit()
             
@@ -1002,7 +1047,6 @@ class WorkflowEngine:
                             payload['parsed_message'] = parsed_msg
                     except Exception:
                         pass
-
 
         # Set execution status to running
         execution.status = "running"
@@ -1048,6 +1092,8 @@ class WorkflowEngine:
                 edges=edges,
                 blocks_log=blocks_log,
                 is_background=is_background,
+                strict_cfg=strict_cfg,
+                origin_wait_block_id=paused_block_id,
             )
         except WorkflowEarlyResponseException as early:
             return {
@@ -1068,6 +1114,8 @@ class WorkflowEngine:
         blocks_log: List[Dict[str, Any]],
         recursion_depth: int = 0,
         is_background: bool = False,
+        strict_cfg: Optional[Dict[str, Any]] = None,
+        origin_wait_block_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         t0 = time.time()
         # We will dynamically update response_config when a response block is executed
@@ -1083,6 +1131,40 @@ class WorkflowEngine:
                     break
 
         try:
+            # Handle strict mode early check if resuming with no outgoing edge
+            if not current_block_id and strict_cfg and strict_cfg.get('strict_mode') and origin_wait_block_id:
+                logger.info(f"[WorkflowEngine] 🛡️ Strict Mode: No next block from paused node '{origin_wait_block_id}'. Re-pausing with fallback.")
+                fallback_msg = strict_cfg.get('strict_fallback_message') or "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
+                clean_context = {k.lstrip('$'): v for k, v in context.items()}
+                execution.status = "paused"
+                execution.current_block_id = origin_wait_block_id
+                execution.context = make_json_safe(clean_context)
+                execution.blocks_executed = make_json_safe(blocks_log)
+                execution.result = make_json_safe(fallback_msg)
+                await self.db.commit()
+
+                session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+                if session_id:
+                    try:
+                        from app.redis_client import redis_client
+                        wait_block = blocks.get(origin_wait_block_id, {})
+                        timeout_seconds = int(wait_block.get('config', {}).get('timeout_seconds', 7200))
+                        await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
+                    except Exception as redis_err:
+                        logger.debug(f"[WorkflowEngine] Could not set active_workflow_run in Redis: {redis_err}")
+
+                return {
+                    'status': 'paused',
+                    'execution_id': execution.id,
+                    'current_block_id': origin_wait_block_id,
+                    'context': clean_context,
+                    'result': fallback_msg,
+                    'store_in_memory': store_in_memory,
+                    'response_config': response_config,
+                    'strict_mode': True,
+                    'is_hitl_pause': True,
+                }
+
             while current_block_id:
                 # Check database to see if execution was cancelled/stopped externally
                 try:
@@ -1092,10 +1174,13 @@ class WorkflowEngine:
                         # Clean active session mapping if completed/cancelled
                         session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
                         if session_id:
-                            from app.redis_client import redis_client
-                            current_active = await redis_client.get(f"active_workflow_run:{session_id}")
-                            if current_active == str(execution.id):
-                                await redis_client.delete(f"active_workflow_run:{session_id}")
+                            try:
+                                from app.redis_client import redis_client
+                                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                                if current_active == str(execution.id):
+                                    await redis_client.delete(f"active_workflow_run:{session_id}")
+                            except Exception:
+                                pass
                         return {
                             'result': None,
                             'context': {k.lstrip('$'): v for k, v in context.items()},
@@ -1153,10 +1238,13 @@ class WorkflowEngine:
                     
                     session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
                     if session_id:
-                        from app.redis_client import redis_client
-                        timeout_seconds = int(block.get('config', {}).get('timeout_seconds', 7200))
-                        await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
-                        logger.info(f"[WorkflowEngine] Mapped active_workflow_run:{session_id} to execution {execution.id} for {timeout_seconds}s")
+                        try:
+                            from app.redis_client import redis_client
+                            timeout_seconds = int(block.get('config', {}).get('timeout_seconds', 7200))
+                            await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
+                            logger.info(f"[WorkflowEngine] Mapped active_workflow_run:{session_id} to execution {execution.id} for {timeout_seconds}s")
+                        except Exception as redis_err:
+                            logger.debug(f"[WorkflowEngine] Could not set active_workflow_run in Redis: {redis_err}")
                     
                     logger.info(f"[WorkflowEngine] ⏸️ Workflow execution {execution.id} paused at block {pe.block_id}")
                     return {
@@ -1167,6 +1255,7 @@ class WorkflowEngine:
                         'result': current_result,
                         'store_in_memory': store_in_memory,
                         'response_config': response_config,
+                        'strict_mode': strict_cfg.get('strict_mode', False) if strict_cfg else False,
                     }
                 except Exception as e:
                     block_status = "failed"
@@ -1228,6 +1317,46 @@ class WorkflowEngine:
 
                 current_block_id = next_block_id
 
+            # Check for Strict Mode anti-deadlock fallback if ended on condition without explicit terminal action
+            if strict_cfg and strict_cfg.get('strict_mode') and origin_wait_block_id:
+                last_executed = blocks_log[-1] if blocks_log else {}
+                if last_executed.get('block_type') in ('router', 'if', 'filter') or not blocks_log:
+                    fallback_msg = strict_cfg.get('strict_fallback_message') or "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
+                    clean_context = {k.lstrip('$'): v for k, v in context.items()}
+
+                    execution.status = "paused"
+                    execution.current_block_id = origin_wait_block_id
+                    execution.context = make_json_safe(clean_context)
+                    execution.blocks_executed = make_json_safe(blocks_log)
+                    execution.result = make_json_safe(fallback_msg)
+                    await self.db.commit()
+
+                    session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
+                    if session_id:
+                        try:
+                            from app.redis_client import redis_client
+                            wait_block = blocks.get(origin_wait_block_id, {})
+                            timeout_seconds = int(wait_block.get('config', {}).get('timeout_seconds', 7200))
+                            await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
+                        except Exception as redis_err:
+                            logger.debug(f"[WorkflowEngine] Could not set active_workflow_run in Redis: {redis_err}")
+
+                    logger.info(
+                        f"[WorkflowEngine] 🛡️ Strict Mode: Unrecognized input at block '{last_executed.get('block_id')}'. "
+                        f"Re-pausing at '{origin_wait_block_id}' with fallback message."
+                    )
+                    return {
+                        'status': 'paused',
+                        'execution_id': execution.id,
+                        'current_block_id': origin_wait_block_id,
+                        'context': clean_context,
+                        'result': fallback_msg,
+                        'store_in_memory': store_in_memory,
+                        'response_config': response_config,
+                        'strict_mode': True,
+                        'is_hitl_pause': True,
+                    }
+
             # Success
             total_duration = int((time.time() - t0) * 1000)
             clean_context = {k.lstrip('$'): v for k, v in context.items()}
@@ -1250,10 +1379,13 @@ class WorkflowEngine:
             # Clean active session mapping if completed
             session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
             if session_id:
-                from app.redis_client import redis_client
-                current_active = await redis_client.get(f"active_workflow_run:{session_id}")
-                if current_active == str(execution.id):
-                    await redis_client.delete(f"active_workflow_run:{session_id}")
+                try:
+                    from app.redis_client import redis_client
+                    current_active = await redis_client.get(f"active_workflow_run:{session_id}")
+                    if current_active == str(execution.id):
+                        await redis_client.delete(f"active_workflow_run:{session_id}")
+                except Exception as redis_err:
+                    logger.debug(f"[WorkflowEngine] Could not clean active_workflow_run in Redis: {redis_err}")
 
             logger.info(
                 f"[WorkflowEngine] 🏁 Workflow execution {execution.id} completed "
@@ -1266,6 +1398,7 @@ class WorkflowEngine:
                 'last_block': last_output_key,
                 'store_in_memory': store_in_memory,
                 'response_config': response_config,
+                'strict_mode': strict_cfg.get('strict_mode', False) if strict_cfg else False,
             }
 
         except WorkflowEarlyResponseException:

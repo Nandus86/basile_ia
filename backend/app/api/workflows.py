@@ -141,7 +141,12 @@ async def duplicate_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_d
         definition=workflow.definition,
         trigger_keywords=workflow.trigger_keywords,
         trigger_match_mode=workflow.trigger_match_mode,
+        always_run_on_startup=workflow.always_run_on_startup,
+        always_run_on_egress=workflow.always_run_on_egress,
         return_direct_payload=workflow.return_direct_payload,
+        strict_mode=getattr(workflow, 'strict_mode', False),
+        strict_fallback_message=getattr(workflow, 'strict_fallback_message', None),
+        strict_exit_keywords=getattr(workflow, 'strict_exit_keywords', None),
     )
 
     db.add(new_workflow)

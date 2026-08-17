@@ -15,6 +15,9 @@ class WorkflowBase(BaseModel):
     trigger_match_mode: str = Field(default="word", description="Matching mode: word, contains, phrase")
     always_run_on_startup: bool = Field(default=False, description="If true, workflow runs immediately at startup")
     return_direct_payload: bool = Field(default=False, description="If true, workflow results bypass LLM and are merged directly into API response")
+    strict_mode: bool = Field(default=False, description="If true, locks conversation inside workflow, blocking AI agent until completion or cancellation")
+    strict_fallback_message: Optional[str] = Field(None, description="Custom fallback message sent when an unhandled/invalid input is received in strict mode")
+    strict_exit_keywords: Optional[List[str]] = Field(default_factory=lambda: ["sair", "cancelar", "menu", "parar", "encerrar"], description="Keywords that allow the user to escape/cancel a strict workflow")
 
 class WorkflowCreate(WorkflowBase):
     pass
@@ -28,6 +31,9 @@ class WorkflowUpdate(BaseModel):
     trigger_match_mode: Optional[str] = None
     always_run_on_startup: Optional[bool] = None
     return_direct_payload: Optional[bool] = None
+    strict_mode: Optional[bool] = None
+    strict_fallback_message: Optional[str] = None
+    strict_exit_keywords: Optional[List[str]] = None
 
 class WorkflowResponse(WorkflowBase):
     id: UUID

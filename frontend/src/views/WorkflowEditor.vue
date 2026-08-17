@@ -466,9 +466,59 @@
             label="Retornar Payload Direto"
             hint="Se ativado, retorna o JSON final bruto da automação na API (bypass/keywords)"
             persistent-hint
-            class="mb-2"
+            class="mb-3"
             @update:model-value="markUnsaved"
           ></v-switch>
+
+          <v-divider class="my-4"></v-divider>
+
+          <div class="text-subtitle-2 font-weight-bold mb-1">
+            <v-icon size="18" class="mr-1" color="warning">mdi-shield-lock</v-icon>
+            Modo Estrito (Trava de Workflow / Bloquear IA)
+          </div>
+          <p class="text-caption text-medium-emphasis mb-3">
+            Quando ativado, blinda a conversa dentro deste Workflow. A IA não assumirá a conversa mesmo se o usuário digitar opções inválidas. O motor repetirá a mensagem de erro até o fluxo terminar ou o usuário digitar uma palavra de saída.
+          </p>
+
+          <v-switch
+            v-model="workflow.strict_mode"
+            color="warning"
+            label="Ativar Modo Estrito (Bloquear IA durante o fluxo)"
+            hint="Impede a IA de intervir e força o usuário a permanecer no fluxo"
+            persistent-hint
+            class="mb-3"
+            @update:model-value="markUnsaved"
+          ></v-switch>
+
+          <template v-if="workflow.strict_mode">
+            <v-textarea
+              v-model="workflow.strict_fallback_message"
+              label="Mensagem de Entrada Não Reconhecida (Fallback)"
+              rows="2"
+              variant="outlined"
+              density="compact"
+              placeholder="Desculpe, não entendi. Por favor, escolha uma das opções acima ou digite 'Sair' para cancelar."
+              hint="Mensagem enviada automaticamente quando a resposta do usuário não bater com nenhuma regra"
+              persistent-hint
+              class="mb-3"
+              @update:model-value="markUnsaved"
+            ></v-textarea>
+
+            <v-combobox
+              v-model="workflow.strict_exit_keywords"
+              label="Palavras de Saída / Escape"
+              multiple
+              chips
+              closable-chips
+              variant="outlined"
+              density="compact"
+              placeholder="Digite e pressione Enter"
+              hint="Se o usuário digitar uma destas palavras, o workflow será cancelado e a IA liberada"
+              persistent-hint
+              class="mb-2"
+              @update:model-value="markUnsaved"
+            ></v-combobox>
+          </template>
         </v-card-text>
         <v-card-actions class="pa-4 bg-surface-variant">
           <v-spacer></v-spacer>
@@ -748,6 +798,18 @@ async function loadWorkflow() {
     if (workflow.value.always_run_on_egress === undefined || workflow.value.always_run_on_egress === null) {
       workflow.value.always_run_on_egress = false
     }
+    // Ensure strict_mode has a boolean value
+    if (workflow.value.strict_mode === undefined || workflow.value.strict_mode === null) {
+      workflow.value.strict_mode = workflow.value.definition?.strict_mode ?? false
+    }
+    // Ensure strict_fallback_message has default text
+    if (workflow.value.strict_fallback_message === undefined || workflow.value.strict_fallback_message === null) {
+      workflow.value.strict_fallback_message = workflow.value.definition?.strict_fallback_message ?? 'Desculpe, não entendi. Por favor, escolha uma das opções acima ou digite "Sair" para cancelar.'
+    }
+    // Ensure strict_exit_keywords has default array
+    if (!workflow.value.strict_exit_keywords || !workflow.value.strict_exit_keywords.length) {
+      workflow.value.strict_exit_keywords = workflow.value.definition?.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar']
+    }
     
     const def = workflow.value.definition || {}
     if (def.blocks && def.edges) {
@@ -996,7 +1058,15 @@ async function saveDefinition() {
       always_run_on_startup: workflow.value.always_run_on_startup ?? false,
       always_run_on_egress: workflow.value.always_run_on_egress ?? false,
       return_direct_payload: workflow.value.return_direct_payload ?? false,
-      definition
+      strict_mode: workflow.value.strict_mode ?? false,
+      strict_fallback_message: workflow.value.strict_fallback_message || '',
+      strict_exit_keywords: workflow.value.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar'],
+      definition: {
+        ...definition,
+        strict_mode: workflow.value.strict_mode ?? false,
+        strict_fallback_message: workflow.value.strict_fallback_message || '',
+        strict_exit_keywords: workflow.value.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar'],
+      }
     })
     saveStatus.value = { text: 'Salvo', color: 'success', icon: 'mdi-check' }
   } catch (e) {
