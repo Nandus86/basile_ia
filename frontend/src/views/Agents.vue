@@ -2999,6 +2999,7 @@ const providerOptions = computed(() => {
   const options = [
     { title: '🟢 OpenAI', value: 'openai' },
     { title: '🟡 Google Gemini', value: 'google' },
+    { title: '🟣 DeepSeek', value: 'deepseek' },
     { title: '🔵 OpenRouter', value: 'openrouter' }
   ]
   
@@ -3415,7 +3416,9 @@ async function fetchModels() {
       { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai', context_length: 128000 },
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'openai', context_length: 16385 },
       { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'google', context_length: 1048576 },
-      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'google', context_length: 2097152 }
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'google', context_length: 2097152 },
+      { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', provider: 'deepseek', context_length: 64000 },
+      { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', provider: 'deepseek', context_length: 64000 }
     ]
   } finally {
     loadingModels.value = false
@@ -3648,6 +3651,8 @@ async function openDialog(agent = null) {
         activeProvider.value = fullAgent.provider_id
       } else if (foundModel) {
         activeProvider.value = foundModel.provider
+      } else if (fullAgent.model?.toLowerCase().includes('deepseek')) {
+        activeProvider.value = 'deepseek'
       } else if (fullAgent.model?.includes('/')) {
         activeProvider.value = 'openrouter'
       } else if (['sambanova', 'groq'].includes(fullAgent.model)) {

@@ -55,6 +55,8 @@ _PRICE_TABLE: Dict[str, Dict[str, float]] = {
     # DeepSeek
     "deepseek/deepseek-chat-v3-0324":   {"prompt": 0.0003,   "completion": 0.0009},
     "deepseek/deepseek-r1":             {"prompt": 0.0005,   "completion": 0.002},
+    "deepseek-chat":                    {"prompt": 0.00027,  "completion": 0.0011},
+    "deepseek-reasoner":                {"prompt": 0.00055,  "completion": 0.00219},
     # OpenAI direto (não via OpenRouter)
     "gpt-4o":                           {"prompt": 0.0025,   "completion": 0.01},
     "gpt-4o-mini":                      {"prompt": 0.00015,  "completion": 0.0006},

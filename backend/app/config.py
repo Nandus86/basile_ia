@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Google AI Studio (Gemini)
     GOOGLE_API_KEY: str = ""
     
+    # DeepSeek API
+    DEEPSEEK_API_KEY: str = ""
+    
     # LangSmith (Optional - for observability)
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_API_KEY: str = ""

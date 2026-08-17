@@ -351,52 +351,49 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         model_id = agent_config.get("model", "gpt-4o-mini") or "gpt-4o-mini"
         extra_config = agent_config.get("config", {}) or {}
         model_id_lower = model_id.lower()
-        is_reasoning = (
-            extra_config.get("is_reasoning_model", False)
-            or "deepseek" in model_id_lower
-            or "r1" in model_id_lower
-            or "reasoning" in model_id_lower
+        
+        is_deepseek_reasoner = ("deepseek-reasoner" in model_id_lower or "deepseek-r1" in model_id_lower)
+        is_deepseek_chat = ("deepseek-chat" in model_id_lower or "deepseek-v3" in model_id_lower)
+        is_openai_reasoning = (
+            (extra_config.get("is_reasoning_model", False) or "o1" in model_id_lower or "o3" in model_id_lower or "reasoning" in model_id_lower)
+            and not (is_deepseek_reasoner or is_deepseek_chat)
         )
 
         # Build kwargs based on model type
         kwargs = {"model": model_id}
 
+        if is_deepseek_reasoner:
+            # DeepSeek Reasoner (R1): No temperature, no reasoning_effort parameter (unsupported by DeepSeek API)
+            max_tokens_val = extra_config.get("max_completion_tokens") or agent_config.get("max_tokens", 8192)
+            kwargs["max_tokens"] = int(max_tokens_val)
 
-        if is_reasoning:
-            # Reasoning models: no temperature, use reasoning_effort and max_completion_tokens
+        elif is_openai_reasoning:
+            # OpenAI Reasoning models (o1, o3-mini): no temperature adjustment, use reasoning_effort and max_completion_tokens
             reasoning_effort = extra_config.get("reasoning_effort", "medium")
             max_completion_tokens = extra_config.get("max_completion_tokens", 16384)
 
-            # Qwen/DeepSeek thinking models use custom temperature or max_completion_tokens
-            if "qwen" in model_id_lower or "deepseek" in model_id_lower:
-                kwargs["temperature"] = 0.6
-            else:
-                kwargs["temperature"] = 1
-
-            kwargs["model_kwargs"] = {
-                "reasoning_effort": reasoning_effort,
-                "max_completion_tokens": max_completion_tokens
-            }
+            kwargs["temperature"] = 1
+            kwargs["reasoning_effort"] = reasoning_effort
+            kwargs["max_tokens"] = int(max_completion_tokens)
+            kwargs["max_completion_tokens"] = int(max_completion_tokens)
 
         else:
-            # Traditional models: use temperature and max_tokens
-            kwargs["temperature"] = agent_config.get("temperature", 0.7)
-            kwargs["max_tokens"] = agent_config.get("max_tokens", 2048)
+            # Traditional models and DeepSeek-Chat (V3): use temperature and max_tokens
+            kwargs["temperature"] = float(agent_config.get("temperature", 0.7))
+            kwargs["max_tokens"] = int(agent_config.get("max_tokens", 2048))
 
-            # Universal sampling params (supported by OpenAI and Qwen)
+            # Universal sampling params (supported by OpenAI, DeepSeek, and Qwen)
             universal_params = ['top_p', 'presence_penalty', 'frequency_penalty']
             for param in universal_params:
                 if param in extra_config and extra_config[param] is not None:
                     kwargs[param] = extra_config[param]
 
             # Qwen-specific sampling params (only for Qwen models)
-            if "qwen" in model_id.lower():
+            if "qwen" in model_id_lower:
                 qwen_params = ['top_k', 'min_p', 'repetition_penalty']
                 if "model_kwargs" not in kwargs:
                     kwargs["model_kwargs"] = {}
                 
-                # We use extra_body to send parameters that are not part of the standard 
-                # OpenAI SDK signature to avoid TypeError: unexpected keyword argument
                 if "extra_body" not in kwargs["model_kwargs"]:
                     kwargs["model_kwargs"]["extra_body"] = {}
                 
@@ -445,23 +442,34 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             llm_google._gemini_agent_id = str(agent_config.get("id", ""))
             return llm_google
 
-        # 2. Lógica para Custom Providers
+        # 2. Lógica para Custom Providers (do banco de dados)
         if provider and hasattr(provider, "is_active") and provider.is_active:
-            # Custom AI Provider (Ollama, Anthropic, etc.)
+            # Custom AI Provider (DeepSeek, Ollama, Anthropic, etc.)
             kwargs["api_key"] = getattr(provider, "api_key", "")
             if hasattr(provider, "base_url") and provider.base_url:
-                base_url = provider.base_url
-                # Heurística: Se não tem /v1 e parece ser uma URL de base, adiciona /v1
-                # Isso resolve o problema comum de 404 no Ollama (que exige /v1 para compatibilidade OpenAI)
-                if "/v1" not in base_url and "/api" not in base_url:
+                base_url = provider.base_url.strip()
+                from urllib.parse import urlparse
+                parsed_url = urlparse(base_url)
+                if not parsed_url.path or parsed_url.path in ("", "/"):
                     base_url = base_url.rstrip("/") + "/v1"
 
                 kwargs["base_url"] = base_url
                 logger.info(f"[AgentFactory] 🌐 Using custom provider '{provider.name}' at '{base_url}' for model '{model_id}'")
             else:
                 logger.info(f"[AgentFactory] 🌐 Using custom provider '{getattr(provider, 'name', '')}' (no base_url) for model '{model_id}'")
+        
+        # 3. Provedor Nativo DeepSeek (via .env)
+        elif provider == "deepseek" or (
+            ("deepseek-chat" in model_id_lower or "deepseek-reasoner" in model_id_lower or "deepseek-r1" in model_id_lower)
+            and "/" not in model_id
+            and settings.DEEPSEEK_API_KEY
+        ):
+            kwargs["api_key"] = settings.DEEPSEEK_API_KEY
+            kwargs["base_url"] = "https://api.deepseek.com/v1"
+            logger.info(f"[AgentFactory] 🌐 Using native DeepSeek provider at 'https://api.deepseek.com/v1' for model '{model_id}'")
+
         else:
-            # 3. Fallback para OpenRouter / OpenAI
+            # 4. Fallback para OpenRouter / OpenAI
             openrouter_specials = ["sambanova", "groq"]
             is_openrouter = "/" in model_id or model_id in openrouter_specials
 

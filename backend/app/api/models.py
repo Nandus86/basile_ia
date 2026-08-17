@@ -5,10 +5,12 @@ import httpx
 import time
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/models", tags=["models"])
@@ -23,7 +25,7 @@ CACHE_TTL_SECONDS = 300  # 5 minutes
 class ModelInfo(BaseModel):
     id: str
     name: str
-    provider: str  # "openai" | "openrouter"
+    provider: str  # "openai" | "openrouter" | "google" | "deepseek" | custom_uuid
     context_length: int = 0
     pricing: Optional[Dict[str, Any]] = None
 
@@ -58,9 +60,6 @@ async def fetch_openai_models() -> List[Dict[str, Any]]:
             for m in raw_models:
                 model_id = m.get("id", "")
                 
-                # Optionally filter for text/chat models only if necessary, but OpenAI returns all (whisper, tts, dall-e, etc)
-                # We'll just include all models or focus on gpt/o1/o3 lines if preferable. Let's include all to be safe.
-                
                 models.append({
                     "id": model_id,
                     "name": model_id,
@@ -80,6 +79,48 @@ async def fetch_openai_models() -> List[Dict[str, Any]]:
             {"id": "gpt-4o-mini", "name": "gpt-4o-mini", "provider": "openai", "context_length": 128000},
             {"id": "o1-mini", "name": "o1-mini", "provider": "openai", "context_length": 128000},
             {"id": "o3-mini", "name": "o3-mini", "provider": "openai", "context_length": 200000},
+        ]
+
+
+# ─── DeepSeek models (native via .env) ────────────────────────────────────────
+async def fetch_deepseek_models() -> List[Dict[str, Any]]:
+    """Fetch available models directly from DeepSeek API"""
+    if not settings.DEEPSEEK_API_KEY:
+        return []
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                "https://api.deepseek.com/models",
+                headers={
+                    "Authorization": f"Bearer {settings.DEEPSEEK_API_KEY}",
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            raw_models = data.get("data", [])
+            logger.info(f"DeepSeek API returned {len(raw_models)} models")
+            
+            models = []
+            for m in raw_models:
+                model_id = m.get("id", "")
+                display_name = "DeepSeek Chat (V3)" if model_id == "deepseek-chat" else ("DeepSeek Reasoner (R1)" if model_id == "deepseek-reasoner" else model_id)
+                models.append({
+                    "id": model_id,
+                    "name": display_name,
+                    "provider": "deepseek",
+                    "context_length": 64000,
+                })
+            
+            models.sort(key=lambda x: x["name"])
+            return models
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch DeepSeek models dynamically: {e}")
+        return [
+            {"id": "deepseek-chat", "name": "DeepSeek Chat (V3)", "provider": "deepseek", "context_length": 64000},
+            {"id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "provider": "deepseek", "context_length": 64000},
         ]
 
 
@@ -128,8 +169,6 @@ async def fetch_openrouter_models() -> List[Dict[str, Any]]:
             
             logger.info(f"Fetched {len(models)} models from OpenRouter (all included)")
             
-            # Adicionar variações manuais solicitadas pelo usuário, que não vêm listadas
-            # diretamente na API base mas são aceitas ou representam tiers/providers
             extra_variations = [
                 {"id": "openai/gpt-oss-120b:exacto", "name": "GPT OSS 120B (Exacto)", "provider": "openrouter", "context_length": 128000, "pricing": None},
                 {"id": "openai/gpt-oss-120b:nitro", "name": "GPT OSS 120B (Nitro)", "provider": "openrouter", "context_length": 128000, "pricing": None},
@@ -139,7 +178,6 @@ async def fetch_openrouter_models() -> List[Dict[str, Any]]:
                 {"id": "cerebras/fp16", "name": "Cerebras (fp16)", "provider": "openrouter", "context_length": 0, "pricing": None},
             ]
             
-            # Evitar duplicatas caso a API comece a retornar
             existing_ids = {m["id"] for m in models}
             for extra in extra_variations:
                 if extra["id"] not in existing_ids:
@@ -173,11 +211,9 @@ async def fetch_google_models() -> List[Dict[str, Any]]:
             
             models = []
             for m in raw_models:
-                # API returns models as "models/gemini-1.5-flash", we just want "gemini-1.5-flash"
                 full_name = m.get("name", "")
                 model_id = full_name.replace("models/", "") if full_name.startswith("models/") else full_name
                 
-                # Optionally only include generateContent models
                 supported_methods = m.get("supportedGenerationMethods", [])
                 if "generateContent" not in supported_methods:
                     continue
@@ -192,13 +228,11 @@ async def fetch_google_models() -> List[Dict[str, Any]]:
                     "context_length": input_limit,
                 })
             
-            # Sort models alphabetically
             models.sort(key=lambda x: x["name"])
             return models
             
     except Exception as e:
         logger.error(f"Failed to fetch Google models dynamically: {e}")
-        # Fallback se falhar
         return [
             {"id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash (Fallback)", "provider": "google", "context_length": 1048576},
             {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro (Fallback)", "provider": "google", "context_length": 2097152},
@@ -207,7 +241,87 @@ async def fetch_google_models() -> List[Dict[str, Any]]:
         ]
 
 
-async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
+# ─── Custom DB AI Providers (Dynamic discovery) ──────────────────────────────
+async def fetch_custom_provider_models(db: AsyncSession) -> List[Dict[str, Any]]:
+    """Fetch models for active custom AI Providers defined in database"""
+    from app.models.ai_provider import AIProvider
+    from sqlalchemy.future import select
+    
+    try:
+        result = await db.execute(select(AIProvider).where(AIProvider.is_active == True))
+        providers = result.scalars().all()
+        if not providers:
+            return []
+            
+        custom_models = []
+        for p in providers:
+            p_id = str(p.id)
+            p_name = p.name or "Custom"
+            base_url = (p.base_url or "").strip()
+            api_key = p.api_key or ""
+            
+            models_fetched = []
+            if base_url:
+                from urllib.parse import urlparse
+                parsed_u = urlparse(base_url)
+                endpoints_to_try = [f"{base_url.rstrip('/')}/models"]
+                if not parsed_u.path or parsed_u.path in ("", "/"):
+                    endpoints_to_try.append(f"{base_url.rstrip('/')}/v1/models")
+                    
+                headers = {}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                    
+                for ep in endpoints_to_try:
+                    try:
+                        async with httpx.AsyncClient(timeout=4.0) as client:
+                            resp = await client.get(ep, headers=headers)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                raw = data.get("data", [])
+                                for m in raw:
+                                    m_id = m.get("id", "")
+                                    if m_id:
+                                        display = m_id
+                                        if m_id == "deepseek-chat":
+                                            display = "DeepSeek Chat (V3)"
+                                        elif m_id == "deepseek-reasoner":
+                                            display = "DeepSeek Reasoner (R1)"
+                                        models_fetched.append({
+                                            "id": m_id,
+                                            "name": f"{display}",
+                                            "provider": p_id,
+                                            "context_length": 64000,
+                                        })
+                                if models_fetched:
+                                    break
+                    except Exception:
+                        continue
+            
+            # Fallback if no remote endpoint responded
+            if not models_fetched:
+                if "deepseek" in p_name.lower() or "deepseek" in base_url.lower():
+                    models_fetched.extend([
+                        {"id": "deepseek-chat", "name": "DeepSeek Chat (V3)", "provider": p_id, "context_length": 64000},
+                        {"id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "provider": p_id, "context_length": 64000},
+                    ])
+                elif p.default_model:
+                    models_fetched.append({
+                        "id": p.default_model,
+                        "name": p.default_model,
+                        "provider": p_id,
+                        "context_length": 128000,
+                    })
+                    
+            custom_models.extend(models_fetched)
+            
+        return custom_models
+    except Exception as e:
+        logger.error(f"Failed to fetch custom provider models: {e}")
+        return []
+
+
+async def get_all_models(db: Optional[AsyncSession] = None, force_refresh: bool = False) -> List[Dict[str, Any]]:
     """Get combined list of models from all providers, with caching"""
     global _models_cache, _cache_timestamp
     
@@ -215,7 +329,6 @@ async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
     if not force_refresh and _models_cache is not None and (now - _cache_timestamp) < CACHE_TTL_SECONDS:
         return _models_cache
     
-    # Start with OpenAI models (always available if key is set)
     all_models = []
     
     if settings.OPENAI_API_KEY:
@@ -226,9 +339,18 @@ async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
         google_models = await fetch_google_models()
         all_models.extend(google_models)
     
+    if settings.DEEPSEEK_API_KEY:
+        deepseek_models = await fetch_deepseek_models()
+        all_models.extend(deepseek_models)
+    
     # Fetch OpenRouter models
     openrouter_models = await fetch_openrouter_models()
     all_models.extend(openrouter_models)
+    
+    # Fetch Custom DB Provider models if DB session is provided
+    if db is not None:
+        custom_models = await fetch_custom_provider_models(db)
+        all_models.extend(custom_models)
     
     # Update cache
     _models_cache = all_models
@@ -240,12 +362,12 @@ async def get_all_models(force_refresh: bool = False) -> List[Dict[str, Any]]:
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/available", response_model=ModelsResponse)
-async def list_available_models(refresh: bool = False):
+async def list_available_models(refresh: bool = False, db: AsyncSession = Depends(get_db)):
     """
     List all available LLM models from configured providers.
     Results are cached for 5 minutes. Pass ?refresh=true to force refresh.
     """
-    models = await get_all_models(force_refresh=refresh)
+    models = await get_all_models(db=db, force_refresh=refresh)
     
     now = time.time()
     is_cached = not refresh and (_models_cache is not None and (now - _cache_timestamp) < 1)
@@ -278,6 +400,15 @@ async def list_providers():
             "configured": True,
             "icon": "mdi-google",
             "color": "#fbbc04"
+        })
+        
+    if settings.DEEPSEEK_API_KEY:
+        providers.append({
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "configured": True,
+            "icon": "mdi-robot-outline",
+            "color": "#4d6bfe"
         })
     
     if settings.OPENROUTER_API_KEY:
