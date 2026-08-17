@@ -352,20 +352,28 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         extra_config = agent_config.get("config", {}) or {}
         model_id_lower = model_id.lower()
         
-        is_deepseek_reasoner = ("deepseek-reasoner" in model_id_lower or "deepseek-r1" in model_id_lower)
-        is_deepseek_chat = ("deepseek-chat" in model_id_lower or "deepseek-v3" in model_id_lower)
+        is_deepseek = "deepseek" in model_id_lower
+        is_deepseek_reasoner = is_deepseek and ("reasoner" in model_id_lower or "r1" in model_id_lower)
+        is_reasoning_active = extra_config.get("is_reasoning_model", False) or is_deepseek_reasoner
         is_openai_reasoning = (
-            (extra_config.get("is_reasoning_model", False) or "o1" in model_id_lower or "o3" in model_id_lower or "reasoning" in model_id_lower)
-            and not (is_deepseek_reasoner or is_deepseek_chat)
+            (is_reasoning_active or "o1" in model_id_lower or "o3" in model_id_lower or "reasoning" in model_id_lower)
+            and not is_deepseek
         )
 
         # Build kwargs based on model type
         kwargs = {"model": model_id}
 
-        if is_deepseek_reasoner:
-            # DeepSeek Reasoner (R1): No temperature, no reasoning_effort parameter (unsupported by DeepSeek API)
-            max_tokens_val = extra_config.get("max_completion_tokens") or agent_config.get("max_tokens", 8192)
-            kwargs["max_tokens"] = int(max_tokens_val)
+        if is_deepseek and is_reasoning_active:
+            # DeepSeek V4 Pro / Flash (or R1) with reasoning/thinking enabled
+            reasoning_effort = extra_config.get("reasoning_effort", "high")
+            max_completion_tokens = extra_config.get("max_completion_tokens", 16384)
+
+            kwargs["reasoning_effort"] = reasoning_effort
+            kwargs["max_tokens"] = int(max_completion_tokens)
+            kwargs["max_completion_tokens"] = int(max_completion_tokens)
+            
+            # DeepSeek V4 supports enabling thinking mode via extra_body
+            kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
 
         elif is_openai_reasoning:
             # OpenAI Reasoning models (o1, o3-mini): no temperature adjustment, use reasoning_effort and max_completion_tokens
@@ -378,7 +386,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             kwargs["max_completion_tokens"] = int(max_completion_tokens)
 
         else:
-            # Traditional models and DeepSeek-Chat (V3): use temperature and max_tokens
+            # Traditional models and DeepSeek-Chat / DeepSeek-V4 non-thinking: use temperature and max_tokens
             kwargs["temperature"] = float(agent_config.get("temperature", 0.7))
             kwargs["max_tokens"] = int(agent_config.get("max_tokens", 2048))
 
@@ -391,15 +399,12 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             # Qwen-specific sampling params (only for Qwen models)
             if "qwen" in model_id_lower:
                 qwen_params = ['top_k', 'min_p', 'repetition_penalty']
-                if "model_kwargs" not in kwargs:
-                    kwargs["model_kwargs"] = {}
-                
-                if "extra_body" not in kwargs["model_kwargs"]:
-                    kwargs["model_kwargs"]["extra_body"] = {}
+                if "extra_body" not in kwargs:
+                    kwargs["extra_body"] = {}
                 
                 for param in qwen_params:
                     if param in extra_config and extra_config[param] is not None:
-                        kwargs["model_kwargs"]["extra_body"][param] = extra_config[param]
+                        kwargs["extra_body"][param] = extra_config[param]
 
         # Structured output: force JSON if output_schema is defined
         if agent_config.get("output_schema"):
@@ -458,12 +463,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             else:
                 logger.info(f"[AgentFactory] 🌐 Using custom provider '{getattr(provider, 'name', '')}' (no base_url) for model '{model_id}'")
         
-        # 3. Provedor Nativo DeepSeek (via .env)
-        elif provider == "deepseek" or (
-            ("deepseek-chat" in model_id_lower or "deepseek-reasoner" in model_id_lower or "deepseek-r1" in model_id_lower)
-            and "/" not in model_id
-            and settings.DEEPSEEK_API_KEY
-        ):
+        # 3. Provedor Nativo DeepSeek (via .env ou fallback por nome de modelo)
+        elif provider == "deepseek" or ("deepseek" in model_id_lower and "/" not in model_id):
             kwargs["api_key"] = settings.DEEPSEEK_API_KEY
             kwargs["base_url"] = "https://api.deepseek.com/v1"
             logger.info(f"[AgentFactory] 🌐 Using native DeepSeek provider at 'https://api.deepseek.com/v1' for model '{model_id}'")

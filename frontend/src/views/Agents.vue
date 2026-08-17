@@ -3417,6 +3417,8 @@ async function fetchModels() {
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', provider: 'openai', context_length: 16385 },
       { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'google', context_length: 1048576 },
       { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'google', context_length: 2097152 },
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', context_length: 64000 },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', context_length: 64000 },
       { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', provider: 'deepseek', context_length: 64000 },
       { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', provider: 'deepseek', context_length: 64000 }
     ]

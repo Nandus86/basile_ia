@@ -105,7 +105,15 @@ async def fetch_deepseek_models() -> List[Dict[str, Any]]:
             models = []
             for m in raw_models:
                 model_id = m.get("id", "")
-                display_name = "DeepSeek Chat (V3)" if model_id == "deepseek-chat" else ("DeepSeek Reasoner (R1)" if model_id == "deepseek-reasoner" else model_id)
+                display_name = model_id
+                if model_id == "deepseek-v4-flash":
+                    display_name = "DeepSeek V4 Flash"
+                elif model_id == "deepseek-v4-pro":
+                    display_name = "DeepSeek V4 Pro"
+                elif model_id == "deepseek-chat":
+                    display_name = "DeepSeek Chat (V3)"
+                elif model_id == "deepseek-reasoner":
+                    display_name = "DeepSeek Reasoner (R1)"
                 models.append({
                     "id": model_id,
                     "name": display_name,
@@ -119,6 +127,8 @@ async def fetch_deepseek_models() -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Failed to fetch DeepSeek models dynamically: {e}")
         return [
+            {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "provider": "deepseek", "context_length": 64000},
+            {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "provider": "deepseek", "context_length": 64000},
             {"id": "deepseek-chat", "name": "DeepSeek Chat (V3)", "provider": "deepseek", "context_length": 64000},
             {"id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "provider": "deepseek", "context_length": 64000},
         ]
@@ -302,6 +312,8 @@ async def fetch_custom_provider_models(db: AsyncSession) -> List[Dict[str, Any]]
             if not models_fetched:
                 if "deepseek" in p_name.lower() or "deepseek" in base_url.lower():
                     models_fetched.extend([
+                        {"id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "provider": p_id, "context_length": 64000},
+                        {"id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "provider": p_id, "context_length": 64000},
                         {"id": "deepseek-chat", "name": "DeepSeek Chat (V3)", "provider": p_id, "context_length": 64000},
                         {"id": "deepseek-reasoner", "name": "DeepSeek Reasoner (R1)", "provider": p_id, "context_length": 64000},
                     ])
