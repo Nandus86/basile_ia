@@ -468,14 +468,15 @@ Responda APENAS em JSON válido com este formato exato:
                     if thinker_always_active:
                         thinker_enabled = True
                         print(f"[Orchestrator] 🧠 Thinker always active for collaborator '{collab_agent_model.name}'")
-                    else:
+                        from app.services.workflow_engine import resolve_keyword_template
                         message_lower = message.lower()
                         all_keywords = list(thinker_keywords) + list(trigger_keywords)
                         print(f"[Orchestrator] 🔍 DEBUG Thinker - checking keywords: {all_keywords} in message: {message_lower[:50]}...")
                         for kw in all_keywords:
-                            if kw.lower() in message_lower:
+                            resolved_kw = resolve_keyword_template(kw, context_data)
+                            if resolved_kw and resolved_kw.lower() in message_lower:
                                 thinker_enabled = True
-                                print(f"[Orchestrator] 🧠 Thinker activated by keyword: '{kw}' for collaborator '{collab_agent_model.name}'")
+                                print(f"[Orchestrator] 🧠 Thinker activated by keyword: '{resolved_kw}' for collaborator '{collab_agent_model.name}'")
                                 break
 
                 if thinker_enabled and not think_task_list:

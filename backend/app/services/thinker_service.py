@@ -40,7 +40,8 @@ async def get_linked_thinkers(db: AsyncSession, agent_id: UUID) -> List[Agent]:
 
 async def detect_matching_thinkers(
     message: str,
-    thinkers: List[Agent]
+    thinkers: List[Agent],
+    context_data: Optional[Dict[str, Any]] = None
 ) -> List[Agent]:
     """
     Detect which thinkers should be called based on:
@@ -50,6 +51,7 @@ async def detect_matching_thinkers(
     
     Returns all thinkers that should be activated.
     """
+    from app.services.workflow_engine import resolve_keyword_template
     message_lower = message.lower()
     matching_thinkers = []
     
@@ -65,9 +67,10 @@ async def detect_matching_thinkers(
         thinker_keywords = getattr(thinker, 'thinker_keywords', None) or []
         if thinker_keywords:
             for keyword in thinker_keywords:
-                if keyword.lower() in message_lower:
+                resolved_kw = resolve_keyword_template(keyword, context_data)
+                if resolved_kw and resolved_kw.lower() in message_lower:
                     matching_thinkers.append(thinker)
-                    logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched thinker_keyword: '{keyword}'")
+                    logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched thinker_keyword: '{resolved_kw}'")
                     break
             if thinker in matching_thinkers:
                 continue
@@ -75,9 +78,10 @@ async def detect_matching_thinkers(
         # Fallback to trigger_keywords
         keywords = thinker.trigger_keywords or []
         for keyword in keywords:
-            if keyword.lower() in message_lower:
+            resolved_kw = resolve_keyword_template(keyword, context_data)
+            if resolved_kw and resolved_kw.lower() in message_lower:
                 matching_thinkers.append(thinker)
-                logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched trigger_keyword: '{keyword}'")
+                logger.info(f"[ThinkerService] 🔑 Thinker '{thinker.name}' matched trigger_keyword: '{resolved_kw}'")
                 break
     
     return matching_thinkers
@@ -281,7 +285,7 @@ async def execute_thinker_planning(
         return None
     
     # Detect matching thinkers by keywords
-    matching_thinkers = await detect_matching_thinkers(message, linked_thinkers)
+    matching_thinkers = await detect_matching_thinkers(message, linked_thinkers, context_data=context_data)
     
     if not matching_thinkers:
         logger.debug(f"[ThinkerService] No thinkers matched keywords in message")

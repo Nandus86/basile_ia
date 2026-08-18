@@ -183,6 +183,57 @@ def resolve_template(template: Any, context: Dict[str, Any]) -> Any:
     return _TEMPLATE_RE.sub(_replace, template)
 
 
+def resolve_keyword_template(keyword: str, context_data: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Interpolate dynamic template variables (e.g. {{ $trigger.payload.ai_params.label_cell }} or {{ ai_params.label_cell }})
+    within a keyword string using the incoming request/agent payload.
+    """
+    if not keyword or not isinstance(keyword, str):
+        return str(keyword) if keyword else ""
+
+    if "{{" not in keyword or "}}" not in keyword:
+        return keyword
+
+    ctx = context_data.copy() if (context_data and isinstance(context_data, dict)) else {}
+    if not ctx:
+        try:
+            from app.context import get_request_context
+            req_ctx = get_request_context()
+            if req_ctx and isinstance(req_ctx, dict):
+                ctx = req_ctx.copy()
+        except Exception:
+            pass
+
+    # Build evaluation context with $trigger, $request, and flat payload keys
+    eval_context = {
+        "$trigger": {
+            "payload": ctx,
+            "config": {}
+        },
+        "trigger": {
+            "payload": ctx,
+            "config": {}
+        },
+        "$request": ctx,
+        "request": ctx,
+        "$json": ctx,
+        "json": ctx,
+    }
+    for k, v in ctx.items():
+        if k not in eval_context:
+            eval_context[k] = v
+            eval_context[f"${k}"] = v
+
+    try:
+        resolved = resolve_template(keyword, eval_context)
+        if resolved is not None:
+            return str(resolved).strip()
+    except Exception as e:
+        logger.debug(f"[KeywordMatcher] Error resolving keyword template '{keyword}': {e}")
+
+    return keyword
+
+
 def _resolve_list_macro(args_str: str, context: Dict[str, Any]) -> Optional[List[str]]:
     """Helper to parse list macro arguments and format list items."""
     if ',' in args_str:
@@ -331,6 +382,23 @@ def _resolve_single_token(expr: str, context: Dict[str, Any]) -> Any:
 
     # Literal fallback if it doesn't start with $
     if not expr.startswith('$'):
+        # Check if the token (or its root key) is actually a path in context or $trigger.payload!
+        parts = expr.split('.', 1)
+        root_key = parts[0]
+        if root_key in context or f"${root_key}" in context:
+            root_val = context.get(f"${root_key}") or context.get(root_key)
+            if len(parts) > 1:
+                return _resolve_path(root_val, parts[1])
+            return root_val
+
+        # Check inside $trigger.payload
+        trigger_payload = context.get('$trigger', {}).get('payload') or context.get('trigger', {}).get('payload')
+        if isinstance(trigger_payload, dict) and root_key in trigger_payload:
+            root_val = trigger_payload.get(root_key)
+            if len(parts) > 1:
+                return _resolve_path(root_val, parts[1])
+            return root_val
+
         return expr
 
     # Context lookup for path starting with $

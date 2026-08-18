@@ -1137,22 +1137,26 @@ Se não houver fatos relevantes, responda EXATAMENTE: NENHUM"""
 # Collaborator Tools (v0.0.9) — collaborators become tools
 # ─────────────────────────────────────────────────────────────
 
-def _match_true_trigger_keyword(message: str, keyword: str, mode: str) -> bool:
-    """Deterministic matcher for true trigger keywords, with JSON field routing support."""
+def _match_true_trigger_keyword(message: str, keyword: str, mode: str, context_data: Optional[Dict[str, Any]] = None) -> bool:
+    """Deterministic matcher for true trigger keywords, with dynamic template resolution and JSON field routing support."""
     import re
     import json
     from typing import Any
+    from app.services.workflow_engine import resolve_keyword_template
 
     if not message or not keyword:
         return False
 
-    keyword_norm = str(keyword).strip().lower()
+    # Resolve dynamic templates like {{ $trigger.payload.ai_params.label_cell }} or {{ ai_params.label_cell }}
+    resolved_keyword = resolve_keyword_template(keyword, context_data)
+
+    keyword_norm = str(resolved_keyword).strip().lower()
     if not keyword_norm:
         return False
 
     # 1. Verificar se a palavra-chave é um roteamento de campo (campo|valor)
-    if "|" in keyword:
-        parts = keyword.split("|", 1)
+    if "|" in resolved_keyword:
+        parts = resolved_keyword.split("|", 1)
         target_field = parts[0].strip().lower()
         target_value = parts[1].strip().lower()
 
@@ -1245,6 +1249,7 @@ async def _build_collaborator_tools(
     from langchain_core.tools import StructuredTool
     from app.orchestrator.agent_orchestrator import AgentOrchestrator
     from app.models.agent import CollaborationStatus
+    from app.services.workflow_engine import resolve_keyword_template
     import re
 
     orchestrator = AgentOrchestrator(db)
@@ -1330,7 +1335,7 @@ async def _build_collaborator_tools(
         true_match_mode = getattr(collab, 'true_trigger_match_mode', 'word') or 'word'
         best_true_match = None
         for tkw in true_agent_kws:
-            if _match_true_trigger_keyword(message, tkw, true_match_mode):
+            if _match_true_trigger_keyword(message, tkw, true_match_mode, context_data=context_data):
                 candidate = {
                     "agent": collab,
                     "keyword": tkw,
@@ -1349,8 +1354,9 @@ async def _build_collaborator_tools(
         msg_lower = message.lower()
         matched_kw = None
         for kw in agent_kws:
-            if kw and kw.lower() in msg_lower:
-                matched_kw = kw
+            resolved_kw = resolve_keyword_template(kw, context_data)
+            if resolved_kw and resolved_kw.lower() in msg_lower:
+                matched_kw = resolved_kw
                 break
                 
         if matched_kw:
@@ -1362,7 +1368,8 @@ async def _build_collaborator_tools(
                 for mcp in collab.mcps:
                     mcp_kws = getattr(mcp, 'trigger_keywords', []) or []
                     for mkw in mcp_kws:
-                        if mkw and mkw.lower() in msg_lower:
+                        resolved_mkw = resolve_keyword_template(mkw, context_data)
+                        if resolved_mkw and resolved_mkw.lower() in msg_lower:
                             # Usually MCP tool is `execute_{safe_name_of_mcp}` but we don't know the exact python function name here, 
                             # we can just refer to the tool name from the orchestrator perspective. "execute_NOME"
                             mcp_safe = re.sub(r'[^a-zA-Z0-9_-]', '_', mcp.name)
@@ -1945,13 +1952,15 @@ async def _check_global_trigger_keywords(
     )
     all_mcps = result.scalars().all()
 
+    from app.services.workflow_engine import resolve_keyword_template
     triggered_mcps = []
     for mcp in all_mcps:
         mcp_kws = mcp.trigger_keywords or []
         matched_kw = None
         for kw in mcp_kws:
-            if kw and kw.lower().strip() in msg_lower:
-                matched_kw = kw
+            resolved_kw = resolve_keyword_template(kw, context_data)
+            if resolved_kw and resolved_kw.lower().strip() in msg_lower:
+                matched_kw = resolved_kw
                 break
         if matched_kw:
             triggered_mcps.append((mcp, matched_kw))
@@ -2085,7 +2094,7 @@ async def _check_collaborator_workflow_shortcuts(
 
             for kw in wf_kws:
                 all_keywords_checked.append(f"{collab.name}/{wf.name}: '{kw}' (mode={wf_mode})")
-                matched = _match_true_trigger_keyword(message, kw, wf_mode)
+                matched = _match_true_trigger_keyword(message, kw, wf_mode, context_data=context_data)
                 if matched:
                     candidate = {
                         "workflow": wf,
@@ -2234,7 +2243,7 @@ async def _check_workflow_direct_triggers(
         print(f"[WorkflowTrigger]   Evaluating workflow '{wf.name}' with keywords {wf_kws} (mode: {wf_mode})")
         
         for kw in wf_kws:
-            matched = _match_true_trigger_keyword(message, kw, wf_mode)
+            matched = _match_true_trigger_keyword(message, kw, wf_mode, context_data=context_data)
             if matched:
                 candidate = {
                     "workflow": wf,
@@ -2366,7 +2375,7 @@ async def _check_global_workflow_shortcuts(
             print(f"[WorkflowTrigger]   Evaluating workflow '{wf.name}' (ID: {wf.id}) from agent '{agent_obj.name}' with keywords {wf_kws} (mode: {wf_mode})")
             
             for kw in wf_kws:
-                matched = _match_true_trigger_keyword(message, kw, wf_mode)
+                matched = _match_true_trigger_keyword(message, kw, wf_mode, context_data=context_data)
                 if matched:
                     candidate = {
                         "workflow": wf,
@@ -2518,6 +2527,7 @@ async def _check_trigger_mcps(
     msg_lower = message.lower()
     triggered_mcps = []
 
+    from app.services.workflow_engine import resolve_keyword_template
     # Check each MCP for keyword match or startup flag
     for mcp in all_mcps:
         mcp_kws = getattr(mcp, "trigger_keywords", None) or []
@@ -2525,8 +2535,9 @@ async def _check_trigger_mcps(
         
         matched_kw = None
         for kw in mcp_kws:
-            if kw and kw.lower() in msg_lower:
-                matched_kw = kw
+            resolved_kw = resolve_keyword_template(kw, context_data)
+            if resolved_kw and resolved_kw.lower() in msg_lower:
+                matched_kw = resolved_kw
                 break
                 
         if matched_kw or always_run:
@@ -3819,12 +3830,14 @@ async def process_message_task(
                             print(f"[Task] 🧠 Thinker always active for agent '{agent_model.name}'")
                         else:
                             message_lower = message.lower()
+                            from app.services.workflow_engine import resolve_keyword_template
                             all_keywords = list(thinker_keywords) + list(trigger_keywords)
                             print(f"[Task] 🔍 DEBUG Thinker - checking keywords: {all_keywords} in message: {message_lower[:50]}...")
                             for kw in all_keywords:
-                                if kw.lower() in message_lower:
+                                resolved_kw = resolve_keyword_template(kw, context_data)
+                                if resolved_kw and resolved_kw.lower() in message_lower:
                                     thinker_enabled = True
-                                    print(f"[Task] 🧠 Thinker activated by keyword: '{kw}'")
+                                    print(f"[Task] 🧠 Thinker activated by keyword: '{resolved_kw}'")
                                     break
                         
                         # If Thinker is enabled, call it to create task list
