@@ -132,6 +132,7 @@ def filter_context_data(
     """
     Filters context_data to only include keys present in the agent's input_schema.
     Ensures that each agent only sees its own domain data.
+    Supports both whitelist ('properties') and blacklist/exclusion ('exclude' or 'omit').
     """
     if not context_data:
         return {}
@@ -145,16 +146,29 @@ def filter_context_data(
         except Exception:
             input_schema = None
             
-    # Extract properties from standard JSON Schema formats (robust parsing)
+    # Extract properties and root exclude from standard JSON Schema formats (robust parsing)
+    root_exclude = []
     if isinstance(input_schema, dict):
+        raw_exclude = input_schema.get("exclude") or input_schema.get("omit") or []
+        if isinstance(raw_exclude, str):
+            root_exclude = [raw_exclude]
+        elif isinstance(raw_exclude, list):
+            root_exclude = raw_exclude
+
         if "properties" in input_schema:
             input_schema = input_schema["properties"]
         elif input_schema.get("type") == "object" and "properties" in input_schema:
             input_schema = input_schema["properties"]
+        elif input_schema.get("type") == "object" and root_exclude:
+            filtered_result = {k: v for k, v in context_data.items() if k not in set(root_exclude)}
+            return filtered_result
             
     if not input_schema or not isinstance(input_schema, dict):
         # If no input_schema is defined, return the full context_data (pruning of request-only/sensitive fields still occurs inside AgentFactory)
-        return context_data.copy() if isinstance(context_data, dict) else {}
+        res = context_data.copy() if isinstance(context_data, dict) else {}
+        if root_exclude and isinstance(res, dict):
+            res = {k: v for k, v in res.items() if k not in set(root_exclude)}
+        return res
 
     def filter_by_schema(data: Any, schema: Dict[str, Any]) -> Any:
         if not isinstance(data, dict):
@@ -168,13 +182,45 @@ def filter_context_data(
             
             if isinstance(field_def, dict):
                 field_type = field_def.get("type", "string")
+                exclude_fields = field_def.get("exclude") or field_def.get("omit") or []
+                if isinstance(exclude_fields, str):
+                    exclude_fields = [exclude_fields]
+                exclude_set = set(exclude_fields) if isinstance(exclude_fields, (list, set, tuple)) else set()
+
                 if field_type == "object" and "properties" in field_def and isinstance(data_val, dict):
-                    filtered[key] = filter_by_schema(data_val, field_def["properties"])
-                elif field_type == "array" and "items" in field_def and isinstance(field_def["items"], dict) and field_def["items"].get("type") == "object" and "properties" in field_def["items"] and isinstance(data_val, list):
-                    filtered[key] = [
-                        filter_by_schema(item, field_def["items"]["properties"]) if isinstance(item, dict) else item
-                        for item in data_val
-                    ]
+                    obj_res = filter_by_schema(data_val, field_def["properties"])
+                    if exclude_set and isinstance(obj_res, dict):
+                        filtered[key] = {k: v for k, v in obj_res.items() if k not in exclude_set}
+                    else:
+                        filtered[key] = obj_res
+                elif field_type == "object" and isinstance(data_val, dict):
+                    if exclude_set:
+                        filtered[key] = {k: v for k, v in data_val.items() if k not in exclude_set}
+                    else:
+                        filtered[key] = data_val
+                elif field_type == "array" and "items" in field_def and isinstance(field_def["items"], dict) and isinstance(data_val, list):
+                    item_def = field_def["items"]
+                    item_exclude = item_def.get("exclude") or item_def.get("omit") or []
+                    if isinstance(item_exclude, str):
+                        item_exclude = [item_exclude]
+                    item_exclude_set = set(item_exclude) if isinstance(item_exclude, (list, set, tuple)) else set()
+
+                    if "properties" in item_def:
+                        filtered[key] = [
+                            {k: v for k, v in filter_by_schema(item, item_def["properties"]).items() if k not in item_exclude_set}
+                            if isinstance(item, dict) else item
+                            for item in data_val
+                        ]
+                    elif item_exclude_set:
+                        filtered[key] = [
+                            {k: v for k, v in item.items() if k not in item_exclude_set}
+                            if isinstance(item, dict) else item
+                            for item in data_val
+                        ]
+                    else:
+                        filtered[key] = data_val
+                elif exclude_set and isinstance(data_val, dict):
+                    filtered[key] = {k: v for k, v in data_val.items() if k not in exclude_set}
                 else:
                     filtered[key] = data_val
             else:
@@ -183,19 +229,26 @@ def filter_context_data(
 
     # Try standard filtering
     filtered_result = filter_by_schema(context_data, input_schema)
+    if root_exclude and isinstance(filtered_result, dict):
+        filtered_result = {k: v for k, v in filtered_result.items() if k not in set(root_exclude)}
     
     # Check if we have a nested "request" key in context_data (common in webhook tasks)
     # where the input_schema defines keys that exist inside context_data["request"] rather than at root
     if not filtered_result and "request" in context_data and isinstance(context_data["request"], dict):
         nested_filter = filter_by_schema(context_data["request"], input_schema)
         if nested_filter:
+            if root_exclude and isinstance(nested_filter, dict):
+                nested_filter = {k: v for k, v in nested_filter.items() if k not in set(root_exclude)}
             # Re-wrap in request key to preserve format expected by templates (e.g. $request.xxx)
             filtered_result = {"request": nested_filter}
             
     # Fallback: if filtering yields an empty result but original context_data exists,
     # return the full context_data copy to match pre-0.0.75 behavior and prevent blinding the agent.
     if not filtered_result and context_data:
-        return context_data.copy()
+        res = context_data.copy()
+        if root_exclude and isinstance(res, dict):
+            res = {k: v for k, v in res.items() if k not in set(root_exclude)}
+        return res
         
     return filtered_result
 
