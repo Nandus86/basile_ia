@@ -49,6 +49,7 @@ class AnalyticsConfigUpdate(BaseModel):
     church_webhook_url: Optional[str] = None
     system_webhook_url: Optional[str] = None
     is_active: Optional[bool] = None
+    allowed_endpoints: Optional[List[str]] = None
     crm_mapping: Optional[List[Dict[str, Any]]] = None
     metrics_mapping: Optional[List[Dict[str, Any]]] = None
 
@@ -64,6 +65,7 @@ class AnalyticsConfigResponse(BaseModel):
     church_webhook_url: Optional[str] = None
     system_webhook_url: Optional[str] = None
     is_active: bool
+    allowed_endpoints: List[str] = Field(default_factory=list)
     crm_mapping: List[Dict[str, Any]]
     metrics_mapping: List[Dict[str, Any]]
 

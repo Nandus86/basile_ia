@@ -35,7 +35,12 @@ async def process_map_reduce(session, report, config):
     if not agent_id_to_use:
         raise ValueError(f"Nenhum agente configurado para o nível '{report.level}'. Configure em AnalyticsConfig.")
         
-    agent_res = await session.execute(select(Agent).where(Agent.id == agent_id_to_use))
+    import uuid as uuid_mod
+    try:
+        agent_uuid = uuid_mod.UUID(str(agent_id_to_use))
+        agent_res = await session.execute(select(Agent).where(Agent.id == agent_uuid))
+    except Exception:
+        agent_res = await session.execute(select(Agent).where(Agent.id == agent_id_to_use))
     agent = agent_res.scalar_one_or_none()
     if not agent:
         raise ValueError(f"Agente {agent_id_to_use} não encontrado.")
@@ -45,6 +50,13 @@ async def process_map_reduce(session, report, config):
     agent_config = await factory.get_agent_config(agent)
     llm = factory.create_llm(agent_config)
     sys_prompt = agent.system_prompt or "Você é um supervisor encarregado de gerar relatórios executivos baseados em sub-relatórios."
+    if report.level == "system":
+        sys_prompt += (
+            "\n\n## ⚠️ Alertas de Inatividade\n"
+            "Caso alguma igreja apresente o resumo 'Não houveram movimentações significativas nesta igreja no dia de hoje.', "
+            "você DEVE criar obrigatoriamente uma seção no início do relatório intitulada '⚠️ Alertas de Inatividade' listando essas igrejas "
+            "para atenção imediata dos gestores e diretores."
+        )
     
     # 2. Collect Data
     stats = {}
@@ -129,10 +141,12 @@ async def process_map_reduce(session, report, config):
             
     elif report.level == "system" and report.period_type == "daily":
         # SYSTEM DAILY REPORT: Reduce over all Church Daily Reports for that day
+        # Compare by date to prevent exact second/timezone mismatches
+        target_date = start_time.date() if hasattr(start_time, 'date') else start_time
         query = select(AnalyticsReport).where(
             AnalyticsReport.level == "church",
             AnalyticsReport.period_type == "daily",
-            AnalyticsReport.period_start == start_time,
+            func.date(AnalyticsReport.period_start) == target_date,
             AnalyticsReport.status == "completed"
         )
         churches_res = await session.execute(query)
@@ -153,7 +167,10 @@ async def process_map_reduce(session, report, config):
     report.sub_reports = sub_reports_texts
     
     if not sub_reports_texts:
-        report.report_content = "Não houve interações ou dados suficientes neste período para gerar um relatório."
+        if report.level == "church":
+            report.report_content = "Não houveram movimentações significativas nesta igreja no dia de hoje."
+        else:
+            report.report_content = "Não houve interações ou dados suficientes neste período para gerar um relatório."
         return
 
     context = (
@@ -185,7 +202,12 @@ async def process_report_message(message: aio_pika.abc.AbstractIncomingMessage):
 
             async with async_session_maker() as session:
                 # 1. Get the Report
-                report_res = await session.execute(select(AnalyticsReport).where(AnalyticsReport.id == report_id))
+                import uuid as uuid_mod
+                try:
+                    rep_uuid = uuid_mod.UUID(str(report_id))
+                    report_res = await session.execute(select(AnalyticsReport).where(AnalyticsReport.id == rep_uuid))
+                except Exception:
+                    report_res = await session.execute(select(AnalyticsReport).where(AnalyticsReport.id == report_id))
                 report = report_res.scalar_one_or_none()
                 if not report:
                     logger.error(f"[ReportsConsumer] Report {report_id} not found.")
@@ -221,8 +243,8 @@ async def process_report_message(message: aio_pika.abc.AbstractIncomingMessage):
                                     "level": report.level,
                                     "entity_id": report.entity_id,
                                     "period_type": report.period_type,
-                                    "start_date": report.start_date.isoformat(),
-                                    "end_date": report.end_date.isoformat(),
+                                    "period_start": report.period_start.isoformat() if report.period_start else None,
+                                    "period_end": report.period_end.isoformat() if report.period_end else None,
                                     "stats": report.stats,
                                     "report_content": report.report_content
                                 }

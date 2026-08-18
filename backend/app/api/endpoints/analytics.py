@@ -118,6 +118,9 @@ async def update_analytics_config(config_data: AnalyticsConfigUpdate, db: AsyncS
     if config_data.is_active is not None:
         config.is_active = config_data.is_active
     from sqlalchemy.orm.attributes import flag_modified
+    if config_data.allowed_endpoints is not None:
+        config.allowed_endpoints = config_data.allowed_endpoints
+        flag_modified(config, "allowed_endpoints")
     if config_data.crm_mapping is not None:
         config.crm_mapping = config_data.crm_mapping
         flag_modified(config, "crm_mapping")

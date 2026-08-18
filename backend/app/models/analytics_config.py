@@ -25,6 +25,7 @@ class AnalyticsConfig(Base):
     system_webhook_url = Column(String, nullable=True)
     
     is_active = Column(Boolean, default=True)
+    allowed_endpoints = Column(JSONB, default=list)
     crm_mapping = Column(JSONB, default=list)
     metrics_mapping = Column(JSONB, default=list)
 

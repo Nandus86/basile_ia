@@ -66,16 +66,30 @@ class AnalyticsService:
         else:
             return "low"
 
-    async def update_post_interaction(self, session_id: str, payload: dict) -> None:
+    async def update_post_interaction(self, session_id: str, payload: dict, webhook_path: Optional[str] = None) -> None:
         """
         Called after processing a webhook message to update the real-time counters and CRM snapshot.
         If the user has >= 3 interactions, their profile is created/updated.
         """
         try:
-            # Check interaction count via JobLog to know if we should create a profile
-            # Or we can just increment here. The issue is we don't track raw message count directly if it's the 1st.
-            # But we can assume 1 webhook = 1 interaction.
-            
+            # --- Fetch Config ---
+            from app.models.analytics_config import AnalyticsConfig
+            config_query = select(AnalyticsConfig).limit(1)
+            config_res = await self.db.execute(config_query)
+            config = config_res.scalar_one_or_none()
+
+            # --- Check Allowed Endpoints ---
+            if config and config.allowed_endpoints and len(config.allowed_endpoints) > 0:
+                if not webhook_path or webhook_path not in config.allowed_endpoints:
+                    logger.debug(f"[AnalyticsService] Ignoring interaction for session {session_id}: webhook_path '{webhook_path}' not in allowed_endpoints {config.allowed_endpoints}")
+                    return
+
+            # Verify that payload contains an actual user message
+            user_msg = payload.get("message") if isinstance(payload, dict) else None
+            if not user_msg or not str(user_msg).strip():
+                logger.debug(f"[AnalyticsService] Ignoring interaction for session {session_id}: empty user message")
+                return
+
             # extract church_id if available
             church_id = None
             if isinstance(payload, dict):
@@ -87,9 +101,6 @@ class AnalyticsService:
             now = datetime.now(timezone.utc)
 
             if not analytics:
-                # We could wait for 3 interactions by querying JobLog here, 
-                # but to be efficient, let's just create it and increment.
-                # When interaction_count >= 3 it becomes "active" for the Analyst.
                 analytics = UserAnalytics(
                     session_id=session_id,
                     church_id=church_id,
@@ -108,12 +119,6 @@ class AnalyticsService:
                 analytics.last_seen_at = now
                 if church_id:
                     analytics.church_id = church_id
-                    
-            # --- Fetch Config ---
-            from app.models.analytics_config import AnalyticsConfig
-            config_query = select(AnalyticsConfig).limit(1)
-            config_res = await self.db.execute(config_query)
-            config = config_res.scalar_one_or_none()
                     
             # --- Update CRM Zone (Snapshot) ---
             crm_zone = analytics.profile_data.get("__zona_crm", {})

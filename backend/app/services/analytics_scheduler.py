@@ -204,6 +204,15 @@ async def run_system_monthly_reports():
     start_time = end_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     await queue_report_task("system", "monthly", "system", "Global Basile", start_time, end_time)
 
+def _parse_time_parts(time_str: str, default_h: int = 3, default_m: int = 0):
+    try:
+        if time_str and ":" in time_str:
+            parts = time_str.strip().split(":")
+            return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return default_h, default_m
+
 async def sync_analytics_scheduler():
     job_ids = [
         "analytics_agent_job",
@@ -229,57 +238,62 @@ async def sync_analytics_scheduler():
         return
         
     try:
+        tz = "America/Sao_Paulo"
+
         # USER DAILY (Ex: 03:00)
         if config.agent_id:
-            hour, minute = config.cron_time.split(":")
+            h, m = _parse_time_parts(config.cron_time, 3, 0)
             workflow_scheduler.scheduler.add_job(
                 run_analytics_agent,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(hour=h, minute=m, timezone=tz),
                 id="analytics_agent_job", replace_existing=True
             )
+            logger.info(f"[AnalyticsScheduler] Scheduled User Analytics daily job at {h:02d}:{m:02d} ({tz})")
             
         # CHURCH DAILY (Ex: 04:00)
         if config.church_agent_id:
-            hour, minute = config.church_report_time.split(":")
+            h_church, m_church = _parse_time_parts(config.church_report_time, 4, 0)
             workflow_scheduler.scheduler.add_job(
                 run_church_daily_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(hour=h_church, minute=m_church, timezone=tz),
                 id="church_daily_report_job", replace_existing=True
             )
             # CHURCH WEEKLY (Sunday at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_church_weekly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * 0", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(day_of_week="sun", hour=h_church, minute=m_church, timezone=tz),
                 id="church_weekly_report_job", replace_existing=True
             )
             # CHURCH MONTHLY (Day 1 at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_church_monthly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} 1 * *", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(day=1, hour=h_church, minute=m_church, timezone=tz),
                 id="church_monthly_report_job", replace_existing=True
             )
+            logger.info(f"[AnalyticsScheduler] Scheduled Church reports (daily/weekly/monthly) at {h_church:02d}:{m_church:02d} ({tz})")
             
         # SYSTEM DAILY (Ex: 04:30)
         if config.system_agent_id:
-            hour, minute = config.system_report_time.split(":")
+            h_sys, m_sys = _parse_time_parts(config.system_report_time, 4, 30)
             workflow_scheduler.scheduler.add_job(
                 run_system_daily_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * *", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(hour=h_sys, minute=m_sys, timezone=tz),
                 id="system_daily_report_job", replace_existing=True
             )
             # SYSTEM WEEKLY (Sunday at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_system_weekly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} * * 0", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(day_of_week="sun", hour=h_sys, minute=m_sys, timezone=tz),
                 id="system_weekly_report_job", replace_existing=True
             )
             # SYSTEM MONTHLY (Day 1 at same hour)
             workflow_scheduler.scheduler.add_job(
                 run_system_monthly_reports,
-                trigger=CronTrigger.from_crontab(f"{minute} {hour} 1 * *", timezone="America/Sao_Paulo"),
+                trigger=CronTrigger(day=1, hour=h_sys, minute=m_sys, timezone=tz),
                 id="system_monthly_report_job", replace_existing=True
             )
+            logger.info(f"[AnalyticsScheduler] Scheduled System reports (daily/weekly/monthly) at {h_sys:02d}:{m_sys:02d} ({tz})")
             
-        logger.info(f"[AnalyticsScheduler] Synced 7 report crons from DB config.")
+        logger.info(f"[AnalyticsScheduler] Synced report crons successfully from DB config.")
     except Exception as e:
         logger.error(f"[AnalyticsScheduler] Failed to schedule Analytics crons: {e}")

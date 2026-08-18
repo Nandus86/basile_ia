@@ -220,6 +220,24 @@
                       clearable
                     ></v-text-field>
                   </v-col>
+
+                  <v-col cols="12">
+                    <v-combobox
+                      v-model="config.allowed_endpoints"
+                      :items="availablePaths"
+                      multiple
+                      chips
+                      closable-chips
+                      clearable
+                      prepend-inner-icon="mdi-filter-variant"
+                      label="Endpoints / Paths de Entrada dos Usuários"
+                      placeholder="Selecione ou digite os paths... (Deixe vazio para rastrear todos)"
+                      hint="Apenas mensagens recebidas através destes endpoints serão contabilizadas como interações válidas do usuário."
+                      persistent-hint
+                      variant="outlined"
+                      :disabled="!config.is_active"
+                    ></v-combobox>
+                  </v-col>
                   
                   <v-col cols="12">
                     <v-divider class="my-2"></v-divider>
@@ -409,6 +427,7 @@ const configTab = ref('motor')
 const configDialog = ref(false)
 const savingConfig = ref(false)
 const availableAgents = ref([])
+const availablePaths = ref([])
 const config = ref({
   is_active: false,
   agent_id: null,
@@ -420,6 +439,7 @@ const config = ref({
   user_webhook_url: null,
   church_webhook_url: null,
   system_webhook_url: null,
+  allowed_endpoints: [],
   crm_mapping: [],
   metrics_mapping: []
 })
@@ -536,13 +556,46 @@ const openConfig = async () => {
     // Fetch available agents
     const agentsResp = await axios.get(`/agents`)
     availableAgents.value = agentsResp.data.agents || []
-    
+
+    // Fetch available paths from tracking stats and webhooks
+    try {
+      const [statsResp, webhooksResp] = await Promise.allSettled([
+        axios.get('/tracking/stats'),
+        axios.get('/webhooks-config')
+      ])
+      const pathsSet = new Set([
+        '/process',
+        '/disparo/campaign',
+        '/webhook/n8n',
+        '/webhook/trigger/personalizado'
+      ])
+      if (statsResp.status === 'fulfilled' && statsResp.value.data?.by_path) {
+        statsResp.value.data.by_path.forEach(p => { if (p.path) pathsSet.add(p.path) })
+      }
+      if (webhooksResp.status === 'fulfilled' && Array.isArray(webhooksResp.value.data)) {
+        webhooksResp.value.data.forEach(w => {
+          if (w.path) pathsSet.add(w.path.startsWith('/') ? w.path : `/webhook/${w.path}`)
+        })
+      }
+      availablePaths.value = Array.from(pathsSet).sort()
+    } catch (err) {
+      console.error('Failed to fetch paths', err)
+    }
+
     // Fetch current config
     const configResp = await axios.get(`/analytics/config`)
     if (configResp.data) {
       config.value.is_active = configResp.data.is_active
       config.value.agent_id = configResp.data.agent_id
-      config.value.cron_time = configResp.data.cron_time
+      config.value.church_agent_id = configResp.data.church_agent_id
+      config.value.system_agent_id = configResp.data.system_agent_id
+      config.value.cron_time = configResp.data.cron_time || '03:00'
+      config.value.church_report_time = configResp.data.church_report_time || '04:00'
+      config.value.system_report_time = configResp.data.system_report_time || '04:30'
+      config.value.user_webhook_url = configResp.data.user_webhook_url
+      config.value.church_webhook_url = configResp.data.church_webhook_url
+      config.value.system_webhook_url = configResp.data.system_webhook_url
+      config.value.allowed_endpoints = configResp.data.allowed_endpoints || []
       config.value.crm_mapping = configResp.data.crm_mapping || []
       config.value.metrics_mapping = configResp.data.metrics_mapping || []
     }
@@ -550,6 +603,7 @@ const openConfig = async () => {
     configDialog.value = true
   } catch (error) {
     console.error('Failed to load config or agents', error)
+    showSnackbar('Erro ao carregar configurações.', 'error')
   }
 }
 
@@ -573,9 +627,12 @@ const saveConfig = async () => {
   savingConfig.value = true
   try {
     await axios.put(`/analytics/config`, config.value)
+    showSnackbar('Configurações salvas e agendamentos atualizados com sucesso!', 'success')
     configDialog.value = false
   } catch (error) {
     console.error('Failed to save config', error)
+    const msg = error.response?.data?.detail || 'Erro ao salvar configuração'
+    showSnackbar(msg, 'error')
   } finally {
     savingConfig.value = false
   }

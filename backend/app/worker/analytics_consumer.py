@@ -39,7 +39,12 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
 
             async with async_session_maker() as session:
                 # Get the Agent
-                agent_res = await session.execute(select(Agent).where(Agent.id == agent_id))
+                import uuid as uuid_mod
+                try:
+                    agent_uuid = uuid_mod.UUID(str(agent_id))
+                    agent_res = await session.execute(select(Agent).where(Agent.id == agent_uuid))
+                except Exception:
+                    agent_res = await session.execute(select(Agent).where(Agent.id == agent_id))
                 agent = agent_res.scalar_one_or_none()
                 if not agent:
                     logger.error(f"[AnalyticsConsumer] Agent {agent_id} not found.")
@@ -54,24 +59,22 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     logger.error(f"[AnalyticsConsumer] UserAnalytics for {session_id} not found.")
                     return
 
+                # Fetch Config
+                from app.models.analytics_config import AnalyticsConfig
+                config_res = await session.execute(select(AnalyticsConfig).limit(1))
+                config = config_res.scalar_one_or_none()
+
                 # Logging to JobLogs (so it appears on UI)
                 from app.models.job_log import JobLog
-                import uuid
                 job_log = JobLog(
-                    id=uuid.uuid4(),
-                    job_id=str(uuid.uuid4()),
+                    id=uuid_mod.uuid4(),
+                    job_id=str(uuid_mod.uuid4()),
                     webhook_path="/internal/analytics_agent",
                     status="processing",
                     request_data={"session_id": session_id, "agent": agent.name}
                 )
                 session.add(job_log)
-                    # Save to DB
                 await session.commit()
-                
-                # Fire webhook if configured
-                from app.models.analytics_config import AnalyticsConfig
-                config_res = await session.execute(select(AnalyticsConfig).where(AnalyticsConfig.agent_id == str(agent.id)))
-                config = config_res.scalar_one_or_none()
                 
                 start_time = datetime.now()
 
@@ -85,15 +88,34 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     msg_query = msg_query.order_by(ConversationMessage.created_at.asc())
                     
                     msg_res = await session.execute(msg_query)
-                    messages = msg_res.scalars().all()
+                    raw_messages = msg_res.scalars().all()
                     
-                    if not messages:
+                    if not raw_messages:
                         # Nothing to do
                         job_log.status = "completed"
                         job_log.response_data = {"status": "no_new_messages"}
+                        user.last_analyzed_at = datetime.now(timezone.utc)
                         await session.commit()
                         return
                     
+                    # Filter messages based on allowed_endpoints if configured
+                    allowed_paths = config.allowed_endpoints if (config and config.allowed_endpoints) else []
+                    messages = []
+                    for m in raw_messages:
+                        if allowed_paths and m.webhook_path and m.webhook_path not in allowed_paths:
+                            continue
+                        messages.append(m)
+
+                    # Ensure there is at least one message sent by a real user
+                    user_msgs = [m for m in messages if m.role == "user"]
+                    if not user_msgs:
+                        job_log.status = "completed"
+                        job_log.response_data = {"status": "no_new_user_messages"}
+                        user.last_analyzed_at = datetime.now(timezone.utc)
+                        await session.commit()
+                        logger.info(f"[AnalyticsConsumer] Skipping LLM for {user.session_id}: no user messages found in window")
+                        return
+
                     # Format history
                     history_text = "\n".join([f"[{m.created_at.strftime('%H:%M:%S')}] {m.role.upper()}: {m.content}" for m in messages])
                     

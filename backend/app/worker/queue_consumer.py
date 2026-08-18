@@ -527,7 +527,8 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                         from app.services.analytics_service import AnalyticsService
                         if session_id:
                             analytics_svc = AnalyticsService(db_session)
-                            await analytics_svc.update_post_interaction(session_id, payload)
+                            current_webhook_path = job_log.webhook_path if ('job_log' in locals() and job_log and job_log.webhook_path) else config_id
+                            await analytics_svc.update_post_interaction(session_id, payload, webhook_path=current_webhook_path)
                             
             except Exception as e:
                 logger.error(f"Failed to update JobLog completed or Analytics: {e}")
