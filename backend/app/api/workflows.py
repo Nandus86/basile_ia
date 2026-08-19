@@ -146,6 +146,7 @@ async def duplicate_workflow(workflow_id: UUID, db: AsyncSession = Depends(get_d
         return_direct_payload=workflow.return_direct_payload,
         strict_mode=getattr(workflow, 'strict_mode', False),
         strict_fallback_message=getattr(workflow, 'strict_fallback_message', None),
+        strict_timeout_message=getattr(workflow, 'strict_timeout_message', None),
         strict_exit_keywords=getattr(workflow, 'strict_exit_keywords', None),
     )
 

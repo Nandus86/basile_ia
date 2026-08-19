@@ -504,6 +504,19 @@
               @update:model-value="markUnsaved"
             ></v-textarea>
 
+            <v-textarea
+              v-model="workflow.strict_timeout_message"
+              label="Mensagem de Tempo Esgotado / Timeout"
+              rows="2"
+              variant="outlined"
+              density="compact"
+              placeholder="Tempo limite de resposta esgotado. O atendimento foi encerrado."
+              hint="Mensagem enviada proativamente ao usuário quando o tempo de espera do bloco expirar"
+              persistent-hint
+              class="mb-3"
+              @update:model-value="markUnsaved"
+            ></v-textarea>
+
             <v-combobox
               v-model="workflow.strict_exit_keywords"
               label="Palavras de Saída / Escape"
@@ -806,6 +819,10 @@ async function loadWorkflow() {
     if (workflow.value.strict_fallback_message === undefined || workflow.value.strict_fallback_message === null) {
       workflow.value.strict_fallback_message = workflow.value.definition?.strict_fallback_message ?? 'Desculpe, não entendi. Por favor, escolha uma das opções acima ou digite "Sair" para cancelar.'
     }
+    // Ensure strict_timeout_message has default text
+    if (workflow.value.strict_timeout_message === undefined || workflow.value.strict_timeout_message === null) {
+      workflow.value.strict_timeout_message = workflow.value.definition?.strict_timeout_message ?? 'Tempo limite de resposta esgotado. O atendimento foi encerrado.'
+    }
     // Ensure strict_exit_keywords has default array
     if (!workflow.value.strict_exit_keywords || !workflow.value.strict_exit_keywords.length) {
       workflow.value.strict_exit_keywords = workflow.value.definition?.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar']
@@ -1060,11 +1077,13 @@ async function saveDefinition() {
       return_direct_payload: workflow.value.return_direct_payload ?? false,
       strict_mode: workflow.value.strict_mode ?? false,
       strict_fallback_message: workflow.value.strict_fallback_message || '',
+      strict_timeout_message: workflow.value.strict_timeout_message || '',
       strict_exit_keywords: workflow.value.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar'],
       definition: {
         ...definition,
         strict_mode: workflow.value.strict_mode ?? false,
         strict_fallback_message: workflow.value.strict_fallback_message || '',
+        strict_timeout_message: workflow.value.strict_timeout_message || '',
         strict_exit_keywords: workflow.value.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar'],
       }
     })

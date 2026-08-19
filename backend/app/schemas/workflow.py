@@ -17,6 +17,7 @@ class WorkflowBase(BaseModel):
     return_direct_payload: bool = Field(default=False, description="If true, workflow results bypass LLM and are merged directly into API response")
     strict_mode: bool = Field(default=False, description="If true, locks conversation inside workflow, blocking AI agent until completion or cancellation")
     strict_fallback_message: Optional[str] = Field(None, description="Custom fallback message sent when an unhandled/invalid input is received in strict mode")
+    strict_timeout_message: Optional[str] = Field(None, description="Custom timeout message sent when the workflow execution expires")
     strict_exit_keywords: Optional[List[str]] = Field(default_factory=lambda: ["sair", "cancelar", "menu", "parar", "encerrar"], description="Keywords that allow the user to escape/cancel a strict workflow")
 
 class WorkflowCreate(WorkflowBase):
@@ -33,6 +34,7 @@ class WorkflowUpdate(BaseModel):
     return_direct_payload: Optional[bool] = None
     strict_mode: Optional[bool] = None
     strict_fallback_message: Optional[str] = None
+    strict_timeout_message: Optional[str] = None
     strict_exit_keywords: Optional[List[str]] = None
 
 class WorkflowResponse(WorkflowBase):

@@ -794,6 +794,12 @@ class WorkflowEngine:
             settings_dict.get('strict_fallback_message') or
             "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
         )
+        strict_timeout_message = (
+            getattr(workflow, 'strict_timeout_message', None) or
+            definition.get('strict_timeout_message') or
+            settings_dict.get('strict_timeout_message') or
+            "Tempo limite de resposta esgotado. O atendimento foi encerrado."
+        )
         raw_exit_kws = (
             getattr(workflow, 'strict_exit_keywords', None) or
             definition.get('strict_exit_keywords') or
@@ -806,6 +812,7 @@ class WorkflowEngine:
         return {
             'strict_mode': strict_mode,
             'strict_fallback_message': strict_fallback_message,
+            'strict_timeout_message': strict_timeout_message,
             'strict_exit_keywords': raw_exit_kws,
         }
 
@@ -1204,19 +1211,38 @@ class WorkflowEngine:
                 logger.info(f"[WorkflowEngine] 🛡️ Strict Mode: No next block from paused node '{origin_wait_block_id}'. Re-pausing with fallback.")
                 fallback_msg = strict_cfg.get('strict_fallback_message') or "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
                 clean_context = {k.lstrip('$'): v for k, v in context.items()}
+                
+                wait_block = blocks.get(origin_wait_block_id, {})
+                wait_config = wait_block.get('config', {}) if wait_block else {}
+                fallback_result = {
+                    'response': fallback_msg,
+                    'message': fallback_msg,
+                }
+                
+                saida_direcionada = response_config.get('saida_direcionada', False) or wait_config.get('saida_direcionada', False)
+                endpoint_url = response_config.get('endpoint_url', '') or wait_config.get('endpoint_url', '')
+                if saida_direcionada and endpoint_url:
+                    resolved_url = resolve_template(endpoint_url, context)
+                    if resolved_url:
+                        try:
+                            async with httpx.AsyncClient(timeout=10) as client:
+                                await client.post(resolved_url, json=fallback_result)
+                            logger.info(f"[WorkflowEngine] 📤 Saída Direcionada (Strict Fallback): POST successful to '{resolved_url}'")
+                        except Exception as e:
+                            logger.error(f"[WorkflowEngine] 📤 Saída Direcionada (Strict Fallback): POST failed to '{resolved_url}' - Error: {e}")
+
                 execution.status = "paused"
                 execution.current_block_id = origin_wait_block_id
                 execution.context = make_json_safe(clean_context)
                 execution.blocks_executed = make_json_safe(blocks_log)
-                execution.result = make_json_safe(fallback_msg)
+                execution.result = make_json_safe(fallback_result)
                 await self.db.commit()
 
                 session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
                 if session_id:
                     try:
                         from app.redis_client import redis_client
-                        wait_block = blocks.get(origin_wait_block_id, {})
-                        timeout_seconds = int(wait_block.get('config', {}).get('timeout_seconds', 7200))
+                        timeout_seconds = int(wait_config.get('timeout_seconds', 7200))
                         await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
                     except Exception as redis_err:
                         logger.debug(f"[WorkflowEngine] Could not set active_workflow_run in Redis: {redis_err}")
@@ -1226,7 +1252,7 @@ class WorkflowEngine:
                     'execution_id': execution.id,
                     'current_block_id': origin_wait_block_id,
                     'context': clean_context,
-                    'result': fallback_msg,
+                    'result': fallback_result,
                     'store_in_memory': store_in_memory,
                     'response_config': response_config,
                     'strict_mode': True,
@@ -1392,19 +1418,37 @@ class WorkflowEngine:
                     fallback_msg = strict_cfg.get('strict_fallback_message') or "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
                     clean_context = {k.lstrip('$'): v for k, v in context.items()}
 
+                    wait_block = blocks.get(origin_wait_block_id, {})
+                    wait_config = wait_block.get('config', {}) if wait_block else {}
+                    fallback_result = {
+                        'response': fallback_msg,
+                        'message': fallback_msg,
+                    }
+                    
+                    saida_direcionada = response_config.get('saida_direcionada', False) or wait_config.get('saida_direcionada', False)
+                    endpoint_url = response_config.get('endpoint_url', '') or wait_config.get('endpoint_url', '')
+                    if saida_direcionada and endpoint_url:
+                        resolved_url = resolve_template(endpoint_url, context)
+                        if resolved_url:
+                            try:
+                                async with httpx.AsyncClient(timeout=10) as client:
+                                    await client.post(resolved_url, json=fallback_result)
+                                logger.info(f"[WorkflowEngine] 📤 Saída Direcionada (Strict Fallback): POST successful to '{resolved_url}'")
+                            except Exception as e:
+                                logger.error(f"[WorkflowEngine] 📤 Saída Direcionada (Strict Fallback): POST failed to '{resolved_url}' - Error: {e}")
+
                     execution.status = "paused"
                     execution.current_block_id = origin_wait_block_id
                     execution.context = make_json_safe(clean_context)
                     execution.blocks_executed = make_json_safe(blocks_log)
-                    execution.result = make_json_safe(fallback_msg)
+                    execution.result = make_json_safe(fallback_result)
                     await self.db.commit()
 
                     session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
                     if session_id:
                         try:
                             from app.redis_client import redis_client
-                            wait_block = blocks.get(origin_wait_block_id, {})
-                            timeout_seconds = int(wait_block.get('config', {}).get('timeout_seconds', 7200))
+                            timeout_seconds = int(wait_config.get('timeout_seconds', 7200))
                             await redis_client.set(f"active_workflow_run:{session_id}", str(execution.id), expire=timeout_seconds)
                         except Exception as redis_err:
                             logger.debug(f"[WorkflowEngine] Could not set active_workflow_run in Redis: {redis_err}")
@@ -1418,7 +1462,7 @@ class WorkflowEngine:
                         'execution_id': execution.id,
                         'current_block_id': origin_wait_block_id,
                         'context': clean_context,
-                        'result': fallback_msg,
+                        'result': fallback_result,
                         'store_in_memory': store_in_memory,
                         'response_config': response_config,
                         'strict_mode': True,

@@ -2950,6 +2950,11 @@ async def process_message_task(
                             }
                             if isinstance(final_result, dict):
                                 response_data.update(final_result)
+                            
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+
                             if callback_url:
                                 from app.worker.tasks import _send_callback
                                 await _send_callback(callback_url, response_data)
@@ -2958,7 +2963,7 @@ async def process_message_task(
                         if final_status == "cancelled":
                             print(f"[Task] 🛑 Workflow '{wf_name}' was cancelled by user.")
                             processing_time = (time.time() - start_time) * 1000
-                            cancel_response = "Atendimento automatizado encerrado. Como posso te ajudar?"
+                            cancel_response = "Atendimento encerrado. Como posso te ajudar?"
                             if store_in_mem:
                                 await redis_client.add_message(
                                     session_id=session_id, role="assistant", content=cancel_response, ttl_seconds=86400,
@@ -2980,6 +2985,10 @@ async def process_message_task(
                                 "response": cancel_response,
                                 "is_hitl_pause": False,
                             }
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+
                             if callback_url:
                                 from app.worker.tasks import _send_callback
                                 await _send_callback(callback_url, response_data)

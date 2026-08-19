@@ -39,7 +39,20 @@ async def run_migration():
             ))
             print("Column 'strict_fallback_message' added successfully.")
 
-        # 3. strict_exit_keywords
+        # 3. strict_timeout_message
+        check_to = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name='workflows' AND column_name='strict_timeout_message';
+        """))
+        if check_to.fetchone():
+            print("Column 'strict_timeout_message' already exists.")
+        else:
+            await conn.execute(text(
+                "ALTER TABLE workflows ADD COLUMN strict_timeout_message TEXT NULL;"
+            ))
+            print("Column 'strict_timeout_message' added successfully.")
+
+        # 4. strict_exit_keywords
         check_exit = await conn.execute(text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name='workflows' AND column_name='strict_exit_keywords';
@@ -51,6 +64,19 @@ async def run_migration():
                 "ALTER TABLE workflows ADD COLUMN strict_exit_keywords JSON DEFAULT '[\"sair\", \"cancelar\", \"menu\", \"parar\", \"encerrar\"]'::json;"
             ))
             print("Column 'strict_exit_keywords' added successfully.")
+
+        # 5. workflow_executions updated_at
+        check_exec_up = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name='workflow_executions' AND column_name='updated_at';
+        """))
+        if check_exec_up.fetchone():
+            print("Column 'workflow_executions.updated_at' already exists.")
+        else:
+            await conn.execute(text(
+                "ALTER TABLE workflow_executions ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();"
+            ))
+            print("Column 'workflow_executions.updated_at' added successfully.")
 
         print("Migration for strict_mode columns completed successfully.")
 
