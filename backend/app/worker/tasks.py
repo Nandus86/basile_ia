@@ -2963,7 +2963,7 @@ async def process_message_task(
                         if final_status == "cancelled":
                             print(f"[Task] 🛑 Workflow '{wf_name}' was cancelled by user.")
                             processing_time = (time.time() - start_time) * 1000
-                            cancel_response = "Atendimento encerrado. Como posso te ajudar?"
+                            cancel_response = "Atendimento encerrado. Se precisar, é só chamar novamente."
                             if store_in_mem:
                                 await redis_client.add_message(
                                     session_id=session_id, role="assistant", content=cancel_response, ttl_seconds=86400,
