@@ -710,8 +710,15 @@ async def get_dispatcher_webhook_log_detail(log_id: str, db: AsyncSession = Depe
         
     return DispatcherWebhookLogSchema.model_validate(log_entry)
 
+class RetriggerGatilhoRequest(BaseModel):
+    payload: Optional[Any] = None
+
 @router.post("/dispatcher-webhooks/{log_id}/retrigger")
-async def retrigger_dispatcher_webhook(log_id: str, db: AsyncSession = Depends(get_db)):
+async def retrigger_dispatcher_webhook(
+    log_id: str,
+    req_body: Optional[RetriggerGatilhoRequest] = None,
+    db: AsyncSession = Depends(get_db)
+):
     """Retrigger a saved dispatcher webhook payload by issuing a new request internally."""
     import uuid as uuid_mod
     try:
@@ -726,6 +733,22 @@ async def retrigger_dispatcher_webhook(log_id: str, db: AsyncSession = Depends(g
     if not log_entry:
         raise HTTPException(status_code=404, detail="Log entry not found")
         
+    # Determine the payload to send (use edited payload if provided)
+    payload_to_send = log_entry.request_payload
+    if req_body and req_body.payload is not None:
+        payload_to_send = req_body.payload
+        
+    # Calculate contact count
+    contact_count = 0
+    if isinstance(payload_to_send, dict):
+        contacts = payload_to_send.get("contacts")
+        if isinstance(contacts, list):
+            contact_count = len(contacts)
+    elif isinstance(payload_to_send, list):
+        contact_count = len(payload_to_send)
+    if contact_count == 0 and log_entry.contact_count:
+        contact_count = log_entry.contact_count
+
     # Find api key configured for this path in dispatcher_configs
     from app.models.dispatcher_config import DispatcherConfig
     config_query = select(DispatcherConfig).where(DispatcherConfig.path == log_entry.webhook_path)
@@ -743,8 +766,8 @@ async def retrigger_dispatcher_webhook(log_id: str, db: AsyncSession = Depends(g
     new_log = DispatcherWebhookLog(
         webhook_path=log_entry.webhook_path,
         status="pending",
-        request_payload=log_entry.request_payload,
-        contact_count=log_entry.contact_count
+        request_payload=payload_to_send,
+        contact_count=contact_count
     )
     db.add(new_log)
     await db.commit()
@@ -753,7 +776,7 @@ async def retrigger_dispatcher_webhook(log_id: str, db: AsyncSession = Depends(g
     start_time = time.time()
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            resp = await client.post(disparador_url, json=log_entry.request_payload, headers=headers)
+            resp = await client.post(disparador_url, json=payload_to_send, headers=headers)
             duration_ms = int((time.time() - start_time) * 1000)
             
             try:

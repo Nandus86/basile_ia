@@ -1752,26 +1752,79 @@
           <!-- TAB: RAW REQUEST -->
           <div v-else-if="gatilhoDetailTab === 'raw'">
             <div class="d-flex justify-space-between align-center mb-2">
-              <span class="text-caption text-medium-emphasis">Exibindo payload recebido cru da requisição</span>
-              <v-btn size="x-small" variant="tonal" prepend-icon="mdi-content-copy" @click="copyToClipboard(selectedGatilhoLog.request_payload)">
-                Copiar Payload
-              </v-btn>
+              <div class="d-flex align-center ga-2">
+                <span class="text-caption text-medium-emphasis">Exibindo payload recebido cru da requisição</span>
+                <v-chip v-if="isGatilhoPayloadModified" size="x-small" color="warning" variant="flat">Modificado</v-chip>
+              </div>
+              <div class="d-flex ga-2 align-center">
+                <v-btn
+                  size="small"
+                  :color="isEditingGatilhoPayload ? 'warning' : 'primary'"
+                  variant="tonal"
+                  :prepend-icon="isEditingGatilhoPayload ? 'mdi-eye' : 'mdi-pencil'"
+                  @click="isEditingGatilhoPayload = !isEditingGatilhoPayload"
+                >
+                  {{ isEditingGatilhoPayload ? 'Visualizar' : 'Editar Payload' }}
+                </v-btn>
+                <v-btn
+                  v-if="isEditingGatilhoPayload"
+                  size="small"
+                  variant="tonal"
+                  color="cyan"
+                  prepend-icon="mdi-code-json"
+                  @click="formatGatilhoEditorJson"
+                >
+                  Formatar JSON
+                </v-btn>
+                <v-btn
+                  v-if="isGatilhoPayloadModified"
+                  size="small"
+                  variant="tonal"
+                  color="grey"
+                  prepend-icon="mdi-restore"
+                  @click="resetGatilhoPayload"
+                >
+                  Restaurar Original
+                </v-btn>
+                <v-btn
+                  size="small"
+                  variant="tonal"
+                  prepend-icon="mdi-content-copy"
+                  @click="copyToClipboard(isGatilhoPayloadModified ? editableGatilhoPayloadText : selectedGatilhoLog.request_payload)"
+                >
+                  Copiar Payload
+                </v-btn>
+              </div>
             </div>
-            <v-sheet rounded class="code-sheet pa-4">
-              <pre>{{ formatJSON(selectedGatilhoLog.request_payload) }}</pre>
+
+            <v-textarea
+              v-if="isEditingGatilhoPayload"
+              v-model="editableGatilhoPayloadText"
+              variant="outlined"
+              density="compact"
+              rows="16"
+              auto-grow
+              style="font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.4;"
+              class="mb-2"
+              placeholder="Insira o JSON do payload..."
+              :error="gatilhoPayloadError"
+              :error-messages="gatilhoPayloadError ? gatilhoPayloadErrorMessage : ''"
+            ></v-textarea>
+            <v-sheet v-else rounded class="code-sheet pa-4">
+              <pre>{{ editableGatilhoPayloadText || formatJSON(selectedGatilhoLog.request_payload) }}</pre>
             </v-sheet>
           </div>
         </v-card-text>
 
         <v-card-actions class="pa-4 border-t">
           <v-btn
-            color="success"
+            :color="isGatilhoPayloadModified ? 'primary' : 'success'"
             variant="flat"
-            prepend-icon="mdi-send-clock"
+            :prepend-icon="isGatilhoPayloadModified ? 'mdi-send-check' : 'mdi-send-clock'"
             :loading="retriggeringGatilho"
             @click="retriggerGatilho(selectedGatilhoLog.id)"
           >
-            Re-disparar (Nova Chamada)
+            {{ isGatilhoPayloadModified ? 'Re-disparar (Payload Editado)' : 'Re-disparar (Nova Chamada)' }}
           </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="gatilhosDialog = false" :disabled="retriggeringGatilho">Fechar</v-btn>
@@ -1827,6 +1880,18 @@ const gatilhosDialog = ref(false)
 const selectedGatilhoLog = ref(null)
 const gatilhoDetailTab = ref('general')
 const retriggeringGatilho = ref(false)
+
+// Gatilho payload editing state
+const editableGatilhoPayloadText = ref('')
+const originalGatilhoPayloadText = ref('')
+const isEditingGatilhoPayload = ref(false)
+const gatilhoPayloadError = ref(false)
+const gatilhoPayloadErrorMessage = ref('')
+
+const isGatilhoPayloadModified = computed(() => {
+  if (!editableGatilhoPayloadText.value || !originalGatilhoPayloadText.value) return false
+  return editableGatilhoPayloadText.value.trim() !== originalGatilhoPayloadText.value.trim()
+})
 
 
 // Debounce utility for search inputs
@@ -2902,16 +2967,75 @@ const openGatilhoDetails = async (log) => {
     const { data } = await axiosInstance.get(`/tracking/dispatcher-webhooks/${log.id}`)
     selectedGatilhoLog.value = data
     gatilhoDetailTab.value = 'general'
+    const formatted = formatJSON(data.request_payload)
+    originalGatilhoPayloadText.value = formatted
+    editableGatilhoPayloadText.value = formatted
+    isEditingGatilhoPayload.value = false
+    gatilhoPayloadError.value = false
+    gatilhoPayloadErrorMessage.value = ''
     gatilhosDialog.value = true
   } catch (e) {
     showSnackbar('Erro ao carregar detalhes do gatilho', 'error')
   }
 }
 
+const formatGatilhoEditorJson = () => {
+  try {
+    const parsed = JSON.parse(editableGatilhoPayloadText.value)
+    editableGatilhoPayloadText.value = JSON.stringify(parsed, null, 2)
+    gatilhoPayloadError.value = false
+    gatilhoPayloadErrorMessage.value = ''
+    showSnackbar('JSON formatado com sucesso!', 'info')
+  } catch (e) {
+    gatilhoPayloadError.value = true
+    gatilhoPayloadErrorMessage.value = `JSON inválido: ${e.message}`
+    showSnackbar('Não foi possível formatar: JSON inválido', 'error')
+  }
+}
+
+const resetGatilhoPayload = () => {
+  editableGatilhoPayloadText.value = originalGatilhoPayloadText.value
+  gatilhoPayloadError.value = false
+  gatilhoPayloadErrorMessage.value = ''
+  showSnackbar('Payload restaurado para o original recebido', 'info')
+}
+
+watch(editableGatilhoPayloadText, (val) => {
+  if (!isEditingGatilhoPayload.value) return
+  if (!val || !val.trim()) {
+    gatilhoPayloadError.value = true
+    gatilhoPayloadErrorMessage.value = 'O payload não pode ficar vazio'
+    return
+  }
+  try {
+    JSON.parse(val)
+    gatilhoPayloadError.value = false
+    gatilhoPayloadErrorMessage.value = ''
+  } catch (e) {
+    gatilhoPayloadError.value = true
+    gatilhoPayloadErrorMessage.value = `JSON inválido: ${e.message}`
+  }
+})
+
 const retriggerGatilho = async (logId) => {
+  let payloadToSend = null
+  if (isGatilhoPayloadModified.value || isEditingGatilhoPayload.value) {
+    try {
+      payloadToSend = JSON.parse(editableGatilhoPayloadText.value)
+    } catch (e) {
+      gatilhoPayloadError.value = true
+      gatilhoPayloadErrorMessage.value = `JSON inválido: ${e.message}`
+      showSnackbar('O JSON do payload é inválido. Corrija antes de re-disparar.', 'error')
+      gatilhoDetailTab.value = 'raw'
+      isEditingGatilhoPayload.value = true
+      return
+    }
+  }
+
   retriggeringGatilho.value = true
   try {
-    const { data } = await axiosInstance.post(`/tracking/dispatcher-webhooks/${logId}/retrigger`)
+    const postBody = payloadToSend ? { payload: payloadToSend } : {}
+    const { data } = await axiosInstance.post(`/tracking/dispatcher-webhooks/${logId}/retrigger`, postBody)
     if (data.success) {
       showSnackbar(`Re-disparo realizado com sucesso! Status: ${data.status_code}`, 'success')
     } else {
