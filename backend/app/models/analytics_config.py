@@ -28,6 +28,7 @@ class AnalyticsConfig(Base):
     allowed_endpoints = Column(JSONB, default=list)
     crm_mapping = Column(JSONB, default=list)
     metrics_mapping = Column(JSONB, default=list)
+    auto_dispatch_mapping = Column(JSONB, default=list)
 
     def __repr__(self):
         return f"<AnalyticsConfig agent={self.agent_id} time={self.cron_time}>"

@@ -19,6 +19,106 @@ logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 50
 
+from app.models.dispatcher_webhook_log import DispatcherWebhookLog
+
+def _normalize_path(p: str) -> str:
+    if not p:
+        return ""
+    p = p.strip().strip("/")
+    for prefix in ["api/v1/trigger/personalizado/", "trigger/personalizado/", "api/v1/", "webhook/"]:
+        if p.startswith(prefix):
+            p = p[len(prefix):]
+    return p
+
+async def _collect_dispatch_stats(session, config, start_time, end_time, church_id: str = None, church_users: list = None) -> list:
+    """
+    Coleta estatísticas de disparos automáticos com base no auto_dispatch_mapping do config.
+    Retorna lista com métricas detalhadas por regra mapeada.
+    """
+    mapping = config.auto_dispatch_mapping if config and config.auto_dispatch_mapping else []
+    if not mapping:
+        return []
+
+    log_query = select(DispatcherWebhookLog).where(
+        DispatcherWebhookLog.created_at >= start_time,
+        DispatcherWebhookLog.created_at <= end_time
+    )
+    logs_res = await session.execute(log_query)
+    logs = logs_res.scalars().all()
+    if not logs:
+        return []
+
+    church_session_set = set()
+    if church_users:
+        for u in church_users:
+            if u.session_id:
+                church_session_set.add(str(u.session_id))
+
+    dispatch_stats = []
+
+    for rule in mapping:
+        rule_path = (rule.get("path") or "").strip()
+        rule_type_id = (rule.get("type_id") or "").strip()
+        rule_label = rule.get("label") or f"{rule_path} ({rule_type_id})"
+
+        if not rule_path and not rule_type_id:
+            continue
+
+        norm_rule_path = _normalize_path(rule_path)
+        matched_batches = 0
+        total_contacts = 0
+
+        for log in logs:
+            norm_log_path = _normalize_path(log.webhook_path)
+            if norm_rule_path and norm_rule_path != norm_log_path and rule_path != log.webhook_path:
+                continue
+
+            payload = log.request_payload or {}
+            log_type_id = payload.get("type_id") or ""
+            if rule_type_id and str(rule_type_id).strip() != str(log_type_id).strip():
+                continue
+
+            if church_id:
+                p_church_id = (
+                    payload.get("church_id") or 
+                    (payload.get("church", {}).get("_id") if isinstance(payload.get("church"), dict) else None) or
+                    (payload.get("context_data", {}).get("church_id") if isinstance(payload.get("context_data"), dict) else None) or
+                    (payload.get("context_data", {}).get("church", {}).get("_id") if isinstance(payload.get("context_data"), dict) and isinstance(payload.get("context_data", {}).get("church"), dict) else None)
+                )
+                if p_church_id:
+                    if str(p_church_id) != str(church_id):
+                        continue
+                elif church_session_set:
+                    queue_id = payload.get("queue_id", "")
+                    contacts = payload.get("contacts", [])
+                    matches_church = False
+                    for c in contacts:
+                        c_num = c.get("number") or c.get("phone") or ""
+                        if c_num and (f"{queue_id}{c_num}" in church_session_set or c_num in church_session_set):
+                            matches_church = True
+                            break
+                    if not matches_church and queue_id:
+                        if any(s.startswith(str(queue_id)) for s in church_session_set):
+                            matches_church = True
+
+                    if not matches_church:
+                        continue
+
+            matched_batches += 1
+            count = log.contact_count if log.contact_count is not None else len(payload.get("contacts", []))
+            total_contacts += count
+
+        if matched_batches > 0 or total_contacts > 0:
+            dispatch_stats.append({
+                "label": rule_label,
+                "path": rule_path,
+                "type_id": rule_type_id,
+                "total_dispatches": matched_batches,
+                "total_contacts": total_contacts
+            })
+
+    return dispatch_stats
+
 async def process_map_reduce(session, report, config):
     """Executes the Map-Reduce logic for generating the report."""
     
@@ -74,10 +174,18 @@ async def process_map_reduce(session, report, config):
         avg_score = sum(u.engagement_score for u in users) / total_users if total_users > 0 else 0
         critical_count = sum(1 for u in users if u.care_priority == "critical")
         
+        # Collect auto dispatches for church
+        church_dispatches = await _collect_dispatch_stats(
+            session, config, start_time, end_time, church_id=report.entity_id, church_users=users
+        )
+        total_disp_contacts = sum(d["total_contacts"] for d in church_dispatches)
+
         stats = {
             "total_users": total_users,
             "avg_engagement_score": round(avg_score, 2),
-            "critical_cases": critical_count
+            "critical_cases": critical_count,
+            "disparos_automaticos": church_dispatches,
+            "total_disparos_automaticos": total_disp_contacts
         }
         
         # Map phase: split into blocks
@@ -110,6 +218,12 @@ async def process_map_reduce(session, report, config):
                 HumanMessage(content=map_prompt)
             ])
             sub_reports_texts.append(f"--- Bloco {i+1} ---\n{map_resp.content}")
+
+        if church_dispatches:
+            disp_lines = [f"- {d['label']} (Path: {d['path']}, Type ID: {d['type_id']}): {d['total_contacts']} membros atingidos em {d['total_dispatches']} disparos" for d in church_dispatches]
+            sub_reports_texts.append(
+                f"--- Disparos Automáticos Realizados no Período ---\n" + "\n".join(disp_lines) + f"\nTotal de membros impactados via automação: {total_disp_contacts}"
+            )
             
     elif report.period_type in ["weekly", "monthly"]:
         # WEEKLY/MONTHLY REPORT: Reduce over previous period reports
@@ -129,8 +243,28 @@ async def process_map_reduce(session, report, config):
         if not prev_reports:
             logger.warning(f"[ReportsConsumer] Sem dados anteriores para o período {start_time} - {end_time}")
             
+        all_disp_map = {}
+        total_disp_period = 0
+        for r in prev_reports:
+            r_stats = r.stats or {}
+            for d in r_stats.get("disparos_automaticos", []):
+                key = (d.get("path"), d.get("type_id"))
+                if key not in all_disp_map:
+                    all_disp_map[key] = {
+                        "label": d.get("label"),
+                        "path": d.get("path"),
+                        "type_id": d.get("type_id"),
+                        "total_dispatches": 0,
+                        "total_contacts": 0
+                    }
+                all_disp_map[key]["total_dispatches"] += d.get("total_dispatches", 0)
+                all_disp_map[key]["total_contacts"] += d.get("total_contacts", 0)
+            total_disp_period += r_stats.get("total_disparos_automaticos", 0)
+
         stats = {
-            "total_sub_reports_processed": len(prev_reports)
+            "total_sub_reports_processed": len(prev_reports),
+            "disparos_automaticos": list(all_disp_map.values()),
+            "total_disparos_automaticos": total_disp_period
         }
         
         for r in prev_reports:
@@ -141,7 +275,6 @@ async def process_map_reduce(session, report, config):
             
     elif report.level == "system" and report.period_type == "daily":
         # SYSTEM DAILY REPORT: Reduce over all Church Daily Reports for that day
-        # Compare by date to prevent exact second/timezone mismatches
         target_date = start_time.date() if hasattr(start_time, 'date') else start_time
         query = select(AnalyticsReport).where(
             AnalyticsReport.level == "church",
@@ -152,14 +285,28 @@ async def process_map_reduce(session, report, config):
         churches_res = await session.execute(query)
         church_reports = churches_res.scalars().all()
         
+        # Collect auto dispatches system-wide
+        sys_dispatches = await _collect_dispatch_stats(
+            session, config, start_time, end_time, church_id=None
+        )
+        total_sys_disp = sum(d["total_contacts"] for d in sys_dispatches)
+
         stats = {
-            "total_churches_processed": len(church_reports)
+            "total_churches_processed": len(church_reports),
+            "disparos_automaticos": sys_dispatches,
+            "total_disparos_automaticos": total_sys_disp
         }
         
         for r in church_reports:
             sub_reports_texts.append(
                 f"--- Igreja: {r.entity_name} ---\n"
                 f"Estatísticas: {json.dumps(r.stats)}\nResumo: {r.report_content}"
+            )
+
+        if sys_dispatches:
+            disp_lines = [f"- {d['label']} (Path: {d['path']}, Type ID: {d['type_id']}): {d['total_contacts']} membros atingidos em {d['total_dispatches']} disparos" for d in sys_dispatches]
+            sub_reports_texts.append(
+                f"--- Disparos Automáticos Globais do Sistema ---\n" + "\n".join(disp_lines) + f"\nTotal de membros impactados via automação global: {total_sys_disp}"
             )
 
     # 3. Reduce Phase (Final Generation)

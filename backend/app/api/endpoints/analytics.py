@@ -127,6 +127,9 @@ async def update_analytics_config(config_data: AnalyticsConfigUpdate, db: AsyncS
     if config_data.metrics_mapping is not None:
         config.metrics_mapping = config_data.metrics_mapping
         flag_modified(config, "metrics_mapping")
+    if config_data.auto_dispatch_mapping is not None:
+        config.auto_dispatch_mapping = config_data.auto_dispatch_mapping
+        flag_modified(config, "auto_dispatch_mapping")
         
     await db.commit()
     await db.refresh(config)

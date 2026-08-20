@@ -52,6 +52,7 @@ class AnalyticsConfigUpdate(BaseModel):
     allowed_endpoints: Optional[List[str]] = None
     crm_mapping: Optional[List[Dict[str, Any]]] = None
     metrics_mapping: Optional[List[Dict[str, Any]]] = None
+    auto_dispatch_mapping: Optional[List[Dict[str, Any]]] = None
 
 class AnalyticsConfigResponse(BaseModel):
     id: UUID
@@ -68,6 +69,7 @@ class AnalyticsConfigResponse(BaseModel):
     allowed_endpoints: List[str] = Field(default_factory=list)
     crm_mapping: List[Dict[str, Any]]
     metrics_mapping: List[Dict[str, Any]]
+    auto_dispatch_mapping: List[Dict[str, Any]] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

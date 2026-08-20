@@ -174,6 +174,7 @@
           <v-tab value="motor">Motor de IA</v-tab>
           <v-tab value="crm">Mapeamento CRM</v-tab>
           <v-tab value="metrics">Mapeamento Métricas</v-tab>
+          <v-tab value="disparos">Disparos Automáticos</v-tab>
         </v-tabs>
 
         <v-card-text class="pa-4" style="min-height: 300px; max-height: 60vh; overflow-y: auto;">
@@ -367,6 +368,59 @@
                 Nenhum mapeamento extra. O sistema contará sessões automaticamente.
               </div>
             </v-window-item>
+
+            <!-- ABA 4: MAPEAMENTO DISPAROS AUTOMÁTICOS -->
+            <v-window-item value="disparos">
+              <div class="d-flex justify-space-between align-center mb-4 mt-2">
+                <div>
+                  <h3 class="text-subtitle-1 font-weight-bold">Mapeamento de Disparos Automáticos</h3>
+                  <p class="text-caption text-medium-emphasis">
+                    Enderece os endpoints e seus respectivos <code>type_id</code>s para quantificar o total de disparos e membros atingidos nos relatórios da igreja.
+                  </p>
+                </div>
+                <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-plus" @click="addMapping('disparos')">Adicionar Disparo</v-btn>
+              </div>
+              
+              <v-row v-for="(item, index) in config.auto_dispatch_mapping" :key="'disp'+index" class="align-center mb-2">
+                <v-col cols="12" md="4" class="py-1">
+                  <v-combobox
+                    v-model="item.path"
+                    :items="availableDispatchPaths"
+                    label="Endpoint / Path"
+                    placeholder="Ex: culto-domingo"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  ></v-combobox>
+                </v-col>
+                <v-col cols="12" md="3" class="py-1">
+                  <v-text-field
+                    v-model="item.type_id"
+                    label="Type ID"
+                    placeholder="Ex: convite_culto"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="4" class="py-1">
+                  <v-text-field
+                    v-model="item.label"
+                    label="Rótulo no Relatório"
+                    placeholder="Ex: Convites Culto da Família"
+                    variant="outlined"
+                    density="compact"
+                    hide-details
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="1" class="py-1 text-center">
+                  <v-btn icon="mdi-delete" color="error" variant="text" size="small" @click="removeMapping('disparos', index)"></v-btn>
+                </v-col>
+              </v-row>
+              <div v-if="!config.auto_dispatch_mapping || config.auto_dispatch_mapping.length === 0" class="text-center pa-4 text-medium-emphasis">
+                Nenhum disparo automático configurado. Adicione endpoints e seus type_ids para gerar quantitativos nos relatórios.
+              </div>
+            </v-window-item>
           </v-window>
         </v-card-text>
         
@@ -428,6 +482,7 @@ const configDialog = ref(false)
 const savingConfig = ref(false)
 const availableAgents = ref([])
 const availablePaths = ref([])
+const availableDispatchPaths = ref([])
 const config = ref({
   is_active: false,
   agent_id: null,
@@ -441,38 +496,61 @@ const config = ref({
   system_webhook_url: null,
   allowed_endpoints: [],
   crm_mapping: [],
-  metrics_mapping: []
+  metrics_mapping: [],
+  auto_dispatch_mapping: []
 })
 
 const headers = [
   { title: 'Sessão', key: 'session_id' },
   { title: 'Nome', key: 'name' },
   { title: 'Igreja', key: 'church' },
-  { title: 'Interações', key: 'interaction_count' },
-  { title: 'Score', key: 'engagement_score' },
-  { title: 'Prioridade', key: 'care_priority' },
-  { title: 'Última Interação', key: 'last_seen_at' },
+  { title: 'Score', key: 'engagement_score', align: 'center' },
+  { title: 'Prioridade', key: 'care_priority', align: 'center' },
+  { title: 'Interações', key: 'interaction_count', align: 'center' },
+  { title: 'Última Atividade', key: 'last_seen_at' },
   { title: 'Ações', key: 'actions', sortable: false, align: 'end' }
 ]
 
+const priorityColors = {
+  low: 'grey',
+  medium: 'info',
+  high: 'warning',
+  critical: 'error'
+}
+
+const getPriorityColor = (priority) => priorityColors[priority] || 'grey'
+
 const getScoreColor = (score) => {
-  if (score >= 70) return 'success'
-  if (score >= 40) return 'warning'
+  if (score >= 80) return 'success'
+  if (score >= 50) return 'info'
+  if (score >= 20) return 'warning'
   return 'error'
 }
 
-const getPriorityColor = (priority) => {
-  switch (priority) {
-    case 'critical': return 'error'
-    case 'high': return 'warning'
-    case 'medium': return 'info'
-    default: return 'success'
-  }
+const formatDate = (dateStr) => {
+  if (!dateStr) return '-'
+  const date = new Date(dateStr)
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date)
 }
 
-const formatDate = (dateString) => {
-  if (!dateString) return '-'
-  return new Date(dateString).toLocaleString('pt-BR')
+const onTabChange = (val) => {
+  if (val === 'churches') {
+    nextTick(() => {
+      churchReportsRef.value?.fetchReports?.()
+    })
+  } else if (val === 'system') {
+    nextTick(() => {
+      systemReportsRef.value?.fetchReports?.()
+    })
+  } else if (val === 'users') {
+    fetchAnalytics()
+  }
 }
 
 let searchTimeout = null
@@ -487,18 +565,17 @@ const onSearch = () => {
 const fetchAnalytics = async () => {
   loading.value = true
   try {
-    const skip = (page.value - 1) * itemsPerPage.value
     const params = {
-      skip,
+      skip: (page.value - 1) * itemsPerPage.value,
       limit: itemsPerPage.value,
-      search: search.value || null
+      search: search.value || undefined
     }
     const response = await axios.get(`/analytics/users`, { params })
     users.value = response.data.users
     totalItems.value = response.data.total
   } catch (error) {
     console.error('Failed to fetch analytics:', error)
-    showSnackbar('Erro ao carregar usuários.', 'error')
+    showSnackbar('Erro ao carregar dados do Analytics', 'error')
   } finally {
     loading.value = false
   }
@@ -557,11 +634,12 @@ const openConfig = async () => {
     const agentsResp = await axios.get(`/agents`)
     availableAgents.value = agentsResp.data.agents || []
 
-    // Fetch available paths from tracking stats and webhooks
+    // Fetch available paths from tracking stats, webhooks, and dispatcher configs
     try {
-      const [statsResp, webhooksResp] = await Promise.allSettled([
+      const [statsResp, webhooksResp, dispatchersResp] = await Promise.allSettled([
         axios.get('/tracking/stats'),
-        axios.get('/webhooks-config')
+        axios.get('/webhooks-config'),
+        axios.get('/dispatcher-configs')
       ])
       const pathsSet = new Set([
         '/process',
@@ -569,15 +647,37 @@ const openConfig = async () => {
         '/webhook/n8n',
         '/webhook/trigger/personalizado'
       ])
+      const dispatchSet = new Set([
+        'trigger/personalizado',
+        'disparo/campaign'
+      ])
       if (statsResp.status === 'fulfilled' && statsResp.value.data?.by_path) {
-        statsResp.value.data.by_path.forEach(p => { if (p.path) pathsSet.add(p.path) })
+        statsResp.value.data.by_path.forEach(p => { 
+          if (p.path) {
+            pathsSet.add(p.path)
+            dispatchSet.add(p.path)
+          }
+        })
       }
       if (webhooksResp.status === 'fulfilled' && Array.isArray(webhooksResp.value.data)) {
         webhooksResp.value.data.forEach(w => {
-          if (w.path) pathsSet.add(w.path.startsWith('/') ? w.path : `/webhook/${w.path}`)
+          if (w.path) {
+            const formatted = w.path.startsWith('/') ? w.path : `/webhook/${w.path}`
+            pathsSet.add(formatted)
+            dispatchSet.add(w.path)
+          }
+        })
+      }
+      if (dispatchersResp.status === 'fulfilled' && dispatchersResp.value.data?.configs) {
+        dispatchersResp.value.data.configs.forEach(d => {
+          if (d.path) {
+            pathsSet.add(d.path)
+            dispatchSet.add(d.path)
+          }
         })
       }
       availablePaths.value = Array.from(pathsSet).sort()
+      availableDispatchPaths.value = Array.from(dispatchSet).sort()
     } catch (err) {
       console.error('Failed to fetch paths', err)
     }
@@ -598,6 +698,7 @@ const openConfig = async () => {
       config.value.allowed_endpoints = configResp.data.allowed_endpoints || []
       config.value.crm_mapping = configResp.data.crm_mapping || []
       config.value.metrics_mapping = configResp.data.metrics_mapping || []
+      config.value.auto_dispatch_mapping = configResp.data.auto_dispatch_mapping || []
     }
     
     configDialog.value = true
@@ -612,6 +713,9 @@ const addMapping = (type) => {
     config.value.crm_mapping.push({ dest_key: '', source_path: '' })
   } else if (type === 'metrics') {
     config.value.metrics_mapping.push({ dest_key: '', source_path: '' })
+  } else if (type === 'disparos') {
+    if (!config.value.auto_dispatch_mapping) config.value.auto_dispatch_mapping = []
+    config.value.auto_dispatch_mapping.push({ path: '', type_id: '', label: '' })
   }
 }
 
@@ -620,6 +724,8 @@ const removeMapping = (type, index) => {
     config.value.crm_mapping.splice(index, 1)
   } else if (type === 'metrics') {
     config.value.metrics_mapping.splice(index, 1)
+  } else if (type === 'disparos') {
+    config.value.auto_dispatch_mapping.splice(index, 1)
   }
 }
 

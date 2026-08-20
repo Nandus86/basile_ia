@@ -68,7 +68,7 @@
         </v-card-title>
         
         <v-card-text class="pa-6" style="background: rgba(0,0,0,0.2);">
-          <div class="mb-6 d-flex ga-4">
+          <div class="mb-6 d-flex flex-wrap ga-3">
             <v-chip color="info" variant="flat" v-if="selectedReport?.stats?.total_churches_processed">
               <v-icon start>mdi-church</v-icon>
               {{ selectedReport?.stats?.total_churches_processed }} Igrejas Analisadas
@@ -77,7 +77,42 @@
               <v-icon start>mdi-file-document-multiple</v-icon>
               {{ selectedReport?.stats?.total_sub_reports_processed }} Relatórios Consolidados
             </v-chip>
+            <v-chip color="purple" variant="flat" v-if="selectedReport?.stats?.total_disparos_automaticos">
+              <v-icon start>mdi-bullhorn</v-icon>
+              {{ selectedReport?.stats?.total_disparos_automaticos }} Membros Atingidos (Disparos Globais)
+            </v-chip>
           </div>
+
+          <!-- Tabela de Detalhamento dos Disparos Globais -->
+          <v-card v-if="selectedReport?.stats?.disparos_automaticos?.length" variant="outlined" class="mb-6 bg-surface-light border">
+            <v-card-item class="py-2">
+              <v-card-title class="text-subtitle-2 font-weight-bold d-flex align-center">
+                <v-icon start color="purple" size="small">mdi-bullhorn-outline</v-icon>
+                Disparos Automáticos Globais do Sistema
+              </v-card-title>
+            </v-card-item>
+            <v-divider></v-divider>
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th class="text-left">Campanha / Ação</th>
+                  <th class="text-left">Endpoint</th>
+                  <th class="text-left">Type ID</th>
+                  <th class="text-right">Disparos (Lotes)</th>
+                  <th class="text-right">Membros Atingidos</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(disp, idx) in selectedReport.stats.disparos_automaticos" :key="idx">
+                  <td class="font-weight-medium">{{ disp.label }}</td>
+                  <td><code>{{ disp.path }}</code></td>
+                  <td><v-chip size="x-small" color="primary" variant="outlined">{{ disp.type_id }}</v-chip></td>
+                  <td class="text-right font-weight-bold">{{ disp.total_dispatches }}</td>
+                  <td class="text-right font-weight-bold text-purple">{{ disp.total_contacts }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </v-card>
 
           <div v-if="selectedReport?.report_content" class="report-content" style="white-space: pre-wrap; font-size: 15px; line-height: 1.6;">
             {{ selectedReport.report_content }}
