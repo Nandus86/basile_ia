@@ -340,7 +340,7 @@
                   : 'Este é o resultado gerado até a pausa (saída do bloco anterior ao Aguardar Resposta).' }}
               </v-alert>
               <div v-if="testResult.result" class="result-box pa-3 rounded">
-                <pre class="text-body-2" style="white-space: pre-wrap; overflow: auto; max-height: 400px; margin: 0;">{{ JSON.stringify(testResult.result, null, 2) }}</pre>
+                <pre class="text-body-2" style="white-space: pre-wrap; overflow: auto; max-height: 400px; margin: 0; color: #FFFFFF !important; font-family: monospace;">{{ JSON.stringify(testResult.result, null, 2) }}</pre>
               </div>
               <v-alert v-else type="warning" variant="tonal" density="compact">
                 Nenhum resultado de saída gerado.
@@ -376,7 +376,7 @@
                           ${{ b.output_key }}
                         </v-chip>
                       </div>
-                      <pre v-if="b.output !== undefined && b.output !== null" class="text-caption pa-2 rounded bg-surface-variant" style="white-space: pre-wrap; max-height: 250px; overflow: auto; border: 1px solid rgba(255,255,255,0.05); font-family: monospace;">{{ typeof b.output === 'object' ? JSON.stringify(b.output, null, 2) : b.output }}</pre>
+                      <pre v-if="b.output !== undefined && b.output !== null" class="block-output-pre text-caption pa-3 rounded" style="white-space: pre-wrap; max-height: 250px; overflow: auto; color: #FFFFFF !important; font-family: monospace;">{{ typeof b.output === 'object' ? JSON.stringify(b.output, null, 2) : b.output }}</pre>
                       <span v-else class="text-caption text-disabled font-italic">Nenhum retorno / saída gerada por este bloco.</span>
                     </div>
 
@@ -388,7 +388,7 @@
                           Metadados do Bloco
                         </v-expansion-panel-title>
                         <v-expansion-panel-text>
-                          <pre class="text-caption" style="white-space: pre-wrap; max-height: 150px; overflow: auto">{{ JSON.stringify({ block_id: b.block_id, block_type: b.block_type, status: b.status, output_key: b.output_key, duration_ms: b.duration_ms }, null, 2) }}</pre>
+                          <pre class="block-output-pre text-caption pa-2 rounded" style="white-space: pre-wrap; max-height: 150px; overflow: auto; color: #FFFFFF !important; font-family: monospace;">{{ JSON.stringify({ block_id: b.block_id, block_type: b.block_type, status: b.status, output_key: b.output_key, duration_ms: b.duration_ms }, null, 2) }}</pre>
                         </v-expansion-panel-text>
                       </v-expansion-panel>
                     </v-expansion-panels>
@@ -404,7 +404,7 @@
                     Contexto Completo (todos os blocos)
                   </v-expansion-panel-title>
                   <v-expansion-panel-text>
-                    <pre class="text-caption" style="white-space: pre-wrap; max-height: 400px; overflow: auto">{{ JSON.stringify(testResult.context, null, 2) }}</pre>
+                    <pre class="block-output-pre text-caption pa-3 rounded" style="white-space: pre-wrap; max-height: 400px; overflow: auto; color: #FFFFFF !important; font-family: monospace;">{{ JSON.stringify(testResult.context, null, 2) }}</pre>
                   </v-expansion-panel-text>
                 </v-expansion-panel>
               </v-expansion-panels>
@@ -1295,5 +1295,12 @@ function goBack() { router.push('/workflows') }
   border: 1px solid rgba(99, 102, 241, 0.3);
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
-.result-box pre { color: #A5F3FC; }
+.result-box pre { color: #FFFFFF !important; }
+
+.block-output-pre {
+  background-color: #12121A !important;
+  color: #FFFFFF !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+}
 </style>
