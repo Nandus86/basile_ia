@@ -1,5 +1,5 @@
 <template>
-  <div :class="['workflow-node', `node-${data.type || 'default'}`]" @dblclick="$emit('edit', id)">
+  <div :class="['workflow-node', `node-${data.type || 'default'}`, { 'node-executed-highlight': data?._isExecuted }]" @dblclick="$emit('edit', id)">
     <div class="node-header">
       <v-icon :color="nodeColor" size="18">{{ nodeIcon }}</v-icon>
       <span class="node-label">{{ label || data.label || 'Bloco' }}</span>
@@ -271,6 +271,23 @@ const openSubWorkflow = (workflowId) => {
 @keyframes pulse-border {
   0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
   50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+}
+
+/* Executed path red highlight & pulse glow */
+.node-executed-highlight {
+  border-color: #EF4444 !important;
+  box-shadow: 0 0 16px 4px rgba(239, 68, 68, 0.75), 0 0 0 2px #EF4444 !important;
+  animation: pulse-glow-red 2s infinite ease-in-out !important;
+  z-index: 10 !important;
+}
+
+@keyframes pulse-glow-red {
+  0%, 100% {
+    box-shadow: 0 0 12px 3px rgba(239, 68, 68, 0.65), 0 0 0 2px #EF4444;
+  }
+  50% {
+    box-shadow: 0 0 24px 8px rgba(239, 68, 68, 0.95), 0 0 0 3px #EF4444;
+  }
 }
 
 .handle-router-rule {

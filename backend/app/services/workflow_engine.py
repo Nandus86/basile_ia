@@ -1377,6 +1377,7 @@ class WorkflowEngine:
                     'status': block_status,
                     'output_key': output_key,
                     'duration_ms': block_duration,
+                    'output': make_json_safe(block_result),
                     'error': block_error,
                 }
                 blocks_log.append(block_log)

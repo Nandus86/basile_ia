@@ -355,10 +355,43 @@
                     <v-icon :color="b.status === 'success' ? 'green' : 'red'" size="16" class="mr-2">
                       {{ b.status === 'success' ? 'mdi-check-circle' : 'mdi-close-circle' }}
                     </v-icon>
-                    {{ b.label || b.block_id }} ({{ b.block_type }}) — {{ b.duration_ms }}ms
+                    <span class="font-weight-medium mr-2">{{ b.label || b.block_id }}</span>
+                    <v-chip size="x-small" variant="outlined" color="primary" class="mr-2">{{ b.block_type }}</v-chip>
+                    <span class="text-caption text-medium-emphasis ml-auto">{{ b.duration_ms }}ms</span>
                   </v-expansion-panel-title>
-                  <v-expansion-panel-text>
-                    <pre class="text-caption" style="white-space: pre-wrap; max-height: 200px; overflow: auto">{{ JSON.stringify(b, null, 2) }}</pre>
+                  <v-expansion-panel-text class="pt-2">
+                    <!-- Error alert if failed -->
+                    <v-alert v-if="b.error" type="error" density="compact" variant="tonal" class="mb-3">
+                      <strong>Erro:</strong> {{ b.error }}
+                    </v-alert>
+
+                    <!-- Block Output / Result -->
+                    <div class="mb-2">
+                      <div class="d-flex align-center justify-space-between mb-1">
+                        <span class="text-caption font-weight-bold text-medium-emphasis">
+                          <v-icon size="14" class="mr-1" color="primary">mdi-code-json</v-icon>
+                          Resultado / Saída do Bloco (output)
+                        </span>
+                        <v-chip v-if="b.output_key" size="x-small" variant="flat" color="surface-variant">
+                          ${{ b.output_key }}
+                        </v-chip>
+                      </div>
+                      <pre v-if="b.output !== undefined && b.output !== null" class="text-caption pa-2 rounded bg-surface-variant" style="white-space: pre-wrap; max-height: 250px; overflow: auto; border: 1px solid rgba(255,255,255,0.05); font-family: monospace;">{{ typeof b.output === 'object' ? JSON.stringify(b.output, null, 2) : b.output }}</pre>
+                      <span v-else class="text-caption text-disabled font-italic">Nenhum retorno / saída gerada por este bloco.</span>
+                    </div>
+
+                    <!-- Metadata details -->
+                    <v-expansion-panels variant="inset" density="compact" class="mt-2">
+                      <v-expansion-panel>
+                        <v-expansion-panel-title class="text-caption py-1" style="min-height: 32px;">
+                          <v-icon size="14" class="mr-1">mdi-information-outline</v-icon>
+                          Metadados do Bloco
+                        </v-expansion-panel-title>
+                        <v-expansion-panel-text>
+                          <pre class="text-caption" style="white-space: pre-wrap; max-height: 150px; overflow: auto">{{ JSON.stringify({ block_id: b.block_id, block_type: b.block_type, status: b.status, output_key: b.output_key, duration_ms: b.duration_ms }, null, 2) }}</pre>
+                        </v-expansion-panel-text>
+                      </v-expansion-panel>
+                    </v-expansion-panels>
                   </v-expansion-panel-text>
                 </v-expansion-panel>
               </v-expansion-panels>
@@ -379,6 +412,9 @@
           </v-window>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
+          <v-btn v-if="testResult" variant="text" color="grey" prepend-icon="mdi-broom" @click="clearExecutionHighlights">
+            Limpar Destaque
+          </v-btn>
           <v-spacer></v-spacer>
           <v-btn variant="text" @click="showTestDialog = false">Fechar</v-btn>
           <v-btn color="primary" @click="runTest" :loading="testing" prepend-icon="mdi-play">Executar</v-btn>
@@ -1111,6 +1147,7 @@ async function runTest() {
       execution_id: exec.id,
       current_block_id: exec.current_block_id,
     }
+    applyExecutionHighlights(exec.blocks_executed || [])
   } catch (e) {
     testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0 }
   } finally { testing.value = false }
@@ -1147,6 +1184,7 @@ async function submitSimulatedResponse(responseVal) {
       execution_id: exec.id,
       current_block_id: exec.current_block_id,
     }
+    applyExecutionHighlights(exec.blocks_executed || [])
     simulatedInputText.value = ''
   } catch (e) {
     testResult.value = {
@@ -1157,6 +1195,86 @@ async function submitSimulatedResponse(responseVal) {
   } finally {
     resuming.value = false
   }
+}
+
+function applyExecutionHighlights(executedBlocks) {
+  if (!executedBlocks || !executedBlocks.length) return
+  const executedIds = new Set(executedBlocks.map(b => b.block_id))
+  
+  // 1. Highlight executed nodes
+  nodes.value = nodes.value.map(n => ({
+    ...n,
+    data: {
+      ...n.data,
+      _isExecuted: executedIds.has(n.id)
+    }
+  }))
+  
+  // 2. Highlight traversed edges
+  const executedPairs = new Set()
+  for (let i = 0; i < executedBlocks.length - 1; i++) {
+    executedPairs.add(`${executedBlocks[i].block_id}->${executedBlocks[i + 1].block_id}`)
+  }
+  
+  edges.value = edges.value.map(e => {
+    const isTraversed = executedPairs.has(`${e.source}->${e.target}`)
+    if (isTraversed) {
+      return {
+        ...e,
+        animated: true,
+        style: {
+          ...(e.style || {}),
+          stroke: '#EF4444',
+          strokeWidth: 3.5,
+          filter: 'drop-shadow(0 0 6px rgba(239, 68, 68, 0.85))'
+        }
+      }
+    } else {
+      const sourceHandleVal = e.sourceHandle || e.label || null
+      const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match')
+        ? '#10B981'
+        : (sourceHandleVal === 'false' || sourceHandleVal === 'default')
+          ? '#EF4444'
+          : (e.data?.color || '#6366F1')
+      return {
+        ...e,
+        animated: false,
+        style: {
+          stroke: defaultColor,
+          strokeWidth: 2,
+          opacity: 0.35
+        }
+      }
+    }
+  })
+}
+
+function clearExecutionHighlights() {
+  nodes.value = nodes.value.map(n => ({
+    ...n,
+    data: {
+      ...n.data,
+      _isExecuted: false
+    }
+  }))
+  edges.value = edges.value.map(e => {
+    const sourceHandleVal = e.sourceHandle || e.label || null
+    const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match')
+      ? '#10B981'
+      : (sourceHandleVal === 'false' || sourceHandleVal === 'default')
+        ? '#EF4444'
+        : (e.data?.color || '#6366F1')
+    return {
+      ...e,
+      animated: true,
+      style: {
+        stroke: defaultColor,
+        strokeWidth: 2,
+        opacity: 1.0,
+        filter: 'none'
+      }
+    }
+  })
 }
 
 function goBack() { router.push('/workflows') }
