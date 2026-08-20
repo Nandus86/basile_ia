@@ -1303,6 +1303,9 @@ class WorkflowEngine:
                 execution.current_block_id = current_block_id
                 await self.db.commit()
 
+                # Extract input payload for logging before execution modifies context
+                block_input = self._extract_block_input(block, context, last_output_key)
+
                 # Execute block
                 bt0 = time.time()
                 block_result = None
@@ -1378,6 +1381,7 @@ class WorkflowEngine:
                     'status': block_status,
                     'output_key': output_key,
                     'duration_ms': block_duration,
+                    'input': make_json_safe(block_input),
                     'output': make_json_safe(block_result),
                     'error': block_error,
                 }
@@ -1555,6 +1559,213 @@ class WorkflowEngine:
     ) -> Any:
         """Execute a single block in isolation (for testing)."""
         return await self._execute_block(block, context)
+
+    def _extract_block_input(
+        self,
+        block: Dict[str, Any],
+        context: Dict[str, Any],
+        last_output_key: Optional[str] = None
+    ) -> Any:
+        """Extract and resolve the input payload/parameters sent to a block."""
+        block_type = block.get('type', '')
+        config = block.get('config', {})
+
+        try:
+            match block_type:
+                case 'trigger':
+                    return context.get('$trigger', {})
+
+                case 'http_request':
+                    method = config.get('method', 'GET').upper()
+                    url = resolve_template(config.get('url', ''), context)
+                    headers = {k: resolve_template(v, context) for k, v in config.get('headers', {}).items()} if config.get('headers') else None
+                    query_params = {k: resolve_template(v, context) for k, v in config.get('query_params', {}).items()} if config.get('query_params') else None
+                    
+                    body_type = config.get('body_type', 'none')
+                    body = None
+                    if body_type == 'json':
+                        body = resolve_template(config.get('body_json', {}), context)
+                    elif body_type == 'raw':
+                        raw = resolve_template(config.get('body_raw', ''), context)
+                        try:
+                            body = json.loads(raw) if isinstance(raw, str) else raw
+                        except Exception:
+                            body = raw
+                    elif body_type == 'form_data':
+                        body = {k: resolve_template(v, context) for k, v in config.get('body_form', {}).items()}
+                    
+                    return {
+                        "method": method,
+                        "url": url,
+                        "headers": headers,
+                        "query_params": query_params,
+                        "body": body,
+                    }
+
+                case 'agent':
+                    inline_agent = config.get('inline_agent')
+                    msg = resolve_template(config.get('message_template', ''), context)
+                    if inline_agent:
+                        return {
+                            "mode": "inline",
+                            "agent_name": inline_agent.get('name', 'Agente da Automação'),
+                            "model": inline_agent.get('model', 'gpt-4o-mini'),
+                            "provider_id": inline_agent.get('provider_id'),
+                            "message": msg,
+                            "system_prompt": inline_agent.get('system_prompt', ''),
+                            "mcp_ids": inline_agent.get('mcp_ids', []),
+                            "skill_ids": inline_agent.get('skill_ids', [])
+                        }
+                    else:
+                        ctx_mapping = {k: resolve_template(v, context) for k, v in config.get('context_mapping', {}).items()} if config.get('context_mapping') else None
+                        return {
+                            "mode": "existing",
+                            "agent_id": resolve_template(config.get('agent_id', ''), context),
+                            "message": msg,
+                            "context_mapping": ctx_mapping
+                        }
+
+                case 'mcp':
+                    mcp_id = resolve_template(config.get('mcp_id', ''), context)
+                    tool_name = resolve_template(config.get('tool_name', ''), context)
+                    params = resolve_template(config.get('parameters', {}), context)
+                    return {
+                        "mcp_id": mcp_id,
+                        "tool_name": tool_name,
+                        "parameters": params
+                    }
+
+                case 'transform':
+                    ops = []
+                    for op_def in config.get('operations', []):
+                        op = op_def.get('op', 'set')
+                        key = op_def.get('key', '')
+                        if op in ('set', 'stringify', 'parse_json'):
+                            val = resolve_template(op_def.get('value'), context)
+                            ops.append({"op": op, "key": key, "value_input": val})
+                        elif op in ('extract', 'map', 'flatten', 'join', 'merge'):
+                            source = resolve_template(op_def.get('source'), context)
+                            ops.append({
+                                "op": op,
+                                "key": key,
+                                "source_input": source,
+                                "param": op_def.get('path') or op_def.get('field') or op_def.get('separator')
+                            })
+                    return {"operations": ops}
+
+                case 'if':
+                    conds = []
+                    for cond in config.get('conditions', []):
+                        val_a = resolve_template(cond.get('field', ''), context)
+                        val_b = resolve_template(cond.get('value', ''), context)
+                        conds.append({
+                            "field_raw": cond.get('field'),
+                            "field_resolved": val_a,
+                            "operator": cond.get('operator'),
+                            "target_value": val_b
+                        })
+                    return {
+                        "combinator": config.get('combinator', 'and'),
+                        "conditions": conds
+                    }
+
+                case 'router':
+                    routes = []
+                    for r in config.get('routes', []):
+                        val_a = resolve_template(r.get('field', ''), context)
+                        val_b = resolve_template(r.get('value', ''), context)
+                        routes.append({
+                            "handle": r.get('handle'),
+                            "field_raw": r.get('field'),
+                            "field_resolved": val_a,
+                            "operator": r.get('operator'),
+                            "target_value": val_b
+                        })
+                    return {"routes": routes}
+
+                case 'filter':
+                    source = resolve_template(config.get('source_array', ''), context)
+                    val = resolve_template(config.get('value', ''), context)
+                    return {
+                        "source_count": len(source) if isinstance(source, list) else 0,
+                        "field": config.get('field'),
+                        "operator": config.get('operator'),
+                        "value": val
+                    }
+
+                case 'variables':
+                    resolved_vars = {k: resolve_template(v, context) for k, v in config.get('variables', {}).items()}
+                    return {"variables": resolved_vars}
+
+                case 'python':
+                    return {
+                        "code": config.get('code', ''),
+                        "available_context_keys": [k for k in context.keys() if not k.startswith('_')]
+                    }
+
+                case 'response':
+                    val = context.get(f'${last_output_key}') or context.get(last_output_key) if last_output_key else context.get('$trigger', {}).get('payload', {})
+                    endpoint = resolve_template(config.get('endpoint_url', ''), context) if config.get('endpoint_url') else None
+                    return {
+                        "source_output_key": last_output_key,
+                        "payload": val,
+                        "saida_direcionada": config.get('saida_direcionada', False),
+                        "endpoint_url": endpoint
+                    }
+
+                case 'delay':
+                    return {"seconds": config.get('seconds', 0)}
+
+                case 'wait_input':
+                    return {
+                        "prompt": resolve_template(config.get('prompt', ''), context),
+                        "timeout_seconds": config.get('timeout_seconds', 7200)
+                    }
+
+                case 'vector_insert':
+                    return {
+                        "base_id": config.get('base_id'),
+                        "text": resolve_template(config.get('text', ''), context),
+                        "metadata": {k: resolve_template(v, context) for k, v in config.get('metadata', {}).items()}
+                    }
+
+                case 'audio_transcribe':
+                    return {
+                        "file_path": resolve_template(config.get('file_path', ''), context),
+                        "model": config.get('model', 'whisper-1')
+                    }
+
+                case 'text_to_speech':
+                    return {
+                        "input_text": resolve_template(config.get('input_text', ''), context),
+                        "model": config.get('model', 'tts-1'),
+                        "voice": config.get('voice', 'alloy')
+                    }
+
+                case 'base64_to_file':
+                    return {
+                        "base64_input_length": len(str(resolve_template(config.get('base64_input', ''), context))),
+                        "file_prefix": config.get('file_prefix', 'media')
+                    }
+
+                case 'sub_workflow':
+                    return {
+                        "workflow_id": resolve_template(config.get('workflow_id', ''), context),
+                        "input_payload": resolve_template(config.get('input_mapping', {}), context)
+                    }
+
+                case 'agentic_workflow':
+                    return {
+                        "system_prompt": resolve_template(config.get('system_prompt', ''), context),
+                        "task_prompt": resolve_template(config.get('task_prompt', ''), context),
+                        "model": config.get('model', 'gpt-4o-mini')
+                    }
+
+                case _:
+                    return config
+        except Exception as err:
+            logger.debug(f"[WorkflowEngine] Error extracting input for block {block.get('id')}: {err}")
+            return config
 
     # ── Block executors ────────────────────────────────────────
 

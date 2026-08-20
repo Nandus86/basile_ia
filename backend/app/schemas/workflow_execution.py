@@ -15,6 +15,8 @@ class BlockExecutionDetail(BaseModel):
     status: str  # success, failed, skipped
     output_key: Optional[str] = None
     duration_ms: Optional[int] = None
+    input: Optional[Any] = None
+    output: Optional[Any] = None
     error: Optional[str] = None
 
 

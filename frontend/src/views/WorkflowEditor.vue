@@ -371,6 +371,17 @@
                       <strong>Erro:</strong> {{ b.error }}
                     </v-alert>
 
+                    <!-- Block Input / Sent Data -->
+                    <div v-if="b.input !== undefined && b.input !== null" class="mb-3">
+                      <div class="d-flex align-center justify-space-between mb-1">
+                        <span class="text-caption font-weight-bold text-medium-emphasis">
+                          <v-icon size="14" class="mr-1" color="amber-darken-1">mdi-arrow-right-bold-box-outline</v-icon>
+                          Envio / Entrada do Bloco (input)
+                        </span>
+                      </div>
+                      <pre class="block-output-pre text-caption pa-3 rounded" style="white-space: pre-wrap; max-height: 250px; overflow: auto; color: #FFFFFF !important; font-family: monospace;">{{ typeof b.input === 'object' ? JSON.stringify(b.input, null, 2) : b.input }}</pre>
+                    </div>
+
                     <!-- Block Output / Result -->
                     <div class="mb-2">
                       <div class="d-flex align-center justify-space-between mb-1">
