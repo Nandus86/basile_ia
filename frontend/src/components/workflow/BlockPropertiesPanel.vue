@@ -417,32 +417,36 @@
         <template v-if="agentMode === 'inline'">
           <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
             <v-icon start size="14">mdi-information</v-icon>
-            Crie um agente simples diretamente para esta automação. Ele não será salvo na lista de agentes do sistema.
+            Crie um agente personalizado e limpo para esta automação, com controle total de provedor, ferramentas (MCPs) e habilidades (Skills).
           </v-alert>
           <v-text-field
             v-model="inlineAgent.name"
             label="Nome do Agente"
-            placeholder="Formatador de Dados"
+            placeholder="Agente da Automação"
             variant="outlined"
             density="compact"
             class="mb-3"
             hide-details
             @update:model-value="onInlineAgentChange"
           ></v-text-field>
-          <v-textarea
-            v-model="inlineAgent.system_prompt"
-            label="System Prompt"
-            placeholder="Você é um assistente que formata dados recebidos do workflow..."
-            variant="outlined"
-            density="compact"
-            rows="8"
-            class="mb-3 monospace-field"
-            hint="Instrução principal do agente. O contexto do workflow será injetado automaticamente."
-            persistent-hint
-            @update:model-value="onInlineAgentChange"
-          ></v-textarea>
+
           <v-row dense class="mb-1">
-            <v-col cols="12">
+            <v-col cols="6">
+              <v-select
+                v-model="inlineAgent.provider_id"
+                :items="aiProviders"
+                item-title="name"
+                item-value="id"
+                label="Provedor de IA"
+                variant="outlined"
+                density="compact"
+                clearable
+                placeholder="Padrão (OpenAI / OpenRouter)"
+                hide-details
+                @update:model-value="onProviderChange"
+              ></v-select>
+            </v-col>
+            <v-col cols="6">
               <v-combobox
                 v-model="inlineAgent.model"
                 :items="inlineModelOptions"
@@ -454,7 +458,8 @@
               ></v-combobox>
             </v-col>
           </v-row>
-          <v-row dense class="mb-3">
+
+          <v-row dense class="mb-2">
             <v-col cols="6">
               <v-text-field
                 v-model.number="inlineAgent.temperature"
@@ -484,6 +489,81 @@
               ></v-text-field>
             </v-col>
           </v-row>
+
+          <!-- MCP Tools Selection in Tags -->
+          <v-autocomplete
+            v-model="inlineAgent.mcp_ids"
+            :items="mcps"
+            item-title="name"
+            item-value="id"
+            label="MCPs / Ferramentas Disponíveis"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            class="mb-3"
+            hint="Selecione as ferramentas e integrações MCP que este agente pode chamar"
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          >
+            <template v-slot:chip="{ props, item }">
+              <v-chip
+                v-bind="props"
+                size="small"
+                color="teal-darken-1"
+                variant="tonal"
+                prepend-icon="mdi-connection"
+              >
+                {{ item.raw.name }}
+              </v-chip>
+            </template>
+          </v-autocomplete>
+
+          <!-- Skills Selection in Tags -->
+          <v-autocomplete
+            v-model="inlineAgent.skill_ids"
+            :items="skills"
+            item-title="name"
+            item-value="id"
+            label="Skills / Habilidades Disponíveis"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            class="mb-3"
+            hint="Selecione as skills cujas instruções e capacidades serão fornecidas a este agente"
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          >
+            <template v-slot:chip="{ props, item }">
+              <v-chip
+                v-bind="props"
+                size="small"
+                color="indigo-darken-1"
+                variant="tonal"
+                prepend-icon="mdi-star-shooting"
+              >
+                {{ item.raw.name }}
+              </v-chip>
+            </template>
+          </v-autocomplete>
+
+          <v-textarea
+            v-model="inlineAgent.system_prompt"
+            label="System Prompt (Prompt Limpo)"
+            placeholder="Você é um assistente que processa os dados do workflow..."
+            variant="outlined"
+            density="compact"
+            rows="8"
+            class="mb-3 monospace-field"
+            hint="Instrução principal e direta do agente. Não contém nenhuma regra global herdada."
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          ></v-textarea>
         </template>
 
         <!-- Common fields (both modes) -->
@@ -1463,6 +1543,8 @@ const props = defineProps({
   hideClose: { type: Boolean, default: false },
   workflows: { type: Array, default: () => [] },
   mcps: { type: Array, default: () => [] },
+  skills: { type: Array, default: () => [] },
+  aiProviders: { type: Array, default: () => [] },
   currentWorkflowId: { type: String, default: null },
   informationBases: { type: Array, default: () => [] },
 })
@@ -1503,17 +1585,47 @@ const agentMode = ref(config.value.inline_agent ? 'inline' : 'existing')
 const inlineAgent = ref({
   name: config.value.inline_agent?.name || '',
   system_prompt: config.value.inline_agent?.system_prompt || '',
+  provider_id: config.value.inline_agent?.provider_id || null,
   model: config.value.inline_agent?.model || 'gpt-4o-mini',
   temperature: config.value.inline_agent?.temperature ?? 0.7,
   max_tokens: config.value.inline_agent?.max_tokens ?? 2000,
+  mcp_ids: config.value.inline_agent?.mcp_ids || [],
+  skill_ids: config.value.inline_agent?.skill_ids || [],
 })
 
-const inlineModelOptions = [
+const defaultModelOptions = [
   'gpt-4o-mini',
   'gpt-4o',
+  'gpt-4.1',
   'gpt-4-turbo',
-  'gpt-3.5-turbo',
+  'o3-mini',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
+  'deepseek-chat',
+  'deepseek-reasoner',
+  'anthropic/claude-3.5-sonnet',
+  'google/gemini-2.5-flash',
 ]
+
+const inlineModelOptions = computed(() => {
+  if (inlineAgent.value.provider_id) {
+    const prov = props.aiProviders.find(p => p.id === inlineAgent.value.provider_id)
+    if (prov && prov.default_model) {
+      return [prov.default_model, ...defaultModelOptions.filter(m => m !== prov.default_model)]
+    }
+  }
+  return defaultModelOptions
+})
+
+function onProviderChange(provId) {
+  if (provId) {
+    const prov = props.aiProviders.find(p => p.id === provId)
+    if (prov && prov.default_model && (!inlineAgent.value.model || inlineAgent.value.model === 'gpt-4o-mini')) {
+      inlineAgent.value.model = prov.default_model
+    }
+  }
+  onInlineAgentChange()
+}
 
 function onInlineAgentChange() {
   config.value.inline_agent = { ...inlineAgent.value }
@@ -1541,9 +1653,12 @@ watch(() => props.block.id, () => {
   inlineAgent.value = {
     name: config.value.inline_agent?.name || '',
     system_prompt: config.value.inline_agent?.system_prompt || '',
+    provider_id: config.value.inline_agent?.provider_id || null,
     model: config.value.inline_agent?.model || 'gpt-4o-mini',
     temperature: config.value.inline_agent?.temperature ?? 0.7,
     max_tokens: config.value.inline_agent?.max_tokens ?? 2000,
+    mcp_ids: config.value.inline_agent?.mcp_ids || [],
+    skill_ids: config.value.inline_agent?.skill_ids || [],
   }
 })
 

@@ -33,9 +33,10 @@ async def list_skills(
     limit: int = 100,
     search: str = None,
     group_id: UUID = None,
+    all: bool = False,
     db: AsyncSession = Depends(get_db)
 ):
-    """List all available skills, optionally filtered by group"""
+    """List all available skills, optionally filtered by group or all skills"""
     query = select(Skill)
     
     if search:
@@ -45,10 +46,11 @@ async def list_skills(
         )
         query = query.where(search_filter)
     
-    if group_id:
-        query = query.where(Skill.group_id == group_id)
-    else:
-        query = query.where(Skill.group_id.is_(None))
+    if not all:
+        if group_id:
+            query = query.where(Skill.group_id == group_id)
+        else:
+            query = query.where(Skill.group_id.is_(None))
         
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())

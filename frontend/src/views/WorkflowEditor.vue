@@ -180,6 +180,8 @@
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
                 :mcps="mcpsList"
+                :skills="skillsList"
+                :ai-providers="aiProvidersList"
                 :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
@@ -200,6 +202,8 @@
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
                 :mcps="mcpsList"
+                :skills="skillsList"
+                :ai-providers="aiProvidersList"
                 :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
@@ -222,6 +226,8 @@
                 :webhook-configs="webhooksList"
                 :workflows="workflowsList"
                 :mcps="mcpsList"
+                :skills="skillsList"
+                :ai-providers="aiProvidersList"
                 :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
@@ -605,6 +611,8 @@ const agentsList = ref([])
 const webhooksList = ref([])
 const workflowsList = ref([])
 const mcpsList = ref([])
+const skillsList = ref([])
+const aiProvidersList = ref([])
 const informationBasesList = ref([])
 const saving = ref(false)
 const selectedBlock = ref(null)
@@ -735,7 +743,7 @@ const handleKeyDown = (event) => {
 
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
-  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), fetchInformationBases(), loadWorkflow()])
+  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), fetchSkills(), fetchAiProviders(), fetchInformationBases(), loadWorkflow()])
 })
 
 onUnmounted(() => {
@@ -820,6 +828,12 @@ async function fetchWorkflows() {
 }
 async function fetchMcps() {
   try { mcpsList.value = (await axios.get('/mcp')).data.mcps || [] } catch {}
+}
+async function fetchSkills() {
+  try { skillsList.value = (await axios.get('/skills/', { params: { all: true, limit: 200 } })).data.skills || [] } catch {}
+}
+async function fetchAiProviders() {
+  try { aiProvidersList.value = (await axios.get('/ai-providers', { params: { limit: 100 } })).data.providers || [] } catch {}
 }
 async function fetchInformationBases() {
   try { informationBasesList.value = (await axios.get('/information-bases')).data.information_bases || [] } catch {}

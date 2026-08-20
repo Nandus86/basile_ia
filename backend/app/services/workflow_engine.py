@@ -1929,18 +1929,39 @@ class WorkflowEngine:
 
         # ── Inline Agent Mode ──────────────────────────────────────────
         if inline_agent and not agent_id:
-            inline_name = inline_agent.get('name', 'Agente Inline')
+            inline_name = inline_agent.get('name', 'Agente da Automação')
             inline_system_prompt = inline_agent.get('system_prompt', '')
             inline_model = inline_agent.get('model', 'gpt-4o-mini')
             inline_temperature = float(inline_agent.get('temperature', 0.7))
             inline_max_tokens = int(inline_agent.get('max_tokens', 2000))
+            provider_id = inline_agent.get('provider_id') or None
+            mcp_ids = inline_agent.get('mcp_ids', []) or []
+            skill_ids = inline_agent.get('skill_ids', []) or []
 
             if not inline_system_prompt:
                 raise ValueError("Inline agent block: 'system_prompt' is required")
 
-            logger.info(f"[WorkflowEngine] 🤖 Invoking INLINE agent '{inline_name}' (model={inline_model}) with message: {message[:100]}...")
+            logger.info(f"[WorkflowEngine] 🤖 Invoking INLINE agent '{inline_name}' (model={inline_model}, provider={provider_id}, mcps={len(mcp_ids)}, skills={len(skill_ids)}) with message: {message[:100]}...")
 
-            # Inject workflow context into system prompt
+            # 1. Inject Skills into system prompt if configured
+            skills_prompt = ""
+            if skill_ids:
+                from app.models.skill import Skill
+                clean_skill_ids = []
+                for sid in skill_ids:
+                    try:
+                        clean_skill_ids.append(UUID(str(sid)))
+                    except Exception:
+                        pass
+                if clean_skill_ids:
+                    skill_res = await self.db.execute(select(Skill).where(Skill.id.in_(clean_skill_ids), Skill.is_active == True))
+                    skills = skill_res.scalars().all()
+                    for sk in skills:
+                        if sk.content_md:
+                            skills_prompt += f"\n\n---\n\n## 🔹 HABILIDADE / SKILL ATIVA: {sk.name}\n\n{sk.content_md}\n\n---\n"
+                    logger.info(f"[WorkflowEngine] 💡 Injected {len(skills)} skill(s) into inline agent prompt")
+
+            # 2. Inject workflow context into system prompt
             workflow_context_str = ""
             if config.get('inject_full_context', True):
                 wf_ctx = {
@@ -1957,33 +1978,131 @@ class WorkflowEngine:
                     except Exception:
                         workflow_context_str = ""
 
-            full_system_prompt = inline_system_prompt + workflow_context_str
+            full_system_prompt = inline_system_prompt + skills_prompt + workflow_context_str
 
             try:
-                from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
-                from langchain_core.messages import SystemMessage, HumanMessage
-                from app.config import settings
+                from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+                from langchain_core.runnables import RunnableConfig
+                from app.config import settings, get_langfuse_callback
+                from app.orchestrator.agent_factory import AgentFactory
 
-                # Determine provider (OpenRouter vs OpenAI)
-                is_openrouter = "/" in inline_model
-                llm_kwargs = {
+                # 3. Load custom AIProvider if specified
+                provider_obj = None
+                if provider_id:
+                    from app.models.ai_provider import AIProvider
+                    try:
+                        prov_res = await self.db.execute(select(AIProvider).where(AIProvider.id == UUID(str(provider_id))))
+                        provider_obj = prov_res.scalar_one_or_none()
+                        if provider_obj:
+                            logger.info(f"[WorkflowEngine] 🌐 Using custom provider '{provider_obj.name}' for inline agent '{inline_name}'")
+                    except Exception as prov_err:
+                        logger.warning(f"[WorkflowEngine] Could not load provider {provider_id}: {prov_err}")
+
+                # 4. Instantiate LLM via AgentFactory (handles Gemini, DeepSeek, Custom Providers, OpenRouter, OpenAI, timeouts, etc.)
+                factory = AgentFactory(self.db)
+                agent_cfg = {
+                    "id": f"inline_{inline_name}",
+                    "name": inline_name,
                     "model": inline_model,
                     "temperature": inline_temperature,
                     "max_tokens": inline_max_tokens,
+                    "provider": provider_obj,
+                    "config": inline_agent.get("config", {}) or {},
                 }
-                if is_openrouter:
-                    llm_kwargs["api_key"] = settings.OPENROUTER_API_KEY
-                    llm_kwargs["base_url"] = "https://openrouter.ai/api/v1"
-                else:
-                    llm_kwargs["api_key"] = settings.OPENAI_API_KEY
+                llm = factory.create_llm(agent_cfg, session_id=session_id)
 
-                llm = ChatOpenAI(**llm_kwargs)
-                messages = [
-                    SystemMessage(content=full_system_prompt),
-                    HumanMessage(content=message),
-                ]
-                response = await llm.ainvoke(messages)
-                response_text = response.content if response else ""
+                # 5. Langfuse & observability setup
+                callbacks = []
+                langfuse_cb = get_langfuse_callback()
+                if langfuse_cb:
+                    callbacks.append(langfuse_cb)
+
+                user_phone = None
+                sess_id = session_id
+                langfuse_tags = ['workflow-agent', 'inline-agent']
+
+                trigger_payload = context.get('$trigger', {}).get('payload', {})
+                if isinstance(trigger_payload, dict):
+                    user_phone = trigger_payload.get('member', {}).get('phone') if isinstance(trigger_payload.get('member'), dict) else trigger_payload.get('phone')
+                    if not sess_id:
+                        sess_id = trigger_payload.get('session_id')
+                    instancia_id = trigger_payload.get('global', {}).get('instancia') if isinstance(trigger_payload.get('global'), dict) else None
+                    church_id = trigger_payload.get('church', {}).get('_id') if isinstance(trigger_payload.get('church'), dict) else None
+                    if instancia_id:
+                        langfuse_tags.append(f"instancia:{instancia_id}")
+                    if church_id:
+                        langfuse_tags.append(f"church:{church_id}")
+
+                metadata = {
+                    'agent_name': inline_name,
+                    'model': inline_model,
+                    'block_type': 'inline_agent',
+                }
+                if user_phone:
+                    metadata['langfuse_user_id'] = str(user_phone)
+                if sess_id:
+                    metadata['langfuse_session_id'] = str(sess_id)
+                if langfuse_tags:
+                    metadata['langfuse_tags'] = langfuse_tags
+
+                run_config = RunnableConfig(
+                    run_name=f'Workflow Inline Agent ({inline_name})',
+                    metadata=metadata,
+                    tags=langfuse_tags,
+                    callbacks=callbacks if callbacks else None,
+                )
+
+                # 6. Load MCP tools if configured
+                tools = []
+                if mcp_ids:
+                    from app.models.mcp import MCP
+                    from app.services.mcp_tools import MCPToolExecutor
+                    clean_mcp_ids = []
+                    for mid in mcp_ids:
+                        try:
+                            clean_mcp_ids.append(UUID(str(mid)))
+                        except Exception:
+                            pass
+                    if clean_mcp_ids:
+                        mcp_res = await self.db.execute(select(MCP).where(MCP.id.in_(clean_mcp_ids), MCP.is_active == True))
+                        mcps = mcp_res.scalars().all()
+                        executor = MCPToolExecutor(self.db, context_data)
+                        for m in mcps:
+                            mcp_tools = await executor.create_langchain_tools(m)
+                            tools.extend(mcp_tools)
+                        logger.info(f"[WorkflowEngine] 🧰 Inline agent '{inline_name}' loaded {len(tools)} MCP tool(s)")
+
+                # 7. Execute ReAct agent if tools are present, else direct LLM call
+                if tools:
+                    from langgraph.prebuilt import create_react_agent
+                    react_agent = create_react_agent(
+                        model=llm,
+                        tools=tools,
+                        prompt=full_system_prompt,
+                    )
+                    result = await react_agent.ainvoke(
+                        {'messages': [HumanMessage(content=message)]},
+                        config=run_config,
+                    )
+                    exec_messages = result.get('messages', [])
+                    response_text = ''
+                    for msg in reversed(exec_messages):
+                        if isinstance(msg, AIMessage) and msg.content:
+                            if not (hasattr(msg, 'tool_calls') and msg.tool_calls):
+                                response_text = msg.content
+                                break
+                    if not response_text and exec_messages:
+                        last_msg = exec_messages[-1]
+                        response_text = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
+                else:
+                    response = await llm.ainvoke(
+                        [
+                            SystemMessage(content=full_system_prompt),
+                            HumanMessage(content=message),
+                        ],
+                        config=run_config,
+                    )
+                    response_text = response.content if response else ""
 
                 logger.info(f"[WorkflowEngine] ✅ Inline agent '{inline_name}' responded ({len(response_text)} chars)")
 
