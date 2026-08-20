@@ -182,6 +182,7 @@
                 :mcps="mcpsList"
                 :skills="skillsList"
                 :ai-providers="aiProvidersList"
+                :models="modelsList"
                 :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
@@ -204,6 +205,7 @@
                 :mcps="mcpsList"
                 :skills="skillsList"
                 :ai-providers="aiProvidersList"
+                :models="modelsList"
                 :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
@@ -228,6 +230,7 @@
                 :mcps="mcpsList"
                 :skills="skillsList"
                 :ai-providers="aiProvidersList"
+                :models="modelsList"
                 :information-bases="informationBasesList"
                 :current-workflow-id="workflowId"
                 :context-keys="availableContextKeys"
@@ -624,6 +627,7 @@ const workflowsList = ref([])
 const mcpsList = ref([])
 const skillsList = ref([])
 const aiProvidersList = ref([])
+const modelsList = ref([])
 const informationBasesList = ref([])
 const saving = ref(false)
 const selectedBlock = ref(null)
@@ -754,7 +758,7 @@ const handleKeyDown = (event) => {
 
 onMounted(async () => {
   window.addEventListener('keydown', handleKeyDown)
-  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), fetchSkills(), fetchAiProviders(), fetchInformationBases(), loadWorkflow()])
+  await Promise.all([fetchAgents(), fetchWebhooks(), fetchWorkflows(), fetchMcps(), fetchSkills(), fetchAiProviders(), fetchModels(), fetchInformationBases(), loadWorkflow()])
 })
 
 onUnmounted(() => {
@@ -845,6 +849,9 @@ async function fetchSkills() {
 }
 async function fetchAiProviders() {
   try { aiProvidersList.value = (await axios.get('/ai-providers', { params: { limit: 100 } })).data.providers || [] } catch {}
+}
+async function fetchModels() {
+  try { modelsList.value = (await axios.get('/models')).data.models || [] } catch {}
 }
 async function fetchInformationBases() {
   try { informationBasesList.value = (await axios.get('/information-bases')).data.information_bases || [] } catch {}

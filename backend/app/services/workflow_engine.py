@@ -2198,17 +2198,20 @@ class WorkflowEngine:
                 from app.config import settings, get_langfuse_callback
                 from app.orchestrator.agent_factory import AgentFactory
 
-                # 3. Load custom AIProvider if specified
+                # 3. Load provider (native string or custom DB AIProvider)
                 provider_obj = None
                 if provider_id:
-                    from app.models.ai_provider import AIProvider
-                    try:
-                        prov_res = await self.db.execute(select(AIProvider).where(AIProvider.id == UUID(str(provider_id))))
-                        provider_obj = prov_res.scalar_one_or_none()
-                        if provider_obj:
-                            logger.info(f"[WorkflowEngine] 🌐 Using custom provider '{provider_obj.name}' for inline agent '{inline_name}'")
-                    except Exception as prov_err:
-                        logger.warning(f"[WorkflowEngine] Could not load provider {provider_id}: {prov_err}")
+                    if str(provider_id).lower() in ("openai", "google", "deepseek", "openrouter"):
+                        provider_obj = str(provider_id).lower()
+                    else:
+                        from app.models.ai_provider import AIProvider
+                        try:
+                            prov_res = await self.db.execute(select(AIProvider).where(AIProvider.id == UUID(str(provider_id))))
+                            provider_obj = prov_res.scalar_one_or_none()
+                            if provider_obj:
+                                logger.info(f"[WorkflowEngine] 🌐 Using custom provider '{provider_obj.name}' for inline agent '{inline_name}'")
+                        except Exception as prov_err:
+                            logger.warning(f"[WorkflowEngine] Could not load provider {provider_id}: {prov_err}")
 
                 # 4. Instantiate LLM via AgentFactory (handles Gemini, DeepSeek, Custom Providers, OpenRouter, OpenAI, timeouts, etc.)
                 factory = AgentFactory(self.db)

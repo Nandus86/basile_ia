@@ -434,14 +434,12 @@
             <v-col cols="6">
               <v-select
                 v-model="inlineAgent.provider_id"
-                :items="aiProviders"
-                item-title="name"
-                item-value="id"
+                :items="providerOptions"
+                item-title="title"
+                item-value="value"
                 label="Provedor de IA"
                 variant="outlined"
                 density="compact"
-                clearable
-                placeholder="Padrão (OpenAI / OpenRouter)"
                 hide-details
                 @update:model-value="onProviderChange"
               ></v-select>
@@ -450,6 +448,9 @@
               <v-combobox
                 v-model="inlineAgent.model"
                 :items="inlineModelOptions"
+                item-title="title"
+                item-value="value"
+                :return-object="false"
                 label="Modelo"
                 variant="outlined"
                 density="compact"
@@ -1545,6 +1546,7 @@ const props = defineProps({
   mcps: { type: Array, default: () => [] },
   skills: { type: Array, default: () => [] },
   aiProviders: { type: Array, default: () => [] },
+  models: { type: Array, default: () => [] },
   currentWorkflowId: { type: String, default: null },
   informationBases: { type: Array, default: () => [] },
 })
@@ -1585,7 +1587,7 @@ const agentMode = ref(config.value.inline_agent ? 'inline' : 'existing')
 const inlineAgent = ref({
   name: config.value.inline_agent?.name || '',
   system_prompt: config.value.inline_agent?.system_prompt || '',
-  provider_id: config.value.inline_agent?.provider_id || null,
+  provider_id: config.value.inline_agent?.provider_id || 'openai',
   model: config.value.inline_agent?.model || 'gpt-4o-mini',
   temperature: config.value.inline_agent?.temperature ?? 0.7,
   max_tokens: config.value.inline_agent?.max_tokens ?? 2000,
@@ -1593,35 +1595,101 @@ const inlineAgent = ref({
   skill_ids: config.value.inline_agent?.skill_ids || [],
 })
 
-const defaultModelOptions = [
-  'gpt-4o-mini',
-  'gpt-4o',
-  'gpt-4.1',
-  'gpt-4-turbo',
-  'o3-mini',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
-  'deepseek-chat',
-  'deepseek-reasoner',
-  'anthropic/claude-3.5-sonnet',
-  'google/gemini-2.5-flash',
-]
+const providerOptions = computed(() => {
+  const options = [
+    { title: '🟢 OpenAI', value: 'openai' },
+    { title: '🟡 Google Gemini', value: 'google' },
+    { title: '🟣 DeepSeek', value: 'deepseek' },
+    { title: '🔵 OpenRouter', value: 'openrouter' }
+  ]
+  
+  if (Array.isArray(props.aiProviders)) {
+    props.aiProviders.forEach(p => {
+      options.push({
+        title: `🌐 ${p.name}`,
+        value: p.id,
+        isCustom: true,
+        default_model: p.default_model
+      })
+    })
+  }
+  
+  return options
+})
 
 const inlineModelOptions = computed(() => {
+  const currentProv = inlineAgent.value.provider_id || 'openai'
+  
+  // 1. Try to get models from /models API filtered by provider
+  const filtered = (props.models || [])
+    .filter(m => m.provider === currentProv)
+    .map(m => ({
+      title: m.name || m.id,
+      value: m.id,
+      context_length: m.context_length
+    }))
+    
+  if (filtered.length > 0) return filtered
+
+  // 2. Custom DB Provider fallback
   if (inlineAgent.value.provider_id) {
-    const prov = props.aiProviders.find(p => p.id === inlineAgent.value.provider_id)
+    const prov = (props.aiProviders || []).find(p => p.id === inlineAgent.value.provider_id)
     if (prov && prov.default_model) {
-      return [prov.default_model, ...defaultModelOptions.filter(m => m !== prov.default_model)]
+      return [{ title: prov.default_model, value: prov.default_model }]
     }
   }
-  return defaultModelOptions
+
+  // 3. Static fallback per native provider if /models is still loading
+  if (currentProv === 'google') {
+    return [
+      { title: 'gemini-2.5-flash', value: 'gemini-2.5-flash' },
+      { title: 'gemini-2.5-pro', value: 'gemini-2.5-pro' },
+      { title: 'gemini-2.0-flash', value: 'gemini-2.0-flash' },
+      { title: 'gemini-1.5-flash', value: 'gemini-1.5-flash' },
+      { title: 'gemini-1.5-pro', value: 'gemini-1.5-pro' }
+    ]
+  }
+  if (currentProv === 'deepseek') {
+    return [
+      { title: 'deepseek-chat', value: 'deepseek-chat' },
+      { title: 'deepseek-reasoner', value: 'deepseek-reasoner' }
+    ]
+  }
+  if (currentProv === 'openrouter') {
+    return [
+      { title: 'anthropic/claude-3.5-sonnet', value: 'anthropic/claude-3.5-sonnet' },
+      { title: 'meta-llama/llama-3.3-70b-instruct', value: 'meta-llama/llama-3.3-70b-instruct' },
+      { title: 'google/gemini-2.5-flash', value: 'google/gemini-2.5-flash' }
+    ]
+  }
+  return [
+    { title: 'gpt-4o-mini', value: 'gpt-4o-mini' },
+    { title: 'gpt-4o', value: 'gpt-4o' },
+    { title: 'o3-mini', value: 'o3-mini' },
+    { title: 'o1-mini', value: 'o1-mini' }
+  ]
 })
 
 function onProviderChange(provId) {
-  if (provId) {
-    const prov = props.aiProviders.find(p => p.id === provId)
-    if (prov && prov.default_model && (!inlineAgent.value.model || inlineAgent.value.model === 'gpt-4o-mini')) {
+  if (!provId) {
+    inlineAgent.value.provider_id = 'openai'
+    provId = 'openai'
+  }
+  const available = (props.models || []).filter(m => m.provider === provId)
+  if (available.length > 0) {
+    inlineAgent.value.model = available[0].id
+  } else {
+    const prov = (props.aiProviders || []).find(p => p.id === provId)
+    if (prov && prov.default_model) {
       inlineAgent.value.model = prov.default_model
+    } else if (provId === 'google') {
+      inlineAgent.value.model = 'gemini-2.5-flash'
+    } else if (provId === 'deepseek') {
+      inlineAgent.value.model = 'deepseek-chat'
+    } else if (provId === 'openrouter') {
+      inlineAgent.value.model = 'anthropic/claude-3.5-sonnet'
+    } else {
+      inlineAgent.value.model = 'gpt-4o-mini'
     }
   }
   onInlineAgentChange()
@@ -1653,7 +1721,7 @@ watch(() => props.block.id, () => {
   inlineAgent.value = {
     name: config.value.inline_agent?.name || '',
     system_prompt: config.value.inline_agent?.system_prompt || '',
-    provider_id: config.value.inline_agent?.provider_id || null,
+    provider_id: config.value.inline_agent?.provider_id || 'openai',
     model: config.value.inline_agent?.model || 'gpt-4o-mini',
     temperature: config.value.inline_agent?.temperature ?? 0.7,
     max_tokens: config.value.inline_agent?.max_tokens ?? 2000,

@@ -415,7 +415,9 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         
         # 1. Checar se é Google Gemini (nativamente, com ou sem provider configurado)
         is_google = False
-        if provider and hasattr(provider, "is_active") and provider.is_active:
+        if provider == "google":
+            is_google = True
+        elif provider and hasattr(provider, "is_active") and provider.is_active:
             if hasattr(provider, "base_url") and provider.base_url and "generativelanguage.googleapis" in provider.base_url:
                 is_google = True
             elif hasattr(provider, "name") and provider.name and ("gemini" in provider.name.lower() or "google" in provider.name.lower()):
@@ -472,7 +474,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         else:
             # 4. Fallback para OpenRouter / OpenAI
             openrouter_specials = ["sambanova", "groq"]
-            is_openrouter = "/" in model_id or model_id in openrouter_specials
+            is_openrouter = provider == "openrouter" or "/" in model_id or model_id in openrouter_specials
 
             if is_openrouter:
                 # OpenRouter model
