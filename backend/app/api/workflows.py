@@ -208,6 +208,7 @@ async def execute_workflow(
             workflow_id=workflow_id,
             trigger_data=request.trigger_data,
             trigger_type="manual",
+            override_definition=request.definition,
         )
 
         # Check for early response

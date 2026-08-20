@@ -1147,10 +1147,29 @@ async function saveDefinition() {
 async function runTest() {
   testing.value = true; testResult.value = null; testResultTab.value = 'final'; simulatedInputText.value = ''
   try {
-    await saveDefinition()
+    const blocks = nodes.value.map(n => ({
+      id: n.id, type: n.data.type, label: n.data.label || n.label,
+      position: n.position, config: n.data.config || {},
+    }))
+    const edgesDef = edges.value.map(e => ({
+      id: e.id, source: e.source, target: e.target,
+      sourceHandle: e.sourceHandle || null, label: e.label || '',
+      style: e.style || null,
+    }))
+    const currentDefinition = { 
+      version: '2.0', 
+      blocks, 
+      edges: edgesDef, 
+      variables: workflow.value.definition?.variables || {},
+      settings: workflow.value.definition?.settings || { auto_run: false }
+    }
+
     let payload = {}
     try { payload = JSON.parse(testPayloadJson.value) } catch {}
-    const res = await axios.post(`/workflows/${workflowId}/execute`, { trigger_data: payload })
+    const res = await axios.post(`/workflows/${workflowId}/execute`, { 
+      trigger_data: payload,
+      definition: currentDefinition
+    })
     const exec = res.data
     testResult.value = {
       status: exec.status, duration_ms: exec.duration_ms,

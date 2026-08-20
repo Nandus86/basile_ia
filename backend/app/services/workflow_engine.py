@@ -890,6 +890,7 @@ class WorkflowEngine:
         trigger_data: Dict[str, Any],
         trigger_type: str = "manual",
         recursion_depth: int = 0,
+        override_definition: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute a workflow from start to finish and return the final context."""
         if recursion_depth > 5:
@@ -904,7 +905,7 @@ class WorkflowEngine:
         if not workflow.is_active:
             raise ValueError(f"Workflow '{workflow.name}' is inactive")
 
-        definition = workflow.definition or {}
+        definition = override_definition if override_definition is not None else (workflow.definition or {})
         blocks = {b['id']: b for b in definition.get('blocks', [])}
         edges = definition.get('edges', [])
 

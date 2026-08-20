@@ -22,6 +22,7 @@ class WorkflowExecuteRequest(BaseModel):
     """Request to execute a workflow manually"""
     trigger_data: Dict[str, Any] = Field(default_factory=dict, description="Payload to inject as $trigger.payload")
     async_mode: bool = Field(default=False, description="If true, execute in background and return immediately")
+    definition: Optional[Dict[str, Any]] = Field(None, description="Optional in-memory definition to test without altering the workflow in database")
 
 
 class WorkflowTestBlockRequest(BaseModel):
