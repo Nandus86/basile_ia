@@ -1641,17 +1641,17 @@
                   </v-col>
                 </v-row>
 
-                <h3 class="text-subtitle-1 font-weight-bold mt-4 mb-2">Fallback Model</h3>
+                <h3 class="text-subtitle-1 font-weight-bold mt-4 mb-2">Fallback & Mensagem de Contingência</h3>
                 <v-card variant="outlined" class="pa-3 mb-4">
                   <div class="d-flex align-center mb-2">
                     <v-switch
                       v-model="resilienceData.fallback_enabled"
-                      label="Habilitar Fallback"
+                      label="Habilitar IA de Fallback"
                       color="warning"
                       hide-details
                       class="mr-4"
                     ></v-switch>
-                    <span class="text-caption text-medium-emphasis">Usa modelo alternativo se o principal falhar</span>
+                    <span class="text-caption text-medium-emphasis">Executa modelo secundário caso o principal sofra timeout ou erro</span>
                   </div>
                   
                   <v-expand-transition>
@@ -1695,6 +1695,18 @@
                       </v-row>
                     </div>
                   </v-expand-transition>
+
+                  <v-divider class="my-3"></v-divider>
+
+                  <v-textarea
+                    v-model="resilienceData.fallback_static_message"
+                    label="Mensagem Padrão de Contingência (Último Nível de Segurança)"
+                    rows="2"
+                    auto-grow
+                    placeholder="Desculpe, tive uma instabilidade temporária de conexão ao processar sua mensagem. Você poderia tentar novamente em instantes?"
+                    hint="Mensagem amigável enviada caso todas as tentativas de IA falhem ou ocorra timeout. NUNCA encerra o atendimento."
+                    persistent-hint
+                  ></v-textarea>
                 </v-card>
 
                 <h3 class="text-subtitle-1 font-weight-bold mt-4 mb-2">Conversational HITL (WhatsApp / Webhook)</h3>
@@ -2854,6 +2866,7 @@ const resilienceData = reactive({
   fallback_enabled: false,
   fallback_model: 'gpt-4o-mini',
   fallback_temperature: 0.7,
+  fallback_static_message: '',
   human_approval_enabled: false,
   human_approval_timeout_seconds: 300,
   hitl_user_approval_enabled: false,
@@ -3323,6 +3336,25 @@ function resetForm() {
   fewShotConfig.use_example_selector = false
   fewShotConfig.max_examples = 5
   fewShotExamples.value = []
+
+  Object.assign(resilienceData, {
+    max_retries: 3,
+    retry_delay_seconds: 1.0,
+    retry_exponential_backoff: true,
+    timeout_seconds: 120,
+    fallback_enabled: false,
+    fallback_model: 'gpt-4o-mini',
+    fallback_temperature: 0.7,
+    fallback_static_message: '',
+    human_approval_enabled: false,
+    human_approval_timeout_seconds: 300,
+    hitl_user_approval_enabled: false,
+    hitl_admin_approval_enabled: false,
+    hitl_admin_contact: '',
+    hitl_message_template: '',
+    interrupt_before_nodes: [],
+    verbose_logging: false
+  })
 }
 
 // Output Schema helpers

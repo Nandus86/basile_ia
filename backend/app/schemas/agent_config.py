@@ -21,6 +21,7 @@ class AgentConfigBase(BaseModel):
     fallback_enabled: bool = Field(default=False, description="Enable fallback model")
     fallback_model: str = Field(default="gpt-4o-mini", description="Fallback model name")
     fallback_temperature: float = Field(default=0.7, ge=0, le=2)
+    fallback_static_message: Optional[str] = Field(default=None, description="Custom static fallback message when all AI attempts fail")
     
     # Checkpoints
     checkpoint_enabled: bool = Field(default=False, description="Enable state checkpoints")
@@ -61,6 +62,7 @@ class AgentConfigUpdate(BaseModel):
     fallback_enabled: Optional[bool] = None
     fallback_model: Optional[str] = None
     fallback_temperature: Optional[float] = None
+    fallback_static_message: Optional[str] = None
     checkpoint_enabled: Optional[bool] = None
     checkpoint_storage: Optional[str] = None
     checkpoint_ttl_seconds: Optional[int] = None

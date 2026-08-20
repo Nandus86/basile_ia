@@ -78,7 +78,7 @@ class WorkflowScheduler:
                             strict_cfg = engine._get_strict_config(wf)
                             timeout_msg = (
                                 strict_cfg.get('strict_timeout_message') or
-                                "Tempo limite de resposta esgotado. O atendimento foi encerrado."
+                                "Nosso tempo limite de espera foi atingido. Se precisar de ajuda, basta enviar uma nova mensagem!"
                             )
                             
                             exec_rec.status = "timed_out"

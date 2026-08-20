@@ -798,7 +798,7 @@ class WorkflowEngine:
             getattr(workflow, 'strict_timeout_message', None) or
             definition.get('strict_timeout_message') or
             settings_dict.get('strict_timeout_message') or
-            "Tempo limite de resposta esgotado. O atendimento foi encerrado."
+            "Nosso tempo limite de espera foi atingido. Se precisar de ajuda, basta enviar uma nova mensagem!"
         )
         raw_exit_kws = (
             getattr(workflow, 'strict_exit_keywords', None) or

@@ -3956,10 +3956,19 @@ async def process_message_task(
                 print(f"[Task] ⚠️ Error in thinker processing: {e}")
                 traceback.print_exc()
 
-            # ── Execute agent ──
+            # ── Resilience Configuration (from Resilience Tab / AgentConfig) ──
             resilience_cfg = agent_config.get("resilience", {}) if agent_config else {}
-            max_retries = resilience_cfg.get("max_retries", 2)
-            timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
+            max_retries = max(0, int(resilience_cfg.get("max_retries", 2)))
+            timeout_seconds = max(1, int(resilience_cfg.get("timeout_seconds", 120)))
+            retry_delay = max(0.2, float(resilience_cfg.get("retry_delay_seconds", 1.0)))
+            use_backoff = bool(resilience_cfg.get("retry_exponential_backoff", True))
+            fallback_enabled = bool(resilience_cfg.get("fallback_enabled", False))
+            fallback_model = resilience_cfg.get("fallback_model") or "gpt-4o-mini"
+            fallback_temp = float(resilience_cfg.get("fallback_temperature", 0.7))
+            fallback_static_message = (
+                resilience_cfg.get("fallback_static_message") or
+                "Desculpe, tive uma instabilidade temporária de conexão ao processar sua mensagem. Você poderia tentar novamente em instantes?"
+            )
             retry_count = 0
 
             # ── Direct Payload Bypass (from Collaborator Workflow) ──
@@ -4172,9 +4181,40 @@ async def process_message_task(
                     traceback.print_exc()
                     raise
 
-            while retry_count <= max_retries:
+            # ── Execução com Resiliência em Camadas (IA Principal -> Retries -> IA Fallback -> Mensagem Estática) ──
+            primary_model = agent_config.get("model", "gpt-4o-mini") if agent_config else "gpt-4o-mini"
+            primary_temp = float(agent_config.get("temperature", 0.7)) if agent_config else 0.7
+
+            execution_stages = []
+            for attempt_idx in range(1 + max_retries):
+                execution_stages.append({
+                    "stage": "primary",
+                    "label": f"IA Principal (tentativa {attempt_idx + 1}/{1 + max_retries})",
+                    "model": primary_model,
+                    "temperature": primary_temp,
+                    "attempt_index": attempt_idx,
+                })
+            
+            if fallback_enabled and fallback_model:
+                execution_stages.append({
+                    "stage": "fallback",
+                    "label": f"IA de Fallback ({fallback_model})",
+                    "model": fallback_model,
+                    "temperature": fallback_temp,
+                    "attempt_index": 0,
+                })
+
+            execution_succeeded = False
+            last_exec_exception = None
+
+            for stage_idx, stage in enumerate(execution_stages):
                 try:
                     import asyncio
+                    # Switch model and temperature for current stage
+                    agent_config["model"] = stage["model"]
+                    agent_config["temperature"] = stage["temperature"]
+                    print(f"[Task] 🚀 Executando {stage['label']} [modelo: '{stage['model']}', timeout: {timeout_seconds}s]")
+
                     if agent_config.get("output_schema"):
                         # Structured output
                         result_dict = await asyncio.wait_for(
@@ -4207,219 +4247,204 @@ async def process_message_task(
                         final_result = response
                         agent_used = agent_config["name"]
                         output_text = str(final_result)
-                except Exception as e:
-                    print(f"[Task] ⚠️ Agent execution failed (attempt {retry_count+1}/{max_retries+1}): {e}")
-                    if retry_count < max_retries:
-                        if agent_config and resilience_cfg.get("fallback_enabled"):
-                            fallback_model = resilience_cfg.get("fallback_model")
-                            if fallback_model and fallback_model != agent_config.get("model"):
-                                print(f"[Task] 🔄 Switching to fallback model '{fallback_model}' due to instability.")
-                                agent_config["model"] = fallback_model
-                                if "fallback_temperature" in resilience_cfg:
-                                    agent_config["temperature"] = resilience_cfg["fallback_temperature"]
-                        retry_count += 1
-                        continue
-                    else:
-                        print(f"[Task] ❌ Max retries reached.")
-                        if isinstance(e, asyncio.TimeoutError):
-                            raise TimeoutError("Timeout reached after retries") from e
-                        raise e
 
-                # ── Check for internal budget timeout ──
-                if "Execução interrompida: timeout" in output_text:
-                    print(f"[Task] ⏱️ Agent execution hit budget timeout (attempt {retry_count+1}/{max_retries+1}).")
-                    if retry_count < max_retries:
-                        if agent_config and resilience_cfg.get("fallback_enabled"):
-                            fallback_model = resilience_cfg.get("fallback_model")
-                            if fallback_model and fallback_model != agent_config.get("model"):
-                                print(f"[Task] 🔄 Switching to fallback model '{fallback_model}' due to timeout.")
-                                agent_config["model"] = fallback_model
-                                if "fallback_temperature" in resilience_cfg:
-                                    agent_config["temperature"] = resilience_cfg["fallback_temperature"]
-                        retry_count += 1
-                        continue
-                    else:
-                        print(f"[Task] ❌ Max retries reached for budget timeout.")
+                    # ── Check for internal budget timeout ──
+                    if "Execução interrompida: timeout" in output_text:
+                        print(f"[Task] ⏱️ {stage['label']} atingiu o timeout interno de budget.")
                         raise TimeoutError("Internal budget timeout")
 
-                # ── Check if direct payload config result was set (e.g. from collaborator tool execution) ──
-                if agent_config and agent_config.get("__direct_payload_result"):
-                    parsed = agent_config["__direct_payload_result"]
-                    print(f"[Task] ⚡ Direct payload detected from agent_config — intercepting and returning immediately")
-                    
-                    processing_time = (time.time() - start_time) * 1000
-                    response_data = {
-                        "status": parsed.get("status", "completed"),
-                        "processing_time_ms": processing_time,
-                    }
-                    # Merge all keys except internal marker and status
-                    for k, v in parsed.items():
-                        if k not in ("__direct_payload", "status"):
-                            response_data[k] = v
-                            
-                    response_text = parsed.get("response", "")
-                    if response_text and stm_enabled:
-                        await redis_client.add_message(
-                            session_id=session_id, role="assistant",
-                            content=str(response_text), ttl_seconds=stm_ttl_seconds,
-                            tz_name=_resolve_tz_name(transition_data)
-                        )
-                    if response_text and agent_id and session_id:
-                        await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
-                    
-                    response_transition_data = _merge_transition_data(transition_data, context_data)
-                    if response_transition_data:
-                        response_data["transition_data"] = response_transition_data
-                    if callback_url:
-                        await _send_callback(callback_url, response_data)
-                    return response_data
+                    execution_succeeded = True
+                    print(f"[Task] ✅ {agent_used} respondeu com sucesso via {stage['label']}")
+                    break
 
-                # ── Check if orchestrator output contains __direct_payload from collaborator tool ──
-                if isinstance(output_text, str) and '"__direct_payload"' in output_text:
-                    import json as _dp_check
-                    try:
-                        # Try to extract the JSON from the output
-                        # The LLM might wrap it in text, so find the JSON object
-                        json_start = output_text.find('{"__direct_payload"')
-                        if json_start == -1:
-                            json_start = output_text.find('{"\\"__direct_payload\\"')
-                        if json_start >= 0:
-                            # Find matching closing brace
-                            brace_count = 0
-                            json_end = json_start
-                            for i in range(json_start, len(output_text)):
-                                if output_text[i] == '{':
-                                    brace_count += 1
-                                elif output_text[i] == '}':
-                                    brace_count -= 1
-                                    if brace_count == 0:
-                                        json_end = i + 1
-                                        break
-                            json_str = output_text[json_start:json_end]
-                            parsed = _dp_check.loads(json_str)
-                            if isinstance(parsed, dict) and parsed.get("__direct_payload"):
-                                print(f"[Task] ⚡ Direct payload detected in orchestrator output — intercepting")
-                                agent_config["__direct_payload_result"] = parsed
-                                # Remove internal marker and set clean response
-                                parsed.pop("__direct_payload", None)
-                                
-                                processing_time = (time.time() - start_time) * 1000
-                                response_data = {
-                                    "status": "completed",
-                                    "processing_time_ms": processing_time,
-                                }
-                                response_data.update(parsed)
-                                
-                                response_text = parsed.get("response", "")
-                                if response_text and stm_enabled:
-                                    await redis_client.add_message(
-                                        session_id=session_id, role="assistant",
-                                        content=str(response_text), ttl_seconds=stm_ttl_seconds,
-                                        tz_name=_resolve_tz_name(transition_data)
-                                    )
-                                if response_text and agent_id and session_id:
-                                    await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
-                                
-                                response_transition_data = _merge_transition_data(transition_data, context_data)
-                                if response_transition_data:
-                                    response_data["transition_data"] = response_transition_data
-                                if callback_url:
-                                    await _send_callback(callback_url, response_data)
-                                return response_data
-                    except (_dp_check.JSONDecodeError, ValueError, TypeError) as _dp_err:
-                        print(f"[Task] ⚠️ Failed to parse direct payload from orchestrator output: {_dp_err}")
-
-                # Interceptar FIM DE INTERACAO
-                if "[FIM_DE_INTERACAO]" in output_text:
-                    output_text = output_text.replace("[FIM_DE_INTERACAO]", "").strip()
-                    if not output_text:
-                        if isinstance(final_result, dict):
-                            final_result["output"] = ""
-                        else:
-                            final_result = ""
+                except Exception as e:
+                    last_exec_exception = e
+                    print(f"[Task] ⚠️ Falha na execução via {stage['label']}: {e}")
+                    if stage_idx < len(execution_stages) - 1:
+                        # Calculate delay before next attempt
+                        delay = retry_delay * (2 ** stage["attempt_index"]) if (use_backoff and stage["stage"] == "primary") else retry_delay
+                        print(f"[Task] ⏳ Aguardando {delay:.1f}s antes da próxima tentativa...")
+                        await asyncio.sleep(delay)
                     else:
-                        if isinstance(final_result, dict):
-                            final_result["output"] = output_text
-                        else:
-                            final_result = output_text
-                    print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
+                        print(f"[Task] ❌ Todas as tentativas de IA (Principal e Fallback) falharam.")
 
-                # Limpar Tag de HITL caso exista
-                is_hitl_pause = False
-                if "{{ $HITL }}" in output_text:
-                    output_text = output_text.replace("{{ $HITL }}", "").strip()
-                    is_hitl_pause = True
+            if not execution_succeeded:
+                print(f"[Task] 🛡️ Ativando Mensagem Padrão Estática de Resiliência.")
+                output_text = fallback_static_message
+                if agent_config.get("output_schema"):
+                    final_result = {"output": fallback_static_message}
+                else:
+                    final_result = fallback_static_message
+                agent_used = f"{agent_config.get('name', 'Agente')} (Fallback Seguro)"
+                tool_trace = None
+
+            # ── Check if direct payload config result was set (e.g. from collaborator tool execution) ──
+            if agent_config and agent_config.get("__direct_payload_result"):
+                parsed = agent_config["__direct_payload_result"]
+                print(f"[Task] ⚡ Direct payload detected from agent_config — intercepting and returning immediately")
+                
+                processing_time = (time.time() - start_time) * 1000
+                response_data = {
+                    "status": parsed.get("status", "completed"),
+                    "processing_time_ms": processing_time,
+                }
+                # Merge all keys except internal marker and status
+                for k, v in parsed.items():
+                    if k not in ("__direct_payload", "status"):
+                        response_data[k] = v
+                        
+                response_text = parsed.get("response", "")
+                if response_text and stm_enabled:
+                    await redis_client.add_message(
+                        session_id=session_id, role="assistant",
+                        content=str(response_text), ttl_seconds=stm_ttl_seconds,
+                        tz_name=_resolve_tz_name(transition_data)
+                    )
+                if response_text and agent_id and session_id:
+                    await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
+                
+                response_transition_data = _merge_transition_data(transition_data, context_data)
+                if response_transition_data:
+                    response_data["transition_data"] = response_transition_data
+                if callback_url:
+                    await _send_callback(callback_url, response_data)
+                return response_data
+
+            # ── Check if orchestrator output contains __direct_payload from collaborator tool ──
+            if isinstance(output_text, str) and '"__direct_payload"' in output_text:
+                import json as _dp_check
+                try:
+                    # Try to extract the JSON from the output
+                    # The LLM might wrap it in text, so find the JSON object
+                    json_start = output_text.find('{"__direct_payload"')
+                    if json_start == -1:
+                        json_start = output_text.find('{"\\"__direct_payload\\"')
+                    if json_start >= 0:
+                        # Find matching closing brace
+                        brace_count = 0
+                        json_end = json_start
+                        for i in range(json_start, len(output_text)):
+                            if output_text[i] == '{':
+                                brace_count += 1
+                            elif output_text[i] == '}':
+                                brace_count -= 1
+                            if brace_count == 0:
+                                json_end = i + 1
+                                break
+                        json_str = output_text[json_start:json_end]
+                        parsed = _dp_check.loads(json_str)
+                        if isinstance(parsed, dict) and parsed.get("__direct_payload"):
+                            print(f"[Task] ⚡ Direct payload detected in orchestrator output — intercepting")
+                            agent_config["__direct_payload_result"] = parsed
+                            # Remove internal marker and set clean response
+                            parsed.pop("__direct_payload", None)
+                            
+                            processing_time = (time.time() - start_time) * 1000
+                            response_data = {
+                                "status": "completed",
+                                "processing_time_ms": processing_time,
+                            }
+                            response_data.update(parsed)
+                            
+                            response_text = parsed.get("response", "")
+                            if response_text and stm_enabled:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant",
+                                    content=str(response_text), ttl_seconds=stm_ttl_seconds,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
+                            if response_text and agent_id and session_id:
+                                await _save_mtm_message(db, agent_id, session_id, "assistant", str(response_text))
+                            
+                            response_transition_data = _merge_transition_data(transition_data, context_data)
+                            if response_transition_data:
+                                response_data["transition_data"] = response_transition_data
+                            if callback_url:
+                                await _send_callback(callback_url, response_data)
+                            return response_data
+                except (_dp_check.JSONDecodeError, ValueError, TypeError) as _dp_err:
+                    print(f"[Task] ⚠️ Failed to parse direct payload from orchestrator output: {_dp_err}")
+
+            # Interceptar FIM DE INTERACAO
+            if "[FIM_DE_INTERACAO]" in output_text:
+                output_text = output_text.replace("[FIM_DE_INTERACAO]", "").strip()
+                if not output_text:
+                    if isinstance(final_result, dict):
+                        final_result["output"] = ""
+                    else:
+                        final_result = ""
+                else:
                     if isinstance(final_result, dict):
                         final_result["output"] = output_text
                     else:
                         final_result = output_text
-                    print(f"[Task] 🛑 Intervenção Humana (HITL) solicitada pelo agente {agent_used}")
+                print(f"[Task] 🛑 Interação finalizada silenciosamente pelo agente {agent_used}")
 
-                # Validação (Guardrail)
-                is_guardrail_active = agent_config.get("is_guardrail_active", False)
-                if is_guardrail_active and output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text) and not is_first_interaction:
-                    validation_msg = await _validate_response(
-                        agent_config.get("system_prompt", ""), 
-                        output_text,
-                        agent_config.get("guardrail_prompt"),
-                        agent_config.get("guardrail_model")
-                    )
-                    if validation_msg != "VALID" and retry_count < max_retries:
-                        print(f"[Task] ⚠️ Validação falhou (tentativa {retry_count+1}/{max_retries}). Motivo: {validation_msg}")
-                        messages.append(AIMessage(content=output_text))
-                        messages.append(HumanMessage(content=f"ATENÇÃO - REJEITADO PELO VALIDADOR INTERNO: A sua última resposta violou suas regras fundamentais.\nMotivo: {validation_msg}\nPor favor, refaça a resposta corrigindo este erro. Responda apenas com a versão corrigida."))
-                        retry_count += 1
-                        continue  # Tenta novamente
-                    elif validation_msg != "VALID":
-                        print(f"[Task] ❌ Limite de tentativas de validação atingido. A resposta defeituosa será enviada assim mesmo.")
-
-                # Se chegou aqui, a resposta é válida, o limite foi atingido, é o primeiro contato, ou é fim de interação
-                print(f"[Task] ✅ {agent_used} responded on try {retry_count+1}")
-
-                # Strip internal metadata tags that may leak into the response
-                import re
-                _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
-                output_text = _ctx_re.sub('', output_text).strip()
-                if isinstance(final_result, str):
-                    final_result = _ctx_re.sub('', final_result).strip()
-
-                # Sanitize structured JSON responses (achados/dados/recomendacao)
-                # that may leak through to the final user output
-                if isinstance(final_result, str):
-                    final_result = _sanitize_structured_response(final_result)
-                    output_text = final_result
-
-                # Process response_variables - substituição de palavras na resposta
-                response_vars = agent_config.get("config", {}).get("response_variables", [])
-                if response_vars and isinstance(final_result, str):
-                    final_result = _apply_response_variables(final_result, response_vars, context_data)
-
-                if output_text.strip():
-                    if stm_enabled and not (context_data or {}).get("formulation_only", False):
-                        await redis_client.add_message(
-                            session_id=session_id, role="assistant",
-                            content=output_text, ttl_seconds=stm_ttl_seconds,
-                            tz_name=_resolve_tz_name(transition_data)
-                        )
-                    # MTM: save assistant response
-                    if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
-                        await _save_mtm_message(db, agent_id, session_id, "assistant", output_text, tool_trace=tool_trace)
-
-                processing_time = (time.time() - start_time) * 1000
-                response_data = {
-                    "status": "completed",
-                    "agent_used": agent_used,
-                    "processing_time_ms": processing_time,
-                    "duration_ms": int(processing_time),
-                    "is_hitl_pause": is_hitl_pause,
-                }
-                
+            # Limpar Tag de HITL caso exista
+            is_hitl_pause = False
+            if "{{ $HITL }}" in output_text:
+                output_text = output_text.replace("{{ $HITL }}", "").strip()
+                is_hitl_pause = True
                 if isinstance(final_result, dict):
-                    response_data.update(final_result)
+                    final_result["output"] = output_text
                 else:
-                    response_data["response"] = final_result
-                    
-                break  # Sai do loop while
+                    final_result = output_text
+                print(f"[Task] 🛑 Intervenção Humana (HITL) solicitada pelo agente {agent_used}")
+
+            # Validação (Guardrail)
+            is_guardrail_active = agent_config.get("is_guardrail_active", False)
+            if is_guardrail_active and execution_succeeded and output_text.strip() and ("[FIM_DE_INTERACAO]" not in output_text) and not is_first_interaction:
+                validation_msg = await _validate_response(
+                    agent_config.get("system_prompt", ""), 
+                    output_text,
+                    agent_config.get("guardrail_prompt"),
+                    agent_config.get("guardrail_model")
+                )
+                if validation_msg != "VALID":
+                    print(f"[Task] ⚠️ Validação falhou. Motivo: {validation_msg}")
+
+            # Strip internal metadata tags that may leak into the response
+            import re
+            _ctx_re = re.compile(r'\[CONTEXTO_TEMPORAL:\s*[^\]]*\]\s*')
+            output_text = _ctx_re.sub('', output_text).strip()
+            if isinstance(final_result, str):
+                final_result = _ctx_re.sub('', final_result).strip()
+
+            # Sanitize structured JSON responses (achados/dados/recomendacao)
+            # that may leak through to the final user output
+            if isinstance(final_result, str):
+                final_result = _sanitize_structured_response(final_result)
+                output_text = final_result
+
+            # Process response_variables - substituição de palavras na resposta
+            response_vars = agent_config.get("config", {}).get("response_variables", [])
+            if response_vars and isinstance(final_result, str):
+                final_result = _apply_response_variables(final_result, response_vars, context_data)
+
+            if output_text.strip():
+                if stm_enabled and not (context_data or {}).get("formulation_only", False):
+                    await redis_client.add_message(
+                        session_id=session_id, role="assistant",
+                        content=output_text, ttl_seconds=stm_ttl_seconds,
+                        tz_name=_resolve_tz_name(transition_data)
+                    )
+                # MTM: save assistant response
+                if agent_id and session_id and not (context_data or {}).get("formulation_only", False):
+                    await _save_mtm_message(db, agent_id, session_id, "assistant", output_text, tool_trace=tool_trace)
+
+            processing_time = (time.time() - start_time) * 1000
+            response_data = {
+                "status": "completed",
+                "agent_used": agent_used,
+                "processing_time_ms": processing_time,
+                "duration_ms": int(processing_time),
+                "is_hitl_pause": is_hitl_pause,
+            }
+            
+            if isinstance(final_result, dict):
+                response_data.update(final_result)
+            else:
+                response_data["response"] = final_result
 
             # ── Execute egress workflows (Post-hooks) ──
             if agent_model:
@@ -4544,7 +4569,10 @@ async def process_message_task(
         traceback.print_exc()
         processing_time = (time.time() - start_time) * 1000
         
-        friendly_message = await _invoke_recovery_agent(message, str(e))
+        fallback_msg_configured = (
+            resilience_cfg.get("fallback_static_message") if 'resilience_cfg' in locals() and resilience_cfg else None
+        )
+        friendly_message = await _invoke_recovery_agent(message, str(e), fallback_msg_configured)
         
         # Guardar na memória de curto prazo (STM) se ativado
         try:
@@ -4564,16 +4592,18 @@ async def process_message_task(
                 "status": "completed",
                 "output": friendly_message,
                 "error": str(e),
-                "agent_used": "Agente de Recuperação",
+                "agent_used": "Mensagem de Recuperação",
                 "processing_time_ms": processing_time,
+                "is_hitl_pause": False,
             }
         else:
             return {
                 "status": "completed",
                 "response": friendly_message,
                 "error": str(e),
-                "agent_used": "Agente de Recuperação",
+                "agent_used": "Mensagem de Recuperação",
                 "processing_time_ms": processing_time,
+                "is_hitl_pause": False,
             }
     finally:
         # Stop StatusMonitor to prevent resource leaks
@@ -4583,37 +4613,48 @@ async def process_message_task(
             except Exception:
                 pass
 
-async def _invoke_recovery_agent(message: str, error_msg: str) -> str:
-    """Invokes a recovery agent to provide a friendly response after a timeout/error."""
+async def _invoke_recovery_agent(message: str, error_msg: str, custom_fallback_message: Optional[str] = None) -> str:
+    """Invokes a recovery agent or returns safe fallback response after a timeout/error without closing interaction."""
+    default_static = custom_fallback_message or "Desculpe, tive uma instabilidade temporária de conexão ao processar sua mensagem. Você poderia tentar novamente em instantes?"
     try:
         from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
         from app.config import settings
         
+        if not settings.OPENAI_API_KEY:
+            return default_static
+
         error_llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.7,
-            api_key=settings.OPENAI_API_KEY
+            temperature=0.5,
+            api_key=settings.OPENAI_API_KEY,
+            timeout=10.0,
         )
         
         error_prompt = (
-            "Você é um agente de contingência e recuperação. "
-            "Ocorreu um erro técnico (como timeout ou falha de comunicação) "
-            "ao tentar processar a solicitação do usuário. "
-            "Sua tarefa é criar uma resposta amigável e empática, pedindo desculpas pela interrupção "
-            "e sugerindo que o usuário tente novamente, pergunte de outra forma ou continue a conversa. "
-            "NUNCA exiba detalhes técnicos do erro ao usuário."
+            "Você é um assistente virtual empático e acolhedor. "
+            "Ocorreu uma instabilidade técnica momentânea ao processar a mensagem do usuário. "
+            "Sua tarefa é criar uma resposta breve e amigável pedindo desculpas pela oscilação "
+            "e convidando o usuário a reenviar sua mensagem ou continuar a conversa normalmente. "
+            "REGRAS CRÍTICAS: "
+            "1. NUNCA encerre o atendimento e NUNCA dê a entender que o atendimento acabou. "
+            "2. NUNCA envie códigos como [FIM_DE_INTERACAO] ou palavras de despedida final (como adeus/tchau). "
+            "3. NUNCA exiba detalhes técnicos do erro."
         )
         
-        response = await error_llm.ainvoke([
-            SystemMessage(content=error_prompt),
-            HumanMessage(content=f"A mensagem do usuário foi: '{message}'\n\nPor favor, gere a resposta amigável de recuperação.")
-        ])
+        response = await asyncio.wait_for(
+            error_llm.ainvoke([
+                SystemMessage(content=error_prompt),
+                HumanMessage(content=f"A mensagem do usuário foi: '{message}'\n\nGere a resposta amigável de continuidade.")
+            ]),
+            timeout=8.0
+        )
         
-        return response.content
+        content = (response.content or "").replace("[FIM_DE_INTERACAO]", "").strip()
+        return content or default_static
     except Exception as e:
-        print(f"[Recovery Agent] Failed: {e}")
-        return "Desculpe, tivemos uma instabilidade de conexão inesperada. Você poderia tentar novamente em instantes?"
+        print(f"[Recovery Agent] Failed or timed out: {e}")
+        return default_static
 
 
 # ─────────────────────────────────────────────────────────────

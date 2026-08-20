@@ -30,6 +30,7 @@ class AgentConfig(Base):
     fallback_enabled = Column(Boolean, default=False, nullable=False)
     fallback_model = Column(String(100), default="gpt-4o-mini")
     fallback_temperature = Column(Float, default=0.7)
+    fallback_static_message = Column(Text, nullable=True)
     
     # Checkpoint Configuration (for state persistence and recovery)
     checkpoint_enabled = Column(Boolean, default=False, nullable=False)
@@ -81,6 +82,7 @@ class AgentConfig(Base):
             "fallback_enabled": self.fallback_enabled,
             "fallback_model": self.fallback_model,
             "fallback_temperature": self.fallback_temperature,
+            "fallback_static_message": self.fallback_static_message,
             "checkpoint_enabled": self.checkpoint_enabled,
             "checkpoint_storage": self.checkpoint_storage,
             "checkpoint_ttl_seconds": self.checkpoint_ttl_seconds,
