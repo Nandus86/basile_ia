@@ -257,13 +257,14 @@
       <v-navigation-drawer
         v-model="showSchemaExplorer"
         location="right"
-        width="380"
+        width="400"
         color="surface"
         elevation="5"
         class="schema-explorer-drawer border-l"
         style="z-index: 1005;"
       >
         <JsonSchemaTree
+          :sources="schemaSources"
           :payload="computedExplorerPayload"
           root-prefix="$trigger.payload"
           @update:payload="onUpdateExplorerPayload"
@@ -691,24 +692,68 @@ const computedExplorerPayload = computed(() => {
   } catch (e) {
     basePayload = {}
   }
+  return basePayload
+})
 
-  // If there are block outputs from testResult, merge them into the payload explorer
-  if (testResult.value && Array.isArray(testResult.value.blocks_executed)) {
-    const outputs = {}
-    for (const b of testResult.value.blocks_executed) {
-      if (b.output_key && b.output !== undefined && b.output !== null) {
-        outputs[b.output_key] = b.output
-      }
+const schemaSources = computed(() => {
+  const sources = []
+
+  // 1. Trigger payload
+  let triggerData = {}
+  try {
+    if (testPayloadJson.value && testPayloadJson.value.trim()) {
+      triggerData = JSON.parse(testPayloadJson.value)
     }
-    if (Object.keys(outputs).length > 0) {
-      return {
-        ...basePayload,
-        ...outputs
+  } catch (e) {
+    triggerData = {}
+  }
+
+  sources.push({
+    id: 'trigger',
+    label: 'Gatilho de Entrada',
+    sublabel: '$trigger.payload',
+    icon: 'mdi-lightning-bolt',
+    color: '#F59E0B',
+    rootPrefix: '$trigger.payload',
+    data: triggerData
+  })
+
+  // 2. Executed Blocks from testResult
+  const executedList = testResult.value?.blocks_executed || testResult.value?.blocks || []
+  if (Array.isArray(executedList)) {
+    for (const b of executedList) {
+      if (b.output !== undefined && b.output !== null) {
+        const outKey = b.output_key || b.block_id
+        const blockMeta = toolboxItems.find(t => t.type === b.block_type) || { icon: 'mdi-cube-outline', color: '#8B5CF6' }
+        sources.push({
+          id: b.block_id,
+          label: b.label || b.block_type || 'Bloco',
+          sublabel: `$${outKey}`,
+          icon: blockMeta.icon,
+          color: blockMeta.color,
+          rootPrefix: `$${outKey}`,
+          data: b.output,
+          status: b.status,
+          duration_ms: b.duration_ms
+        })
       }
     }
   }
 
-  return basePayload
+  // 3. Final Output from testResult
+  if (testResult.value && testResult.value.result !== undefined && testResult.value.result !== null) {
+    sources.push({
+      id: 'final_result',
+      label: 'Saída Final (Resultado)',
+      sublabel: '$response',
+      icon: 'mdi-logout',
+      color: '#EC4899',
+      rootPrefix: '$response',
+      data: testResult.value.result
+    })
+  }
+
+  return sources
 })
 
 function onUpdateExplorerPayload(newPayload) {
@@ -1273,7 +1318,9 @@ async function runTest() {
     testResult.value = {
       status: exec.status, duration_ms: exec.duration_ms,
       blocks_count: (exec.blocks_executed || []).length,
-      blocks: exec.blocks_executed || [], error: exec.error_message,
+      blocks: exec.blocks_executed || [],
+      blocks_executed: exec.blocks_executed || [],
+      error: exec.error_message,
       result: exec.result,
       context: exec.context || {},
       execution_id: exec.id,
@@ -1281,7 +1328,7 @@ async function runTest() {
     }
     applyExecutionHighlights(exec.blocks_executed || [])
   } catch (e) {
-    testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0 }
+    testResult.value = { status: 'failed', error: e.response?.data?.detail || e.message, blocks_count: 0, duration_ms: 0, blocks_executed: [] }
   } finally { testing.value = false }
 }
 
@@ -1310,7 +1357,9 @@ async function submitSimulatedResponse(responseVal) {
     testResult.value = {
       status: exec.status, duration_ms: exec.duration_ms,
       blocks_count: (exec.blocks_executed || []).length,
-      blocks: exec.blocks_executed || [], error: exec.error_message,
+      blocks: exec.blocks_executed || [],
+      blocks_executed: exec.blocks_executed || [],
+      error: exec.error_message,
       result: exec.result,
       context: exec.context || {},
       execution_id: exec.id,

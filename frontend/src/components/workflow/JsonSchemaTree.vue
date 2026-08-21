@@ -6,6 +6,9 @@
         <div class="d-flex align-center">
           <v-icon color="purple-lighten-1" size="20" class="mr-2">mdi-code-json</v-icon>
           <span class="text-subtitle-2 font-weight-bold">Explorador de Dados</span>
+          <v-chip v-if="sources.length > 1" size="x-small" color="purple" variant="tonal" class="ml-2">
+            {{ sources.length }} origens
+          </v-chip>
         </div>
         <div class="d-flex align-center gap-1">
           <v-btn
@@ -44,7 +47,7 @@
       <v-text-field
         v-if="!isEditingPayload"
         v-model="searchQuery"
-        placeholder="Buscar campo ou valor..."
+        placeholder="Buscar campo ou valor em todos os blocos..."
         prepend-inner-icon="mdi-magnify"
         variant="outlined"
         density="compact"
@@ -53,16 +56,42 @@
         class="search-input"
       ></v-text-field>
 
-      <div v-if="!isEditingPayload" class="text-caption text-medium-emphasis d-flex align-center">
+      <!-- Section / Source Filter Tabs (if multiple sources) -->
+      <div v-if="!isEditingPayload && sources.length > 1" class="sources-tabs-wrapper d-flex align-center gap-1 overflow-x-auto py-1">
+        <v-chip
+          size="x-small"
+          :variant="selectedSourceId === 'all' ? 'flat' : 'outlined'"
+          :color="selectedSourceId === 'all' ? 'purple' : undefined"
+          class="cursor-pointer"
+          @click="selectedSourceId = 'all'"
+        >
+          Todos ({{ sources.length }})
+        </v-chip>
+        <v-chip
+          v-for="s in sources"
+          :key="s.id"
+          size="x-small"
+          :variant="selectedSourceId === s.id ? 'flat' : 'outlined'"
+          :color="selectedSourceId === s.id ? 'primary' : undefined"
+          class="cursor-pointer text-truncate"
+          style="max-width: 140px;"
+          @click="selectedSourceId = s.id"
+        >
+          <v-icon start size="11" :color="s.color">{{ s.icon || 'mdi-cube-outline' }}</v-icon>
+          {{ s.label }}
+        </v-chip>
+      </div>
+
+      <div v-if="!isEditingPayload" class="text-caption text-medium-emphasis d-flex align-center" style="font-size: 11px;">
         <v-icon size="13" class="mr-1 text-primary">mdi-drag</v-icon>
-        <span>Arraste o campo ou clique em <v-icon size="12">mdi-content-copy</v-icon> para inserir.</span>
+        <span>Arraste o campo ou clique em <v-icon size="11">mdi-content-copy</v-icon> para inserir a tag.</span>
       </div>
     </div>
 
     <!-- Edit Test Payload Area -->
     <div v-if="isEditingPayload" class="pa-3 flex-grow-1 d-flex flex-column bg-surface overflow-hidden">
       <div class="text-caption text-medium-emphasis mb-2">
-        Cole ou edite o JSON de entrada para gerar a árvore de variáveis:
+        Cole ou edite o JSON de entrada para gerar a árvore de variáveis do gatilho:
       </div>
       <v-textarea
         v-model="rawPayloadString"
@@ -80,24 +109,63 @@
       </div>
     </div>
 
-    <!-- Tree Content -->
+    <!-- Multi-Source Tree Content -->
     <div v-else class="tree-content pa-2 flex-grow-1 overflow-y-auto bg-surface">
-      <div v-if="treeNodes.length === 0" class="text-center pa-6 text-medium-emphasis text-caption">
+      <div v-if="visibleSections.length === 0" class="text-center pa-6 text-medium-emphasis text-caption">
         <v-icon size="36" color="grey" class="mb-2">mdi-database-search-outline</v-icon>
-        <div>Nenhum dado encontrado no payload de teste.</div>
+        <div>Nenhum dado encontrado nos blocos ou no payload.</div>
         <v-btn size="small" variant="outlined" color="primary" class="mt-3" @click="isEditingPayload = true">
           <v-icon start size="14">mdi-plus</v-icon> Informar Payload de Teste
         </v-btn>
       </div>
 
-      <div v-else class="tree-list">
-        <json-tree-node
-          v-for="node in filteredTreeNodes"
-          :key="node.fullPath"
-          :node="node"
-          :search-query="searchQuery"
-          @copy="onCopyTag"
-        />
+      <div v-else class="sections-list d-flex flex-column gap-3">
+        <div
+          v-for="section in visibleSections"
+          :key="section.id"
+          class="source-section-card rounded border bg-surface-variant overflow-hidden"
+        >
+          <!-- Section Header -->
+          <div
+            class="section-header pa-2 d-flex align-center justify-space-between cursor-pointer"
+            :style="{ borderLeft: `3px solid ${section.color || '#6366F1'}` }"
+            @click="toggleSectionCollapse(section.id)"
+          >
+            <div class="d-flex align-center overflow-hidden mr-2">
+              <v-icon
+                size="14"
+                class="mr-1 text-medium-emphasis"
+                :style="{ transform: isSectionOpen(section.id) ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }"
+              >
+                mdi-chevron-right
+              </v-icon>
+              <v-icon size="16" :color="section.color" class="mr-1">{{ section.icon || 'mdi-cube-outline' }}</v-icon>
+              <span class="font-weight-bold text-caption text-truncate mr-1">{{ section.label }}</span>
+              <code class="text-caption text-disabled" style="font-size: 10px;">{{ section.sublabel || section.rootPrefix }}</code>
+            </div>
+            <div class="d-flex align-center gap-1">
+              <v-chip v-if="section.duration_ms !== undefined" size="x-small" variant="text" class="text-caption text-medium-emphasis" style="font-size: 9px;">
+                {{ section.duration_ms }}ms
+              </v-chip>
+              <v-icon v-if="section.status === 'success'" size="14" color="success">mdi-check-circle</v-icon>
+              <v-icon v-else-if="section.status === 'failed'" size="14" color="error">mdi-alert-circle</v-icon>
+            </div>
+          </div>
+
+          <!-- Section Tree Nodes -->
+          <div v-if="isSectionOpen(section.id)" class="section-nodes-body pa-2 bg-surface border-t">
+            <div v-if="section.nodes.length === 0" class="pa-2 text-caption text-disabled text-center">
+              Nenhum dado retornado neste bloco.
+            </div>
+            <json-tree-node
+              v-for="node in section.nodes"
+              :key="node.fullPath"
+              :node="node"
+              :search-query="searchQuery"
+              @copy="onCopyTag"
+            />
+          </div>
+        </div>
       </div>
     </div>
 
@@ -113,6 +181,7 @@
 import { ref, computed, watch, defineComponent, h } from 'vue'
 
 const props = defineProps({
+  // Direct payload mode (legacy / single root)
   payload: {
     type: Object,
     default: () => ({})
@@ -120,6 +189,11 @@ const props = defineProps({
   rootPrefix: {
     type: String,
     default: '$trigger.payload'
+  },
+  // Multi-source array of executed blocks and trigger data
+  sources: {
+    type: Array,
+    default: () => []
   },
   allowEditPayload: {
     type: Boolean,
@@ -130,18 +204,22 @@ const props = defineProps({
 const emit = defineEmits(['update:payload', 'copy'])
 
 const searchQuery = ref('')
+const selectedSourceId = ref('all')
 const isEditingPayload = ref(false)
 const rawPayloadString = ref('')
 const showCopySnackbar = ref(false)
 const copiedText = ref('')
 const expandedMap = ref({})
+const collapsedSections = ref({})
 
-// Initialize raw payload string
-watch(() => props.payload, (newVal) => {
-  if (newVal) {
-    rawPayloadString.value = JSON.stringify(newVal, null, 2)
+// Initialize raw payload string from trigger data
+watch(() => [props.payload, props.sources], () => {
+  const triggerSource = props.sources.find(s => s.id === 'trigger')
+  const srcPayload = triggerSource ? triggerSource.data : props.payload
+  if (srcPayload) {
+    rawPayloadString.value = JSON.stringify(srcPayload, null, 2)
   }
-}, { immediate: true })
+}, { immediate: true, deep: true })
 
 function applyRawPayload() {
   try {
@@ -153,8 +231,8 @@ function applyRawPayload() {
   }
 }
 
-// Build Tree Node Hierarchy
-function buildTree(obj, parentPath = props.rootPrefix, depth = 0) {
+// Build Tree Node Hierarchy for a given data object
+function buildTree(obj, parentPath, depth = 0) {
   if (obj === null || obj === undefined) return []
 
   const nodes = []
@@ -164,7 +242,7 @@ function buildTree(obj, parentPath = props.rootPrefix, depth = 0) {
 
     for (const key of keys) {
       const val = obj[key]
-      const fullPath = isArray ? `${parentPath}.${key}` : `${parentPath}.${key}`
+      const fullPath = `${parentPath}.${key}`
       const type = getDataType(val)
       const isComplex = type === 'object' || type === 'array'
 
@@ -180,6 +258,18 @@ function buildTree(obj, parentPath = props.rootPrefix, depth = 0) {
       }
       nodes.push(node)
     }
+  } else {
+    // Primitive root
+    nodes.push({
+      key: 'value',
+      fullPath: parentPath,
+      templatePath: `{{ ${parentPath} }}`,
+      value: obj,
+      type: getDataType(obj),
+      depth: 0,
+      isComplex: false,
+      children: []
+    })
   }
   return nodes
 }
@@ -192,10 +282,6 @@ function getDataType(val) {
   if (typeof val === 'boolean') return 'boolean'
   return 'string'
 }
-
-const treeNodes = computed(() => {
-  return buildTree(props.payload, props.rootPrefix, 0)
-})
 
 function filterNodes(nodes, query) {
   if (!query) return nodes
@@ -222,11 +308,60 @@ function filterNodes(nodes, query) {
   return result
 }
 
-const filteredTreeNodes = computed(() => {
-  return filterNodes(treeNodes.value, searchQuery.value)
+// Compute normalized active sections
+const allSections = computed(() => {
+  if (props.sources && props.sources.length > 0) {
+    return props.sources.map(src => {
+      const rawNodes = buildTree(src.data, src.rootPrefix || `$${src.id}`, 0)
+      return {
+        id: src.id,
+        label: src.label,
+        sublabel: src.sublabel || src.rootPrefix,
+        icon: src.icon,
+        color: src.color,
+        rootPrefix: src.rootPrefix,
+        status: src.status,
+        duration_ms: src.duration_ms,
+        nodes: filterNodes(rawNodes, searchQuery.value)
+      }
+    })
+  }
+
+  // Fallback to single payload prop
+  const rawNodes = buildTree(props.payload, props.rootPrefix, 0)
+  return [{
+    id: 'trigger',
+    label: 'Gatilho de Entrada',
+    sublabel: props.rootPrefix,
+    icon: 'mdi-lightning-bolt',
+    color: '#F59E0B',
+    rootPrefix: props.rootPrefix,
+    nodes: filterNodes(rawNodes, searchQuery.value)
+  }]
 })
 
+const visibleSections = computed(() => {
+  let list = allSections.value
+  if (selectedSourceId.value !== 'all') {
+    list = list.filter(s => s.id === selectedSourceId.value)
+  }
+  if (searchQuery.value) {
+    list = list.filter(s => s.nodes.length > 0)
+  }
+  return list
+})
+
+function isSectionOpen(sectionId) {
+  if (searchQuery.value) return true
+  return collapsedSections.value[sectionId] !== true
+}
+
+function toggleSectionCollapse(sectionId) {
+  collapsedSections.value[sectionId] = !collapsedSections.value[sectionId]
+}
+
 function expandAll() {
+  collapsedSections.value = {}
   function setExpand(nodes, val) {
     for (const n of nodes) {
       expandedMap.value[n.fullPath] = val
@@ -235,7 +370,9 @@ function expandAll() {
       }
     }
   }
-  setExpand(treeNodes.value, true)
+  for (const s of allSections.value) {
+    setExpand(s.nodes, true)
+  }
 }
 
 function collapseAll() {
@@ -401,6 +538,15 @@ const JsonTreeNode = defineComponent({
 .json-schema-tree {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   user-select: none;
+}
+
+.sources-tabs-wrapper::-webkit-scrollbar {
+  height: 3px;
+}
+
+.sources-tabs-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
 }
 
 .tree-node-row {
