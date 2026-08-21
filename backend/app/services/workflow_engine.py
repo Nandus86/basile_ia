@@ -2505,8 +2505,37 @@ class WorkflowEngine:
             resolved_code = code  # fallback if resolve changed type
 
         import random as _random
+        import math as _math
+        import time as _time
+        import urllib.parse as _urllib_parse
+        import uuid as _uuid
+        import hashlib as _hashlib
+        import base64 as _base64
+        import httpx as _httpx
+        import requests as _requests
 
-        # Safe-ish sandbox: expose context, json, re, datetime, random utilities
+        _SAFE_MODULES = {
+            'json': json,
+            're': re,
+            'datetime': datetime,
+            'random': _random,
+            'math': _math,
+            'time': _time,
+            'urllib': _urllib_parse,
+            'urllib.parse': _urllib_parse,
+            'uuid': _uuid,
+            'hashlib': _hashlib,
+            'base64': _base64,
+            'httpx': _httpx,
+            'requests': _requests,
+        }
+
+        def _safe_import(name, *args, **kwargs):
+            if name in _SAFE_MODULES:
+                return _SAFE_MODULES[name]
+            raise ImportError(f"Módulo '{name}' não é permitido no ambiente seguro do bloco Python.")
+
+        # Safe-ish sandbox: expose context, json, re, datetime, httpx, requests, data utilities
         sandbox_globals = {
             '__builtins__': {
                 # safe built-ins only
@@ -2519,11 +2548,26 @@ class WorkflowEngine:
                 'print': print, 'repr': repr, 'abs': abs, 'round': round,
                 'min': min, 'max': max, 'sum': sum, 'any': any, 'all': all,
                 'None': None, 'True': True, 'False': False,
+                # Safe Exception classes for try/except blocks
+                'Exception': Exception, 'ValueError': ValueError, 'TypeError': TypeError,
+                'KeyError': KeyError, 'IndexError': IndexError, 'AttributeError': AttributeError,
+                'RuntimeError': RuntimeError, 'TimeoutError': TimeoutError,
+                'ImportError': ImportError,
+                # Whitelisted import handler
+                '__import__': _safe_import,
             },
             'json': json,
             're': re,
             'datetime': datetime,
             'random': _random,
+            'math': _math,
+            'time': _time,
+            'urllib': _urllib_parse,
+            'uuid': _uuid,
+            'hashlib': _hashlib,
+            'base64': _base64,
+            'httpx': _httpx,
+            'requests': _requests,
             'context': context,
             'ctx': context,
         }
