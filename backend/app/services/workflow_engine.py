@@ -794,6 +794,12 @@ class WorkflowEngine:
             settings_dict.get('strict_fallback_message') or
             "Desculpe, não entendi. Por favor, escolha uma das opções válidas ou envie 'Sair' para cancelar."
         )
+        strict_retry_message = (
+            getattr(workflow, 'strict_retry_message', None) or
+            definition.get('strict_retry_message') or
+            settings_dict.get('strict_retry_message') or
+            "Estamos com instabilidade, vamos iniciar novamente."
+        )
         strict_timeout_message = (
             getattr(workflow, 'strict_timeout_message', None) or
             definition.get('strict_timeout_message') or
@@ -812,6 +818,7 @@ class WorkflowEngine:
         return {
             'strict_mode': strict_mode,
             'strict_fallback_message': strict_fallback_message,
+            'strict_retry_message': strict_retry_message,
             'strict_timeout_message': strict_timeout_message,
             'strict_exit_keywords': raw_exit_kws,
         }

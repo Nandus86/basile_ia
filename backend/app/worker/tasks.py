@@ -2195,6 +2195,107 @@ async def _check_collaborator_workflow_shortcuts(
         return None
 
 
+async def _handle_strict_workflow_error(
+    db,
+    wf,
+    session_id: str,
+    message: str,
+    context_data: Optional[Dict[str, Any]] = None,
+    error: Optional[Exception] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Handle errors for workflows in Strict Mode:
+    - 1st error: sends strict_retry_message ('Estamos com instabilidade, vamos iniciar novamente.')
+      and re-attempts executing the workflow from the beginning.
+    - 2nd error: sends strict_timeout_message / termination, cleans active workflow session,
+      and terminates without returning control to the AI agent.
+    """
+    if not wf:
+        return None
+
+    try:
+        from app.services.workflow_engine import WorkflowEngine
+        engine = WorkflowEngine(db)
+        strict_cfg = engine._get_strict_config(wf)
+        if not strict_cfg.get("strict_mode"):
+            return None
+
+        from app.redis_client import redis_client
+        wf_id_str = str(getattr(wf, 'id', 'default'))
+        redis_key = f"wf_strict_err_count:{wf_id_str}:{session_id}" if session_id else f"wf_strict_err_count:{wf_id_str}"
+        
+        current_count_str = await redis_client.get(redis_key)
+        err_count = int(current_count_str) if current_count_str and str(current_count_str).isdigit() else 0
+
+        retry_msg = strict_cfg.get("strict_retry_message") or "Estamos com instabilidade, vamos iniciar novamente."
+        timeout_msg = strict_cfg.get("strict_timeout_message") or "Desculpe, tivemos uma instabilidade e não conseguimos concluir a automação. O atendimento foi encerrado."
+
+        if err_count == 0:
+            # 1st Error: Record error attempt, send retry message and attempt to restart workflow from start
+            print(f"[WorkflowStrict] ⚠️ 1st error in strict workflow '{wf.name}' for session '{session_id}'. Retrying...")
+            await redis_client.set(redis_key, "1", expire=600)
+
+            try:
+                trigger_data = (context_data or {}).copy()
+                trigger_data["message"] = message
+                retry_res = await engine.execute(
+                    workflow_id=wf.id,
+                    trigger_data=trigger_data,
+                    trigger_type="strict_retry",
+                )
+                final_res = retry_res.get('result')
+                res_text = ""
+                if isinstance(final_res, dict):
+                    res_text = final_res.get("response", final_res.get("output", ""))
+                elif final_res is not None:
+                    res_text = str(final_res)
+
+                combined_text = f"{retry_msg}\n\n{res_text}".strip() if res_text else retry_msg
+
+                direct_payload = {
+                    "__direct_payload": True,
+                    "status": retry_res.get("status", "completed"),
+                    "agent_used": f"Workflow Automation ({wf.name})",
+                    "workflow_name": wf.name,
+                    "response": combined_text,
+                    "message": combined_text,
+                    "is_hitl_pause": retry_res.get("status") == "paused",
+                    "strict_mode": True,
+                }
+                if retry_res.get("status") == "paused":
+                    direct_payload["execution_id"] = str(retry_res.get("execution_id"))
+                if isinstance(final_res, dict):
+                    for k, v in final_res.items():
+                        if k not in direct_payload:
+                            direct_payload[k] = v
+                # Clear error count on success
+                await redis_client.delete(redis_key)
+                return direct_payload
+            except Exception as retry_err:
+                print(f"[WorkflowStrict] ❌ Immediate retry execution failed: {retry_err}")
+                # Fall through to 2nd error termination below
+
+        # 2nd Error: Final termination
+        print(f"[WorkflowStrict] 🛑 2nd error in strict workflow '{wf.name}' for session '{session_id}'. Terminating workflow.")
+        await redis_client.delete(redis_key)
+        if session_id:
+            await redis_client.delete(f"active_workflow_run:{session_id}")
+
+        return {
+            "__direct_payload": True,
+            "status": "completed",
+            "agent_used": f"Workflow Automation ({wf.name})",
+            "workflow_name": wf.name,
+            "response": timeout_msg,
+            "message": timeout_msg,
+            "is_hitl_pause": False,
+            "strict_mode": True,
+        }
+    except Exception as handle_err:
+        print(f"[WorkflowStrict] Error handling strict workflow error: {handle_err}")
+        return None
+
+
 async def _check_workflow_direct_triggers(
     db,
     agent_id: str,
@@ -2334,6 +2435,10 @@ async def _check_workflow_direct_triggers(
 
     except Exception as e:
         print(f"[WorkflowTrigger] ❌ Error executing workflow '{wf.name}': {e}")
+        session_id = (context_data or {}).get("session_id", "")
+        strict_res = await _handle_strict_workflow_error(db, wf, session_id=session_id, message=message, context_data=context_data, error=e)
+        if strict_res:
+            return strict_res
         return None
 
 async def _check_global_workflow_shortcuts(
@@ -2467,6 +2572,9 @@ async def _check_global_workflow_shortcuts(
         import traceback
         print(f"[WorkflowTrigger] ❌ Error executing global workflow '{wf.name}': {e}")
         traceback.print_exc()
+        strict_res = await _handle_strict_workflow_error(db, wf, session_id=session_id, message=message, context_data=context_data, error=e)
+        if strict_res:
+            return strict_res
         return None
 
 
@@ -3087,6 +3195,32 @@ async def process_message_task(
                         print(f"[Task] ❌ Failed to resume active workflow {active_wf_run} after {max_resume_retries} attempts: {last_resume_err}")
                         import traceback
                         traceback.print_exc()
+
+                        # Check if resumed workflow was in strict mode
+                        try:
+                            from app.models.workflow_execution import WorkflowExecution
+                            from app.models.workflow import Workflow
+                            exec_rec = await db.scalar(sa_select(WorkflowExecution).where(WorkflowExecution.id == UUID(active_wf_run)))
+                            if exec_rec:
+                                wf_rec = await db.scalar(sa_select(Workflow).where(Workflow.id == exec_rec.workflow_id))
+                                if wf_rec:
+                                    strict_res = await _handle_strict_workflow_error(db, wf_rec, session_id=session_id, message=message, context_data=context_data, error=last_resume_err)
+                                    if strict_res:
+                                        processing_time = (time.time() - start_time) * 1000
+                                        response_data = {
+                                            "status": strict_res.get("status", "completed"),
+                                            "processing_time_ms": processing_time,
+                                            "workflow_name": wf_rec.name,
+                                            "is_hitl_pause": strict_res.get("is_hitl_pause", False),
+                                            "strict_mode": True,
+                                        }
+                                        response_data.update(strict_res)
+                                        if callback_url:
+                                            from app.worker.tasks import _send_callback
+                                            await _send_callback(callback_url, response_data)
+                                        return response_data
+                        except Exception as strict_fetch_err:
+                            print(f"[Task] Error checking strict mode on resume failure: {strict_fetch_err}")
 
                         err_str = str(last_resume_err).lower()
                         is_infra_err = any(k in err_str for k in [

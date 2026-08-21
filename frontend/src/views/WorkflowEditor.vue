@@ -26,6 +26,15 @@
       <v-chip class="mr-3" :color="saveStatus.color" variant="flat" size="small">
         <v-icon start size="14">{{ saveStatus.icon }}</v-icon>{{ saveStatus.text }}
       </v-chip>
+      <v-btn
+        :variant="showSchemaExplorer ? 'flat' : 'tonal'"
+        :color="showSchemaExplorer ? 'purple-darken-1' : 'purple-lighten-2'"
+        class="mr-2"
+        @click="showSchemaExplorer = !showSchemaExplorer"
+        prepend-icon="mdi-code-json"
+      >
+        Explorador de Dados
+      </v-btn>
       <v-btn variant="tonal" class="mr-2" @click="openSettings" prepend-icon="mdi-cog">Configurações</v-btn>
       <v-btn variant="tonal" color="info" class="mr-2" @click="showTestDialog = true" prepend-icon="mdi-play-circle">Testar</v-btn>
       <v-btn color="primary" @click="saveDefinition" :loading="saving" prepend-icon="mdi-content-save">Salvar</v-btn>
@@ -242,6 +251,23 @@
             </div>
           </div>
         </div>
+      </v-navigation-drawer>
+
+      <!-- Schema Explorer Drawer (Drag & Drop JSON Tree) -->
+      <v-navigation-drawer
+        v-model="showSchemaExplorer"
+        location="right"
+        width="380"
+        color="surface"
+        elevation="5"
+        class="schema-explorer-drawer border-l"
+        style="z-index: 1005;"
+      >
+        <JsonSchemaTree
+          :payload="computedExplorerPayload"
+          root-prefix="$trigger.payload"
+          @update:payload="onUpdateExplorerPayload"
+        />
       </v-navigation-drawer>
     </div>
 
@@ -561,13 +587,26 @@
             ></v-textarea>
 
             <v-textarea
+              v-model="workflow.strict_retry_message"
+              label="Mensagem de Instabilidade / Nova Tentativa (1º Erro)"
+              rows="2"
+              variant="outlined"
+              density="compact"
+              placeholder="Estamos com instabilidade, vamos iniciar novamente."
+              hint="Mensagem enviada na primeira falha técnica para reiniciar o fluxo automaticamente"
+              persistent-hint
+              class="mb-3"
+              @update:model-value="markUnsaved"
+            ></v-textarea>
+
+            <v-textarea
               v-model="workflow.strict_timeout_message"
-              label="Mensagem de Tempo Esgotado / Timeout"
+              label="Mensagem de Tempo Esgotado / Encerramento Definitivo"
               rows="2"
               variant="outlined"
               density="compact"
               placeholder="Tempo limite de resposta esgotado. O atendimento foi encerrado."
-              hint="Mensagem enviada proativamente ao usuário quando o tempo de espera do bloco expirar"
+              hint="Mensagem enviada quando o tempo de espera expirar ou se a automação falhar definitivamente"
               persistent-hint
               class="mb-3"
               @update:model-value="markUnsaved"
@@ -610,6 +649,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import WorkflowNode from '@/components/workflow/WorkflowNode.vue'
 import BlockPropertiesPanel from '@/components/workflow/BlockPropertiesPanel.vue'
+import JsonSchemaTree from '@/components/workflow/JsonSchemaTree.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -635,11 +675,46 @@ const saveStatus = ref({ text: 'Salvo', color: 'success', icon: 'mdi-check' })
 const editingName = ref(false)
 const showSettingsDialog = ref(false)
 const showTestDialog = ref(false)
+const showSchemaExplorer = ref(false)
 const testPayloadJson = ref('{\n  \n}')
 const testResult = ref(null)
 const testing = ref(false)
 const testResultTab = ref('final')
 const showAdjacentBlocks = ref(false)
+
+const computedExplorerPayload = computed(() => {
+  let basePayload = {}
+  try {
+    if (testPayloadJson.value && testPayloadJson.value.trim()) {
+      basePayload = JSON.parse(testPayloadJson.value)
+    }
+  } catch (e) {
+    basePayload = {}
+  }
+
+  // If there are block outputs from testResult, merge them into the payload explorer
+  if (testResult.value && Array.isArray(testResult.value.blocks_executed)) {
+    const outputs = {}
+    for (const b of testResult.value.blocks_executed) {
+      if (b.output_key && b.output !== undefined && b.output !== null) {
+        outputs[b.output_key] = b.output
+      }
+    }
+    if (Object.keys(outputs).length > 0) {
+      return {
+        ...basePayload,
+        ...outputs
+      }
+    }
+  }
+
+  return basePayload
+})
+
+function onUpdateExplorerPayload(newPayload) {
+  testPayloadJson.value = JSON.stringify(newPayload, null, 2)
+  markUnsaved()
+}
 
 // Floating edge styling menu variables
 const selectedEdge = ref(null)
@@ -886,6 +961,10 @@ async function loadWorkflow() {
     // Ensure strict_fallback_message has default text
     if (workflow.value.strict_fallback_message === undefined || workflow.value.strict_fallback_message === null) {
       workflow.value.strict_fallback_message = workflow.value.definition?.strict_fallback_message ?? 'Desculpe, não entendi. Por favor, escolha uma das opções acima ou digite "Sair" para cancelar.'
+    }
+    // Ensure strict_retry_message has default text
+    if (workflow.value.strict_retry_message === undefined || workflow.value.strict_retry_message === null) {
+      workflow.value.strict_retry_message = workflow.value.definition?.strict_retry_message ?? 'Estamos com instabilidade, vamos iniciar novamente.'
     }
     // Ensure strict_timeout_message has default text
     if (workflow.value.strict_timeout_message === undefined || workflow.value.strict_timeout_message === null) {
@@ -1145,12 +1224,14 @@ async function saveDefinition() {
       return_direct_payload: workflow.value.return_direct_payload ?? false,
       strict_mode: workflow.value.strict_mode ?? false,
       strict_fallback_message: workflow.value.strict_fallback_message || '',
+      strict_retry_message: workflow.value.strict_retry_message || 'Estamos com instabilidade, vamos iniciar novamente.',
       strict_timeout_message: workflow.value.strict_timeout_message || '',
       strict_exit_keywords: workflow.value.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar'],
       definition: {
         ...definition,
         strict_mode: workflow.value.strict_mode ?? false,
         strict_fallback_message: workflow.value.strict_fallback_message || '',
+        strict_retry_message: workflow.value.strict_retry_message || 'Estamos com instabilidade, vamos iniciar novamente.',
         strict_timeout_message: workflow.value.strict_timeout_message || '',
         strict_exit_keywords: workflow.value.strict_exit_keywords || ['sair', 'cancelar', 'menu', 'parar', 'encerrar'],
       }

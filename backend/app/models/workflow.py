@@ -33,6 +33,7 @@ class Workflow(Base):
     # Strict Workflow Mode (locks conversation inside workflow, blocking AI agent and handling invalid retries)
     strict_mode = Column(Boolean, default=False, nullable=False)
     strict_fallback_message = Column(Text, nullable=True)
+    strict_retry_message = Column(Text, nullable=True, default="Estamos com instabilidade, vamos iniciar novamente.")
     strict_timeout_message = Column(Text, nullable=True)
     strict_exit_keywords = Column(JSON, default=lambda: ["sair", "cancelar", "menu", "parar", "encerrar"])
     
