@@ -84,7 +84,7 @@
 
       <div v-if="!isEditingPayload" class="text-caption text-medium-emphasis d-flex align-center" style="font-size: 11px;">
         <v-icon size="13" class="mr-1 text-primary">mdi-cursor-default-click-outline</v-icon>
-        <span><strong>Clique no campo</strong> para copiar ou <strong>arraste</strong> para qualquer campo.</span>
+        <span>Clique para <strong>abrir/copiar</strong> ou <strong>arraste</strong> para qualquer campo.</span>
       </div>
     </div>
 
@@ -231,17 +231,33 @@ function applyRawPayload() {
   }
 }
 
-// Build Tree Node Hierarchy for a given data object
-function buildTree(obj, parentPath, depth = 0) {
-  if (obj === null || obj === undefined) return []
+function tryParseJson(val) {
+  if (typeof val === 'string' && val.length > 1) {
+    const trimmed = val.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        if (typeof parsed === 'object' && parsed !== null) {
+          return parsed
+        }
+      } catch (e) {}
+    }
+  }
+  return val
+}
 
+// Build Tree Node Hierarchy for a given data object
+function buildTree(rawObj, parentPath, depth = 0) {
+  if (rawObj === null || rawObj === undefined) return []
+
+  const obj = tryParseJson(rawObj)
   const nodes = []
   if (typeof obj === 'object') {
     const isArray = Array.isArray(obj)
     const keys = Object.keys(obj)
 
     for (const key of keys) {
-      const val = obj[key]
+      const val = tryParseJson(obj[key])
       const fullPath = `${parentPath}.${key}`
       const type = getDataType(val)
       const isComplex = type === 'object' || type === 'array'
@@ -259,7 +275,6 @@ function buildTree(obj, parentPath, depth = 0) {
       nodes.push(node)
     }
   } else {
-    // Primitive root
     nodes.push({
       key: 'value',
       fullPath: parentPath,
@@ -327,7 +342,6 @@ const allSections = computed(() => {
     })
   }
 
-  // Fallback to single payload prop
   const rawNodes = buildTree(props.payload, props.rootPrefix, 0)
   return [{
     id: 'trigger',
@@ -357,26 +371,43 @@ function isSectionOpen(sectionId) {
 }
 
 function toggleSectionCollapse(sectionId) {
-  collapsedSections.value[sectionId] = !collapsedSections.value[sectionId]
+  collapsedSections.value = {
+    ...collapsedSections.value,
+    [sectionId]: !collapsedSections.value[sectionId]
+  }
 }
 
 function expandAll() {
   collapsedSections.value = {}
-  function setExpand(nodes, val) {
+  const nextExpanded = {}
+  function setExpand(nodes) {
     for (const n of nodes) {
-      expandedMap.value[n.fullPath] = val
+      nextExpanded[n.fullPath] = true
       if (n.children && n.children.length > 0) {
-        setExpand(n.children, val)
+        setExpand(n.children)
       }
     }
   }
   for (const s of allSections.value) {
-    setExpand(s.nodes, true)
+    setExpand(s.nodes)
   }
+  expandedMap.value = nextExpanded
 }
 
 function collapseAll() {
-  expandedMap.value = {}
+  const nextExpanded = {}
+  function setCollapse(nodes) {
+    for (const n of nodes) {
+      nextExpanded[n.fullPath] = false
+      if (n.children && n.children.length > 0) {
+        setCollapse(n.children)
+      }
+    }
+  }
+  for (const s of allSections.value) {
+    setCollapse(s.nodes)
+  }
+  expandedMap.value = nextExpanded
 }
 
 function onCopyTag(tag, fullPath) {
@@ -403,20 +434,30 @@ const JsonTreeNode = defineComponent({
   },
   emits: ['copy'],
   setup(nodeProps, { emit: subEmit }) {
-    const isExpanded = computed({
-      get: () => {
-        if (nodeProps.searchQuery) return true
-        return expandedMap.value[nodeProps.node.fullPath] ?? false
-      },
-      set: (v) => {
-        expandedMap.value[nodeProps.node.fullPath] = v
-      }
+    const isExpanded = computed(() => {
+      if (nodeProps.searchQuery) return true
+      const state = expandedMap.value[nodeProps.node.fullPath]
+      if (state !== undefined) return state
+      // Auto-expand root and depth 0/1 by default
+      return nodeProps.node.depth < 2
     })
 
     function toggleExpand(e) {
       if (e) e.stopPropagation()
       if (nodeProps.node.isComplex) {
-        isExpanded.value = !isExpanded.value
+        const next = !isExpanded.value
+        expandedMap.value = {
+          ...expandedMap.value,
+          [nodeProps.node.fullPath]: next
+        }
+      }
+    }
+
+    function onRowClick(e) {
+      if (nodeProps.node.isComplex) {
+        toggleExpand(e)
+      } else {
+        subEmit('copy', nodeProps.node.templatePath, nodeProps.node.fullPath)
       }
     }
 
@@ -435,10 +476,6 @@ const JsonTreeNode = defineComponent({
       }
     }
 
-    function onNodeClick() {
-      subEmit('copy', nodeProps.node.templatePath, nodeProps.node.fullPath)
-    }
-
     function getTypeColor(type) {
       switch (type) {
         case 'string': return '#10B981'
@@ -452,8 +489,8 @@ const JsonTreeNode = defineComponent({
 
     function formatValuePreview(val, type) {
       if (type === 'null') return 'null'
-      if (type === 'array') return `[${val.length} itens]`
-      if (type === 'object') return `{${Object.keys(val).length} chaves}`
+      if (type === 'array') return `[${Array.isArray(val) ? val.length : 0} itens]`
+      if (type === 'object') return `{${val && typeof val === 'object' ? Object.keys(val).length : 0} campos}`
       if (type === 'string') return `"${val.length > 30 ? val.substring(0, 27) + '...' : val}"`
       return String(val)
     }
@@ -473,8 +510,10 @@ const JsonTreeNode = defineComponent({
           style: { paddingLeft },
           draggable: true,
           onDragstart: onDragStart,
-          onClick: onNodeClick,
-          title: `Clique para copiar ${node.templatePath} ou arraste para qualquer campo`
+          onClick: onRowClick,
+          title: node.isComplex
+            ? `Clique para abrir/fechar campos de ${node.key} ou arraste`
+            : `Clique para copiar ${node.templatePath} ou arraste para qualquer campo`
         }, [
           // Left: Arrow + Drag Icon + Key + Value
           h('div', {

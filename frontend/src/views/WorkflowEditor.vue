@@ -1466,45 +1466,12 @@ function handleGlobalDragOver(e) {
   }
 }
 
-function handleGlobalDrop(e) {
-  const target = e.target
-  const fieldContainer = target.closest('.v-field, .v-input')
-  const inputEl = target.matches('input, textarea') ? target : fieldContainer?.querySelector('input, textarea')
-
-  const textToInsert = e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text') || (typeof window !== 'undefined' ? window.__draggedWorkflowTag : '')
-
-  if (inputEl && textToInsert) {
-    e.preventDefault()
-    e.stopPropagation()
-
-    const start = inputEl.selectionStart !== null && inputEl.selectionStart !== undefined ? inputEl.selectionStart : (inputEl.value?.length || 0)
-    const end = inputEl.selectionEnd !== null && inputEl.selectionEnd !== undefined ? inputEl.selectionEnd : (inputEl.value?.length || 0)
-    const val = inputEl.value || ''
-    const newVal = val.substring(0, start) + textToInsert + val.substring(end)
-    
-    inputEl.value = newVal
-    
-    const newCursorPos = start + textToInsert.length
-    setTimeout(() => {
-      try {
-        inputEl.focus()
-        inputEl.setSelectionRange(newCursorPos, newCursorPos)
-      } catch (err) {}
-    }, 10)
-
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }))
-    inputEl.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-}
-
 onMounted(() => {
   window.addEventListener('dragover', handleGlobalDragOver)
-  window.addEventListener('drop', handleGlobalDrop)
 })
 
 onUnmounted(() => {
   window.removeEventListener('dragover', handleGlobalDragOver)
-  window.removeEventListener('drop', handleGlobalDrop)
 })
 
 function goBack() { router.push('/workflows') }
