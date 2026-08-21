@@ -1,5 +1,10 @@
 <template>
-  <div class="block-panel pa-4 h-100 d-flex flex-column">
+  <div
+    ref="panelRef"
+    class="block-panel pa-4 h-100 d-flex flex-column"
+    @dragover="handlePanelDragOver"
+    @drop="handlePanelDrop"
+  >
     <!-- Header -->
     <div class="d-flex justify-space-between align-center mb-3">
       <h3 class="text-subtitle-1 d-flex align-center font-weight-bold">
@@ -1534,7 +1539,9 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+
+const panelRef = ref(null)
 
 const props = defineProps({
   block: { type: Object, required: true },
@@ -2008,6 +2015,62 @@ function onTriggerTypeChange(val) {
 function emitUpdate() {
   emit('update', props.block)
 }
+
+function handlePanelDragOver(e) {
+  const target = e.target
+  if (target && (target.matches('input, textarea') || target.closest('.v-field, .v-input, textarea, input'))) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+}
+
+function handlePanelDrop(e) {
+  const target = e.target
+  const fieldContainer = target.closest('.v-field, .v-input')
+  const inputEl = target.matches('input, textarea') ? target : fieldContainer?.querySelector('input, textarea')
+
+  const textToInsert = e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text') || (typeof window !== 'undefined' ? window.__draggedWorkflowTag : '')
+
+  if (inputEl && textToInsert) {
+    e.preventDefault()
+    e.stopPropagation()
+
+    // Insert at cursor position or append
+    const start = inputEl.selectionStart !== null && inputEl.selectionStart !== undefined ? inputEl.selectionStart : (inputEl.value?.length || 0)
+    const end = inputEl.selectionEnd !== null && inputEl.selectionEnd !== undefined ? inputEl.selectionEnd : (inputEl.value?.length || 0)
+    const val = inputEl.value || ''
+    const newVal = val.substring(0, start) + textToInsert + val.substring(end)
+    
+    inputEl.value = newVal
+    
+    const newCursorPos = start + textToInsert.length
+    setTimeout(() => {
+      try {
+        inputEl.focus()
+        inputEl.setSelectionRange(newCursorPos, newCursorPos)
+      } catch (err) {}
+    }, 10)
+
+    // Dispatch native events to update Vuetify v-model
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }))
+    inputEl.dispatchEvent(new Event('change', { bubbles: true }))
+    emitUpdate()
+  }
+}
+
+onMounted(() => {
+  if (panelRef.value) {
+    panelRef.value.addEventListener('dragover', handlePanelDragOver)
+    panelRef.value.addEventListener('drop', handlePanelDrop)
+  }
+})
+
+onUnmounted(() => {
+  if (panelRef.value) {
+    panelRef.value.removeEventListener('dragover', handlePanelDragOver)
+    panelRef.value.removeEventListener('drop', handlePanelDrop)
+  }
+})
 
 function openSubWorkflow(workflowId) {
   if (workflowId) {

@@ -83,8 +83,8 @@
       </div>
 
       <div v-if="!isEditingPayload" class="text-caption text-medium-emphasis d-flex align-center" style="font-size: 11px;">
-        <v-icon size="13" class="mr-1 text-primary">mdi-drag</v-icon>
-        <span>Arraste o campo ou clique em <v-icon size="11">mdi-content-copy</v-icon> para inserir a tag.</span>
+        <v-icon size="13" class="mr-1 text-primary">mdi-cursor-default-click-outline</v-icon>
+        <span><strong>Clique no campo</strong> para copiar ou <strong>arraste</strong> para qualquer campo.</span>
       </div>
     </div>
 
@@ -162,6 +162,7 @@
               :key="node.fullPath"
               :node="node"
               :search-query="searchQuery"
+              :last-copied="lastCopiedPath"
               @copy="onCopyTag"
             />
           </div>
@@ -172,7 +173,7 @@
     <!-- Toast Copy Feedback -->
     <v-snackbar v-model="showCopySnackbar" timeout="2000" color="success" location="bottom right">
       <v-icon start size="16">mdi-check-circle</v-icon>
-      Copiado: <code>{{ copiedText }}</code>
+      Copiado para a área de transferência: <code>{{ copiedText }}</code>
     </v-snackbar>
   </div>
 </template>
@@ -181,7 +182,6 @@
 import { ref, computed, watch, defineComponent, h } from 'vue'
 
 const props = defineProps({
-  // Direct payload mode (legacy / single root)
   payload: {
     type: Object,
     default: () => ({})
@@ -190,7 +190,6 @@ const props = defineProps({
     type: String,
     default: '$trigger.payload'
   },
-  // Multi-source array of executed blocks and trigger data
   sources: {
     type: Array,
     default: () => []
@@ -209,6 +208,7 @@ const isEditingPayload = ref(false)
 const rawPayloadString = ref('')
 const showCopySnackbar = ref(false)
 const copiedText = ref('')
+const lastCopiedPath = ref('')
 const expandedMap = ref({})
 const collapsedSections = ref({})
 
@@ -379,11 +379,18 @@ function collapseAll() {
   expandedMap.value = {}
 }
 
-function onCopyTag(tag) {
+function onCopyTag(tag, fullPath) {
   navigator.clipboard.writeText(tag)
   copiedText.value = tag
+  lastCopiedPath.value = fullPath || tag
   showCopySnackbar.value = true
   emit('copy', tag)
+
+  setTimeout(() => {
+    if (lastCopiedPath.value === (fullPath || tag)) {
+      lastCopiedPath.value = ''
+    }
+  }, 1800)
 }
 
 // ── Recursive Node Sub-Component ──
@@ -391,7 +398,8 @@ const JsonTreeNode = defineComponent({
   name: 'JsonTreeNode',
   props: {
     node: { type: Object, required: true },
-    searchQuery: { type: String, default: '' }
+    searchQuery: { type: String, default: '' },
+    lastCopied: { type: String, default: '' }
   },
   emits: ['copy'],
   setup(nodeProps, { emit: subEmit }) {
@@ -405,7 +413,8 @@ const JsonTreeNode = defineComponent({
       }
     })
 
-    function toggleExpand() {
+    function toggleExpand(e) {
+      if (e) e.stopPropagation()
       if (nodeProps.node.isComplex) {
         isExpanded.value = !isExpanded.value
       }
@@ -413,6 +422,7 @@ const JsonTreeNode = defineComponent({
 
     function onDragStart(event) {
       event.dataTransfer.setData('text/plain', nodeProps.node.templatePath)
+      event.dataTransfer.setData('text', nodeProps.node.templatePath)
       event.dataTransfer.setData('application/json', JSON.stringify({
         path: nodeProps.node.fullPath,
         template: nodeProps.node.templatePath,
@@ -420,6 +430,13 @@ const JsonTreeNode = defineComponent({
         value: nodeProps.node.value
       }))
       event.dataTransfer.effectAllowed = 'copy'
+      if (typeof window !== 'undefined') {
+        window.__draggedWorkflowTag = nodeProps.node.templatePath
+      }
+    }
+
+    function onNodeClick() {
+      subEmit('copy', nodeProps.node.templatePath, nodeProps.node.fullPath)
     }
 
     function getTypeColor(type) {
@@ -442,29 +459,34 @@ const JsonTreeNode = defineComponent({
     }
 
     return () => {
-      const { node } = nodeProps
+      const { node, lastCopied } = nodeProps
+      const isJustCopied = lastCopied === node.fullPath
       const typeColor = getTypeColor(node.type)
       const paddingLeft = `${node.depth * 14 + 6}px`
 
       return h('div', { class: 'tree-node-wrapper' }, [
         h('div', {
-          class: ['tree-node-row d-flex align-center justify-space-between py-1 px-1 rounded', { 'is-complex': node.isComplex }],
+          class: [
+            'tree-node-row d-flex align-center justify-space-between py-1 px-1 rounded cursor-pointer',
+            { 'is-complex': node.isComplex, 'is-copied': isJustCopied }
+          ],
           style: { paddingLeft },
           draggable: true,
           onDragstart: onDragStart,
-          title: `Arrastar ${node.templatePath}`
+          onClick: onNodeClick,
+          title: `Clique para copiar ${node.templatePath} ou arraste para qualquer campo`
         }, [
           // Left: Arrow + Drag Icon + Key + Value
           h('div', {
-            class: 'd-flex align-center overflow-hidden flex-grow-1 mr-1 cursor-pointer',
-            onClick: toggleExpand
+            class: 'd-flex align-center overflow-hidden flex-grow-1 mr-1'
           }, [
             // Expand/Collapse icon
             node.isComplex
               ? h('v-icon', {
                   size: 14,
-                  class: 'mr-1 text-medium-emphasis',
-                  style: { transform: isExpanded.value ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }
+                  class: 'mr-1 text-medium-emphasis expand-arrow',
+                  style: { transform: isExpanded.value ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' },
+                  onClick: toggleExpand
                 }, () => 'mdi-chevron-right')
               : h('span', { style: { width: '18px', display: 'inline-block' } }),
 
@@ -501,18 +523,29 @@ const JsonTreeNode = defineComponent({
             }, formatValuePreview(node.value, node.type))
           ]),
 
-          // Right: Copy Tag Button
-          h('v-btn', {
-            icon: true,
-            size: 'x-small',
-            variant: 'text',
-            class: 'copy-btn ml-1',
-            title: `Copiar ${node.templatePath}`,
-            onClick: (e) => {
-              e.stopPropagation()
-              subEmit('copy', node.templatePath)
-            }
-          }, () => h('v-icon', { size: 13, color: 'primary' }, () => 'mdi-content-copy'))
+          // Right: Copied indicator or Copy button
+          isJustCopied
+            ? h('v-chip', {
+                size: 'x-small',
+                color: 'success',
+                variant: 'flat',
+                class: 'copied-chip text-caption font-weight-bold px-1',
+                style: { height: '18px', fontSize: '10px' }
+              }, () => [
+                h('v-icon', { start: true, size: 11 }, () => 'mdi-check'),
+                'Copiado'
+              ])
+            : h('v-btn', {
+                icon: true,
+                size: 'x-small',
+                variant: 'text',
+                class: 'copy-btn ml-1',
+                title: `Copiar ${node.templatePath}`,
+                onClick: (e) => {
+                  e.stopPropagation()
+                  subEmit('copy', node.templatePath, node.fullPath)
+                }
+              }, () => h('v-icon', { size: 13, color: 'primary' }, () => 'mdi-content-copy'))
         ]),
 
         // Children (if expanded)
@@ -523,7 +556,8 @@ const JsonTreeNode = defineComponent({
                   key: child.fullPath,
                   node: child,
                   searchQuery: nodeProps.searchQuery,
-                  onCopy: (t) => subEmit('copy', t)
+                  lastCopied: nodeProps.lastCopied,
+                  onCopy: (t, p) => subEmit('copy', t, p)
                 })
               )
             )
@@ -550,13 +584,18 @@ const JsonTreeNode = defineComponent({
 }
 
 .tree-node-row {
-  transition: background-color 0.15s ease;
+  transition: all 0.15s ease;
   border: 1px solid transparent;
 }
 
 .tree-node-row:hover {
-  background-color: rgba(139, 92, 246, 0.1) !important;
-  border-color: rgba(139, 92, 246, 0.2);
+  background-color: rgba(139, 92, 246, 0.12) !important;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.tree-node-row.is-copied {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+  border-color: rgba(16, 185, 129, 0.5) !important;
 }
 
 .tree-node-row:hover .drag-handle {
@@ -574,6 +613,11 @@ const JsonTreeNode = defineComponent({
 
 .drag-handle {
   cursor: grab;
+}
+
+.expand-arrow:hover {
+  color: #F3F4F6 !important;
+  transform: scale(1.2);
 }
 
 .copy-btn {
