@@ -40,10 +40,37 @@
           <span>Outro</span>
         </div>
       </div>
+
+      <!-- Error Routing branch indicators -->
+      <div v-if="hasErrorRouting" class="error-routing-indicators d-flex flex-column align-end pr-1 mt-1">
+        <span class="text-caption font-weight-bold" style="font-size: 9px; color: #10B981; line-height: 14px;">● Sucesso</span>
+        <span class="text-caption font-weight-bold" style="font-size: 9px; color: #EF4444; line-height: 14px;">● Erro</span>
+      </div>
     </div>
 
     <Handle v-if="showTargetHandle" type="target" :position="Position.Left" class="handle-in" />
     <Handle v-if="showSourceHandle" type="source" :position="Position.Right" class="handle-out" />
+    
+    <!-- Action Blocks: Error Routing dual handles -->
+    <Handle
+      v-if="hasErrorRouting"
+      type="source"
+      :position="Position.Right"
+      id="success"
+      class="handle-branch handle-true"
+      :style="{ top: '35%' }"
+      title="Saída de Sucesso"
+    />
+    <Handle
+      v-if="hasErrorRouting"
+      type="source"
+      :position="Position.Right"
+      id="error"
+      class="handle-branch handle-false"
+      :style="{ top: '65%' }"
+      title="Saída de Erro"
+    />
+
     <!-- IF/Router: extra handles for branching -->
     <Handle
       v-if="data.type === 'if'"
@@ -164,8 +191,12 @@ const subtitle = computed(() => {
   }
 })
 
+const hasErrorRouting = computed(() => {
+  return props.data.type !== 'if' && props.data.type !== 'router' && props.data.type !== 'trigger' && (props.data.config?.error_routing === true || props.data.config?.continue_on_error === true)
+})
+
 const showTargetHandle = computed(() => props.data.type !== 'trigger')
-const showSourceHandle = computed(() => props.data.type !== 'if' && props.data.type !== 'router')
+const showSourceHandle = computed(() => props.data.type !== 'if' && props.data.type !== 'router' && !hasErrorRouting.value)
 
 const statusColor = computed(() => {
   switch (props.data._status) {

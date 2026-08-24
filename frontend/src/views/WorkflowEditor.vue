@@ -1109,9 +1109,9 @@ function onDrop(event) {
 function onConnect(params) {
   const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'default'}`
   const label = params.sourceHandle || ''
-  const defaultColor = (params.sourceHandle === 'true' || params.sourceHandle === 'match')
+  const defaultColor = (params.sourceHandle === 'true' || params.sourceHandle === 'match' || params.sourceHandle === 'success')
     ? '#10B981'
-    : (params.sourceHandle === 'false' || params.sourceHandle === 'default')
+    : (params.sourceHandle === 'false' || params.sourceHandle === 'default' || params.sourceHandle === 'error')
       ? '#EF4444'
       : '#6366F1';
   edges.value = [...edges.value, {
@@ -1412,9 +1412,9 @@ function applyExecutionHighlights(executedBlocks) {
       }
     } else {
       const sourceHandleVal = e.sourceHandle || e.label || null
-      const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match')
+      const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match' || sourceHandleVal === 'success')
         ? '#10B981'
-        : (sourceHandleVal === 'false' || sourceHandleVal === 'default')
+        : (sourceHandleVal === 'false' || sourceHandleVal === 'default' || sourceHandleVal === 'error')
           ? '#EF4444'
           : (e.data?.color || '#6366F1')
       return {
@@ -1440,9 +1440,9 @@ function clearExecutionHighlights() {
   }))
   edges.value = edges.value.map(e => {
     const sourceHandleVal = e.sourceHandle || e.label || null
-    const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match')
+    const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'match' || sourceHandleVal === 'success')
       ? '#10B981'
-      : (sourceHandleVal === 'false' || sourceHandleVal === 'default')
+      : (sourceHandleVal === 'false' || sourceHandleVal === 'default' || sourceHandleVal === 'error')
         ? '#EF4444'
         : (e.data?.color || '#6366F1')
     return {

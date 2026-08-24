@@ -530,6 +530,78 @@ async def resume_workflow_execution(
         raise HTTPException(status_code=500, detail=f"Workflow resume failed: {str(e)}")
 
 
+@router.post("/trigger/internal/{path:path}")
+async def trigger_internal_workflow_by_path(
+    path: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Trigger a workflow synchronously via internal webhook path.
+    Executes in-memory immediately and returns the complete final result/context.
+    Ideal for internal services, MCP tools, and scripts that need instant response.
+    """
+    try:
+        trigger_data = await request.json()
+    except Exception:
+        trigger_data = {}
+
+    # Find workflow by internal_webhook or webhook trigger path
+    result = await db.execute(select(Workflow).where(Workflow.is_active == True))
+    workflows = result.scalars().all()
+
+    target_wf = None
+    for wf in workflows:
+        definition = wf.definition or {}
+        blocks = definition.get("blocks", [])
+        
+        block_list = blocks if isinstance(blocks, list) else list(blocks.values()) if isinstance(blocks, dict) else []
+        for block in block_list:
+            if block.get("type") == "trigger":
+                config = block.get("config", {})
+                trigger_type = config.get("trigger_type")
+                if trigger_type in ("internal_webhook", "webhook") and config.get("webhook_path") == path:
+                    target_wf = wf
+                    break
+        if target_wf:
+            break
+
+    if not target_wf:
+        raise HTTPException(status_code=404, detail=f"No active workflow found with internal webhook trigger path: {path}")
+
+    from app.services.workflow_engine import WorkflowEngine
+    engine = WorkflowEngine(db)
+
+    try:
+        result_context = await engine.execute(
+            workflow_id=target_wf.id,
+            trigger_data=trigger_data,
+            trigger_type="internal_webhook"
+        )
+
+        if isinstance(result_context, dict) and result_context.get("status") == "early_response":
+            exec_id = result_context.get("execution_id")
+            next_block = result_context.get("current_block_id")
+            background_tasks.add_task(engine.continue_background_execution, exec_id, next_block)
+            return result_context.get("result")
+
+        # Fetch latest execution to get structured result if available
+        exec_result = await db.execute(
+            select(WorkflowExecution)
+            .where(WorkflowExecution.workflow_id == target_wf.id)
+            .order_by(WorkflowExecution.created_at.desc())
+            .limit(1)
+        )
+        execution = exec_result.scalar_one_or_none()
+        if execution and execution.result is not None:
+            return execution.result
+        return result_context
+    except Exception as e:
+        logger.error(f"[Workflows API] Internal synchronous workflow execution failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
+
+
 @router.post("/trigger/{path:path}")
 async def trigger_workflow_by_path(
     path: str,
@@ -548,25 +620,22 @@ async def trigger_workflow_by_path(
     workflows = result.scalars().all()
 
     target_wf = None
+    is_internal_trigger = False
     for wf in workflows:
         definition = wf.definition or {}
         blocks = definition.get("blocks", [])
         
         # Check v2 blocks
-        if isinstance(blocks, list):
-            for block in blocks:
-                if block.get("type") == "trigger":
-                    config = block.get("config", {})
-                    if config.get("trigger_type") == "webhook" and config.get("webhook_path") == path:
-                        target_wf = wf
-                        break
-        elif isinstance(blocks, dict):
-            for block in blocks.values():
-                if block.get("type") == "trigger":
-                    config = block.get("config", {})
-                    if config.get("trigger_type") == "webhook" and config.get("webhook_path") == path:
-                        target_wf = wf
-                        break
+        block_list = blocks if isinstance(blocks, list) else list(blocks.values()) if isinstance(blocks, dict) else []
+        for block in block_list:
+            if block.get("type") == "trigger":
+                config = block.get("config", {})
+                ttype = config.get("trigger_type")
+                if ttype in ("webhook", "internal_webhook") and config.get("webhook_path") == path:
+                    target_wf = wf
+                    if ttype == "internal_webhook":
+                        is_internal_trigger = True
+                    break
         if target_wf:
             break
 
@@ -576,11 +645,11 @@ async def trigger_workflow_by_path(
     from app.services.workflow_engine import WorkflowEngine
     engine = WorkflowEngine(db)
 
-    if target_wf.return_direct_payload:
+    if target_wf.return_direct_payload or is_internal_trigger:
         result_context = await engine.execute(
             workflow_id=target_wf.id,
             trigger_data=trigger_data,
-            trigger_type="webhook"
+            trigger_type="internal_webhook" if is_internal_trigger else "webhook"
         )
         
         if isinstance(result_context, dict) and result_context.get("status") == "early_response":

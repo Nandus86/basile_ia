@@ -48,7 +48,8 @@
           v-model="config.trigger_type"
           :items="[
             { title: 'Evento de Entrada (Padrão)', value: 'event' },
-            { title: 'Webhook Externo (HTTP)', value: 'webhook' },
+            { title: 'Webhook Externo (Assíncrono / Worker)', value: 'webhook' },
+            { title: 'Webhook Interno (Síncrono / Imediato)', value: 'internal_webhook' },
             { title: 'Agendamento (Cron/Horário)', value: 'schedule' },
             { title: 'Disparo Manual (Teste)', value: 'manual' }
           ]"
@@ -70,7 +71,7 @@
           </v-alert>
         </div>
 
-        <!-- Webhook Trigger Configuration -->
+        <!-- Webhook Trigger Configuration (External) -->
         <div v-if="config.trigger_type === 'webhook'">
           <v-text-field
             v-model="config.webhook_path"
@@ -79,13 +80,13 @@
             variant="outlined"
             density="compact"
             class="mb-3"
-            hint="Defina um caminho único para disparar este workflow"
+            hint="Defina um caminho único para disparar este workflow externamente"
             persistent-hint
             @update:model-value="emitUpdate"
           ></v-text-field>
           
           <v-alert v-if="config.webhook_path" type="success" variant="tonal" density="compact" class="mb-3 text-caption">
-            <div class="font-weight-bold mb-1">URL para Disparo:</div>
+            <div class="font-weight-bold mb-1">URL para Disparo Externo (Worker):</div>
             <code class="text-caption d-block my-1" style="word-break: break-all; color: #10B981; font-family: monospace;">{{ webhookUrl }}</code>
             <v-btn size="x-small" variant="outlined" color="success" class="mt-1" @click="copyWebhookUrl">
               <v-icon start size="12">mdi-content-copy</v-icon> Copiar URL
@@ -113,9 +114,35 @@
             color="primary"
             density="compact"
             class="mb-3"
-            hint="Se desativado, o agente receberá apenas o histórico curto (STM) e não o longo prazo."
+            hint="Carrega memórias e histórico de conversas anteriores da sessão"
             persistent-hint
           ></v-switch>
+        </div>
+
+        <!-- Internal Synchronous Webhook Trigger Configuration -->
+        <div v-if="config.trigger_type === 'internal_webhook'">
+          <v-text-field
+            v-model="config.webhook_path"
+            label="Caminho do Webhook Interno (path)"
+            placeholder="meu-servico-interno"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hint="Caminho exclusivo para chamadas síncronas de MCPs ou serviços internos"
+            persistent-hint
+            @update:model-value="emitUpdate"
+          ></v-text-field>
+          
+          <v-alert v-if="config.webhook_path" type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            <div class="font-weight-bold mb-1">⚡ URL do Webhook Interno (Síncrono / Imediato):</div>
+            <code class="text-caption d-block my-1" style="word-break: break-all; color: #38BDF8; font-family: monospace;">{{ internalWebhookUrl }}</code>
+            <v-btn size="x-small" variant="outlined" color="info" class="mt-1" @click="copyInternalWebhookUrl">
+              <v-icon start size="12">mdi-content-copy</v-icon> Copiar URL Interna
+            </v-btn>
+            <div class="mt-2 text-disabled" style="font-size: 11px;">
+              Este webhook executa de forma síncrona imediata e retorna o resultado final diretamente na resposta HTTP. Ideal para MCPs e integrações internas.
+            </div>
+          </v-alert>
         </div>
 
         <!-- Schedule Trigger Configuration -->
@@ -1506,6 +1533,27 @@
           Sintetiza texto em voz via OpenAI TTS. Retorna áudio em Base64 (<code>&#123;&#123; ${{ config.output_key || block.id }}.base64 &#125;&#125;</code>) e arquivo local (<code>&#123;&#123; ${{ config.output_key || block.id }}.file_path &#125;&#125;</code>).
         </v-alert>
       </template>
+
+      <!-- Common Action Block Error Routing (Sucesso / Erro) -->
+      <div v-if="supportsErrorRouting" class="mt-4 pt-3 border-t border-opacity-25">
+        <div class="text-caption font-weight-bold mb-1 d-flex align-center">
+          <v-icon size="16" color="warning" class="mr-1">mdi-alert-circle-outline</v-icon>
+          Tratamento de Erros e Rotas
+        </div>
+        <v-switch
+          v-model="config.error_routing"
+          label="Habilitar Rota de Erro (Saída Vermelha 🔴)"
+          color="error"
+          density="compact"
+          hide-details
+          hint="Cria um ponto de saída vermelho no bloco para desviar o fluxo em caso de falha"
+          persistent-hint
+          @update:model-value="emitUpdate"
+        ></v-switch>
+        <div v-if="config.error_routing" class="text-caption text-medium-emphasis mt-1 ml-1" style="font-size: 11px;">
+          Se ocorrer qualquer erro/falha neste bloco, o erro será salvo em <code>&#123;&#123; ${{ config.output_key || block.id }}.error &#125;&#125;</code> e o fluxo continuará pela saída vermelha (🔴).
+        </div>
+      </div>
       <v-expansion-panels v-if="contextKeys.length" class="mt-2" variant="accordion">
         <v-expansion-panel>
           <v-expansion-panel-title class="text-caption">
@@ -2003,8 +2051,37 @@ function copyWebhookUrl() {
   }
 }
 
+const internalWebhookUrl = computed(() => {
+  if (!config.value.webhook_path) return ''
+  const base = window.location.origin
+  return `${base}/api/workflows/trigger/internal/${config.value.webhook_path}`
+})
+
+function copyInternalWebhookUrl() {
+  if (internalWebhookUrl.value) {
+    navigator.clipboard.writeText(internalWebhookUrl.value)
+  }
+}
+
+const supportsErrorRouting = computed(() => {
+  return [
+    'http_request',
+    'python',
+    'mcp',
+    'agent',
+    'sub_workflow',
+    'agentic_workflow',
+    'vector_insert',
+    'base64_to_file',
+    'audio_transcribe',
+    'text_to_speech',
+    'transform',
+    'variables'
+  ].includes(props.block?.type)
+})
+
 function onTriggerTypeChange(val) {
-  if (val === 'webhook') {
+  if (val === 'webhook' || val === 'internal_webhook') {
     if (!config.value.webhook_path) config.value.webhook_path = ''
   } else if (val === 'schedule') {
     if (!config.value.cron) config.value.cron = '*/15 * * * *'
@@ -2024,16 +2101,25 @@ function handlePanelDragOver(e) {
   }
 }
 
+let lastDropTimestamp = 0
+
 function handlePanelDrop(e) {
   const target = e.target
   const fieldContainer = target.closest('.v-field, .v-input')
   const inputEl = target.matches('input, textarea') ? target : fieldContainer?.querySelector('input, textarea')
 
-  const textToInsert = e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text') || (typeof window !== 'undefined' ? window.__draggedWorkflowTag : '')
+  const textToInsert = e.dataTransfer?.getData('application/x-workflow-tag') || e.dataTransfer?.getData('text/plain') || e.dataTransfer?.getData('text') || (typeof window !== 'undefined' ? window.__draggedWorkflowTag : '')
 
   if (inputEl && textToInsert) {
     e.preventDefault()
     e.stopPropagation()
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation()
+
+    const now = Date.now()
+    if (now - lastDropTimestamp < 250) {
+      return
+    }
+    lastDropTimestamp = now
 
     // Insert at cursor position or append
     const start = inputEl.selectionStart !== null && inputEl.selectionStart !== undefined ? inputEl.selectionStart : (inputEl.value?.length || 0)
@@ -2060,15 +2146,15 @@ function handlePanelDrop(e) {
 
 onMounted(() => {
   if (panelRef.value) {
-    panelRef.value.addEventListener('dragover', handlePanelDragOver)
-    panelRef.value.addEventListener('drop', handlePanelDrop)
+    panelRef.value.addEventListener('dragover', handlePanelDragOver, { capture: true })
+    panelRef.value.addEventListener('drop', handlePanelDrop, { capture: true })
   }
 })
 
 onUnmounted(() => {
   if (panelRef.value) {
-    panelRef.value.removeEventListener('dragover', handlePanelDragOver)
-    panelRef.value.removeEventListener('drop', handlePanelDrop)
+    panelRef.value.removeEventListener('dragover', handlePanelDragOver, { capture: true })
+    panelRef.value.removeEventListener('drop', handlePanelDrop, { capture: true })
   }
 })
 

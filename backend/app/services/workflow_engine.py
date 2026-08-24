@@ -1367,16 +1367,30 @@ class WorkflowEngine:
                     block_error = str(e)
                     logger.error(f"[WorkflowEngine] Block '{current_block_id}' ({block.get('type')}) failed: {e}")
 
+                    # Check if there is an error branch edge or error_routing/continue_on_error enabled
+                    has_error_edge = any(edge.get('source') == current_block_id and (edge.get('sourceHandle') == 'error' or edge.get('label') == 'error') for edge in edges)
                     error_handling = block.get('config', {}).get('error_handling', 'stop')
-                    if error_handling == 'stop':
+                    error_routing = block.get('config', {}).get('error_routing', False) or block.get('config', {}).get('continue_on_error', False)
+
+                    if not has_error_edge and error_handling == 'stop' and not error_routing:
                         raise
-                    # 'continue' → proceed to next block
+
+                    # Create standardized error payload and store in context
+                    block_result = {
+                        'error': True,
+                        'message': str(e),
+                        'error_type': type(e).__name__,
+                        'status': 'failed',
+                    }
+                    output_key = block.get('config', {}).get('output_key', block['id'])
+                    context[f'${output_key}'] = block_result
+                    context[f'${output_key}_error'] = block_result
 
                 block_duration = int((time.time() - bt0) * 1000)
                 output_key = block.get('config', {}).get('output_key', block['id'])
 
                 # Store result in context
-                if block_result is not None and block_status == "success":
+                if block_result is not None:
                     context[f'${output_key}'] = block_result
                     last_output_key = output_key
 
@@ -3445,16 +3459,34 @@ Responda APENAS com uma das opções:
                     if edge.get('source') == block_id and edge.get('target') == branch_label:
                         return branch_label
 
-        # Standard: follow edge from this block (no label or first available)
+        # Check if block resulted in error / failure
+        is_error = False
+        if isinstance(block_result, dict) and (block_result.get('error') is True or block_result.get('status') == 'failed'):
+            is_error = True
+
+        if is_error:
+            # 1. Look for explicit error handle edge
+            for edge in edges:
+                if edge.get('source') == block_id and (edge.get('sourceHandle') == 'error' or edge.get('label') == 'error'):
+                    return edge['target']
+            # 2. If no error edge, check if continue_on_error or standard edges exist
+            if block.get('config', {}).get('error_handling') == 'continue':
+                for edge in edges:
+                    if edge.get('source') == block_id and edge.get('sourceHandle') not in ('true', 'false', 'match', 'default', 'error') and not (edge.get('sourceHandle') or '').startswith('rule_'):
+                        return edge['target']
+            return None  # Stop execution on unhandled error
+
+        # Standard success: follow edge from this block (ignoring error and specific conditional handles)
         for edge in edges:
             if edge.get('source') == block_id:
                 label = edge.get('label', '')
                 source_handle = edge.get('sourceHandle')
-                # Ignore edges that belong to specific conditional handles (true, false, match, default, rule_x)
-                if source_handle in ('true', 'false', 'match', 'default') or (source_handle and source_handle.startswith('rule_')):
+                # Ignore edges that belong to specific conditional handles (true, false, match, default, rule_x, error)
+                if source_handle in ('true', 'false', 'match', 'default', 'error') or (source_handle and source_handle.startswith('rule_')):
                     continue
-                if not label or label == '':
-                    return edge['target']
+                if label == 'error':
+                    continue
+                return edge['target']
 
         # Check block's own 'next' array
         next_list = block.get('next', [])
