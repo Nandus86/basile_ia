@@ -6,6 +6,7 @@ import uuid
 class DispatcherWebhookLogSchema(BaseModel):
     id: uuid.UUID
     webhook_path: str
+    church_name: Optional[str] = None
     status_code: Optional[int] = None
     status: str
     request_payload: Optional[Any] = None

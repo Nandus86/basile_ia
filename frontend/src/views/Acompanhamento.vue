@@ -941,6 +941,18 @@
             <v-row dense>
               <v-col cols="12" sm="6" md="4">
                 <v-text-field
+                  v-model="gatilhosSearchChurch"
+                  prepend-inner-icon="mdi-church"
+                  placeholder="Buscar Igreja..."
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  clearable
+                  @keyup.enter="fetchGatilhos"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" sm="6" md="4">
+                <v-text-field
                   v-model="gatilhosSearchPath"
                   prepend-inner-icon="mdi-magnify"
                   placeholder="Buscar Path (ex: minha-campanha)..."
@@ -979,6 +991,7 @@
 
           <v-data-table
             :headers="[
+              { title: 'Igreja', key: 'church_name', width: '160px' },
               { title: 'Data/Hora', key: 'created_at', width: '180px' },
               { title: 'Webhook Path', key: 'webhook_path' },
               { title: 'Contatos', key: 'contact_count', align: 'center', width: '110px' },
@@ -993,6 +1006,13 @@
             hide-default-footer
             class="bg-transparent"
           >
+            <template v-slot:item.church_name="{ item }">
+              <span v-if="getGatilhoChurchName(item)" class="text-body-2 font-weight-medium text-white">
+                {{ getGatilhoChurchName(item) }}
+              </span>
+              <span v-else class="text-medium-emphasis">—</span>
+            </template>
+
             <template v-slot:item.created_at="{ item }">
               <span class="text-body-2">{{ formatDate(item.created_at) }}</span>
             </template>
@@ -1680,6 +1700,9 @@
           <div>
             <span class="text-subtitle-1 font-weight-bold text-white">Log do Gatilho: {{ selectedGatilhoLog.id.substring(0, 8) }}</span>
             <div class="text-caption text-medium-emphasis mt-n1">
+              <span v-if="getGatilhoChurchName(selectedGatilhoLog)" class="text-primary font-weight-bold mr-2">
+                <v-icon size="13" class="mr-1">mdi-church</v-icon>{{ getGatilhoChurchName(selectedGatilhoLog) }} •
+              </span>
               Recebido em {{ formatDate(selectedGatilhoLog.created_at) }} • Duração: {{ selectedGatilhoLog.duration_ms || 0 }} ms
             </div>
           </div>
@@ -1701,11 +1724,17 @@
           <!-- TAB: GERAL -->
           <div v-if="gatilhoDetailTab === 'general'">
             <v-row>
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="4">
+                <div class="text-caption text-medium-emphasis mb-1">Igreja</div>
+                <div class="text-body-2 font-weight-bold text-white">
+                  {{ getGatilhoChurchName(selectedGatilhoLog) || '—' }}
+                </div>
+              </v-col>
+              <v-col cols="12" md="4">
                 <div class="text-caption text-medium-emphasis mb-1">Path do Webhook</div>
                 <div class="text-body-2 font-weight-bold text-white">/webhook/{{ selectedGatilhoLog.webhook_path }}</div>
               </v-col>
-              <v-col cols="12" md="6">
+              <v-col cols="12" md="4">
                 <div class="text-caption text-medium-emphasis mb-1">Quantidade de Contatos</div>
                 <div class="text-body-2 font-weight-bold text-white">{{ selectedGatilhoLog.contact_count }} contatos</div>
               </v-col>
@@ -1875,6 +1904,7 @@ const gatilhosPage = ref(1)
 const gatilhosItemsPerPage = ref(20)
 const gatilhosLoading = ref(false)
 const gatilhosSearchPath = ref('')
+const gatilhosSearchChurch = ref('')
 const gatilhosStatusFilter = ref(null)
 const gatilhosDialog = ref(false)
 const selectedGatilhoLog = ref(null)
@@ -2936,6 +2966,15 @@ const getIngressStatusIcon = (status) => {
 }
 
 // ── Gatilhos Disparador Functions ──
+const getGatilhoChurchName = (item) => {
+  if (!item) return ''
+  if (item.church_name) return item.church_name
+  if (item.request_payload?.church?.church_name) return item.request_payload.church.church_name
+  if (item.request_payload?.context_data?.church?.church_name) return item.request_payload.context_data.church.church_name
+  if (item.request_payload?.context_data?.church_name) return item.request_payload.context_data.church_name
+  return ''
+}
+
 const fetchGatilhos = async () => {
   gatilhosLoading.value = true
   try {
@@ -2950,6 +2989,11 @@ const fetchGatilhos = async () => {
     const pathVal = gatilhosSearchPath.value
     if (pathVal && pathVal !== 'null' && String(pathVal).trim() !== '') {
       url += `&path=${encodeURIComponent(pathVal)}`
+    }
+
+    const churchVal = gatilhosSearchChurch.value
+    if (churchVal && churchVal !== 'null' && String(churchVal).trim() !== '') {
+      url += `&church_name=${encodeURIComponent(churchVal)}`
     }
 
     const { data } = await axiosInstance.get(url)

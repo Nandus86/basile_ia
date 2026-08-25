@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, or_, cast, String
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import json
@@ -660,6 +660,7 @@ async def get_dispatcher_webhook_logs(
     limit: int = Query(50, ge=1, le=100),
     status: Optional[str] = None,
     path: Optional[str] = None,
+    church_name: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Get paginated and filtered logs of incoming dispatcher webhooks."""
@@ -668,6 +669,13 @@ async def get_dispatcher_webhook_logs(
         query = query.where(DispatcherWebhookLog.status == status)
     if path:
         query = query.where(DispatcherWebhookLog.webhook_path.ilike(f"%{path}%"))
+    if church_name:
+        query = query.where(
+            or_(
+                DispatcherWebhookLog.church_name.ilike(f"%{church_name}%"),
+                cast(DispatcherWebhookLog.request_payload, String).ilike(f"%{church_name}%")
+            )
+        )
         
     count_query = select(func.count()).select_from(query.subquery())
     total_res = await db.execute(count_query)
@@ -680,6 +688,20 @@ async def get_dispatcher_webhook_logs(
     items = []
     for log in logs:
         item = DispatcherWebhookLogSchema.model_validate(log)
+        if not item.church_name:
+            if getattr(log, 'church_name', None):
+                item.church_name = log.church_name
+            elif isinstance(log.request_payload, dict):
+                church = log.request_payload.get("church")
+                if isinstance(church, dict):
+                    item.church_name = church.get("church_name")
+                if not item.church_name:
+                    context_data = log.request_payload.get("context_data")
+                    if isinstance(context_data, dict):
+                        if isinstance(context_data.get("church"), dict):
+                            item.church_name = context_data.get("church", {}).get("church_name")
+                        elif context_data.get("church_name"):
+                            item.church_name = context_data.get("church_name")
         # Exclude large payloads for list performance
         item.request_payload = None
         item.response_payload = None
@@ -708,7 +730,22 @@ async def get_dispatcher_webhook_log_detail(log_id: str, db: AsyncSession = Depe
     if not log_entry:
         raise HTTPException(status_code=404, detail="Dispatcher webhook log not found")
         
-    return DispatcherWebhookLogSchema.model_validate(log_entry)
+    item = DispatcherWebhookLogSchema.model_validate(log_entry)
+    if not item.church_name:
+        if getattr(log_entry, 'church_name', None):
+            item.church_name = log_entry.church_name
+        elif isinstance(log_entry.request_payload, dict):
+            church = log_entry.request_payload.get("church")
+            if isinstance(church, dict):
+                item.church_name = church.get("church_name")
+            if not item.church_name:
+                context_data = log_entry.request_payload.get("context_data")
+                if isinstance(context_data, dict):
+                    if isinstance(context_data.get("church"), dict):
+                        item.church_name = context_data.get("church", {}).get("church_name")
+                    elif context_data.get("church_name"):
+                        item.church_name = context_data.get("church_name")
+    return item
 
 class RetriggerGatilhoRequest(BaseModel):
     payload: Optional[Any] = None
@@ -749,6 +786,20 @@ async def retrigger_dispatcher_webhook(
     if contact_count == 0 and log_entry.contact_count:
         contact_count = log_entry.contact_count
 
+    # Determine church_name
+    church_name = getattr(log_entry, "church_name", None)
+    if not church_name and isinstance(payload_to_send, dict):
+        church = payload_to_send.get("church")
+        if isinstance(church, dict):
+            church_name = church.get("church_name")
+        if not church_name:
+            context_data = payload_to_send.get("context_data")
+            if isinstance(context_data, dict):
+                if isinstance(context_data.get("church"), dict):
+                    church_name = context_data.get("church", {}).get("church_name")
+                elif context_data.get("church_name"):
+                    church_name = context_data.get("church_name")
+
     # Find api key configured for this path in dispatcher_configs
     from app.models.dispatcher_config import DispatcherConfig
     config_query = select(DispatcherConfig).where(DispatcherConfig.path == log_entry.webhook_path)
@@ -765,6 +816,7 @@ async def retrigger_dispatcher_webhook(
     # We create a new DispatcherWebhookLog for the new re-trigger execution
     new_log = DispatcherWebhookLog(
         webhook_path=log_entry.webhook_path,
+        church_name=church_name,
         status="pending",
         request_payload=payload_to_send,
         contact_count=contact_count

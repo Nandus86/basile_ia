@@ -9,6 +9,25 @@ from app.api import webhook, dashboard
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        from app.database import engine, Base
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(text("ALTER TABLE dispatcher_webhook_logs ADD COLUMN IF NOT EXISTS church_name VARCHAR(255);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dispatcher_webhook_logs_church_name ON dispatcher_webhook_logs (church_name);"))
+            await conn.execute(text("""
+                UPDATE dispatcher_webhook_logs
+                SET church_name = COALESCE(
+                    (request_payload#>>'{}')::jsonb->'church'->>'church_name',
+                    (request_payload#>>'{}')::jsonb->'context_data'->'church'->>'church_name',
+                    (request_payload#>>'{}')::jsonb->'context_data'->>'church_name'
+                )
+                WHERE church_name IS NULL AND request_payload IS NOT NULL;
+            """))
+    except Exception as e:
+        logger.warning(f"[Disparador DB Startup] Migration warning: {e}")
+
     await disparador_rmq.connect()
     await disparador_redis.connect()
     yield

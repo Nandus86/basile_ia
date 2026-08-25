@@ -46,6 +46,21 @@ async def lifespan(app: FastAPI):
     # Startup: Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            from sqlalchemy import text
+            await conn.execute(text("ALTER TABLE dispatcher_webhook_logs ADD COLUMN IF NOT EXISTS church_name VARCHAR(255);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_dispatcher_webhook_logs_church_name ON dispatcher_webhook_logs (church_name);"))
+            await conn.execute(text("""
+                UPDATE dispatcher_webhook_logs
+                SET church_name = COALESCE(
+                    (request_payload#>>'{}')::jsonb->'church'->>'church_name',
+                    (request_payload#>>'{}')::jsonb->'context_data'->'church'->>'church_name',
+                    (request_payload#>>'{}')::jsonb->'context_data'->>'church_name'
+                )
+                WHERE church_name IS NULL AND request_payload IS NOT NULL;
+            """))
+        except Exception as e:
+            logging.warning(f"[DB Startup] Migration warning: {e}")
         
     # Connect to RabbitMQ for publishing messages
     await rabbitmq_client.connect()

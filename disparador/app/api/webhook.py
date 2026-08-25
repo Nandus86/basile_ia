@@ -36,8 +36,22 @@ async def receive_dispatch(
     except Exception:
         body_json = {"raw_text": (await request.body()).decode('utf-8', errors='replace')}
         
+    church_name = None
+    if isinstance(body_json, dict):
+        church = body_json.get("church")
+        if isinstance(church, dict):
+            church_name = church.get("church_name")
+        if not church_name:
+            context_data = body_json.get("context_data")
+            if isinstance(context_data, dict):
+                if isinstance(context_data.get("church"), dict):
+                    church_name = context_data.get("church", {}).get("church_name")
+                elif context_data.get("church_name"):
+                    church_name = context_data.get("church_name")
+
     log_entry = DispatcherWebhookLog(
         webhook_path=path,
+        church_name=church_name,
         status="pending",
         request_payload=body_json,
         contact_count=0

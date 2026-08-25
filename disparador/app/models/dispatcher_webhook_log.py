@@ -11,6 +11,7 @@ class DispatcherWebhookLog(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     webhook_path = Column(String(255), nullable=False, index=True)
+    church_name = Column(String(255), nullable=True, index=True)
     status_code = Column(Integer, nullable=True) # e.g. 202, 422, 403, 500
     status = Column(String(50), default="pending", nullable=False) # pending, success, failed, validation_error, unauthorized
     request_payload = Column(JSON, nullable=True)
@@ -21,4 +22,4 @@ class DispatcherWebhookLog(Base):
     duration_ms = Column(Integer, nullable=True)
 
     def __repr__(self):
-        return f"<DispatcherWebhookLog {self.id} | path={self.webhook_path} | status={self.status}>"
+        return f"<DispatcherWebhookLog {self.id} | church={self.church_name} | path={self.webhook_path} | status={self.status}>"
