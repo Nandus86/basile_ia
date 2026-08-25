@@ -825,70 +825,72 @@ class WorkflowEngine:
 
     async def _preload_msg_request_context(self, context: Dict[str, Any], blocks: Dict[str, Any]) -> None:
         """
-        Scan blocks for $msgRequest and proactively fetch the last user and AI message from MTM if needed.
-        This avoids database queries during synchronous variable replacement.
+        Scan blocks for $msgRequest and proactively fetch the last 3 user and AI messages from MTM if needed.
+        This avoids database queries during synchronous variable replacement and supports selecting
+        the last, penultimate, and antepenultimate messages for both User and AI.
         """
         blocks_str = json.dumps(blocks)
         if "$msgRequest" not in blocks_str:
             return
 
+        def _extract_msg_entry(msg: Optional[ConversationMessage]) -> Dict[str, Any]:
+            if not msg:
+                return {'content': '', 'created_at': '', 'timestamp': None}
+            content = msg.content or ''
+            created_at = msg.created_at.isoformat() if msg.created_at else ''
+            timestamp = int(msg.created_at.timestamp()) if msg.created_at else None
+            return {'content': content, 'created_at': created_at, 'timestamp': timestamp}
+
+        def _build_role_group(msgs: List[ConversationMessage]) -> Dict[str, Any]:
+            m0 = _extract_msg_entry(msgs[0] if len(msgs) > 0 else None)
+            m1 = _extract_msg_entry(msgs[1] if len(msgs) > 1 else None)
+            m2 = _extract_msg_entry(msgs[2] if len(msgs) > 2 else None)
+            return {
+                'last': m0['content'],
+                'penultimate': m1['content'],
+                'antepenultimate': m2['content'],
+                'ultima': m0['content'],
+                'penultima': m1['content'],
+                'antepenultima': m2['content'],
+                'created_at': m0['created_at'],
+                'timestamp': m0['timestamp'],
+                'messages': [m0, m1, m2],
+                '0': m0,
+                '1': m1,
+                '2': m2,
+            }
+
         session_id = context.get('$trigger', {}).get('payload', {}).get('session_id')
         if not session_id:
             context['$msgRequest'] = {
-                'User': {'last': '', 'created_at': '', 'timestamp': None},
-                'AI': {'last': '', 'created_at': '', 'timestamp': None}
+                'User': _build_role_group([]),
+                'AI': _build_role_group([])
             }
             return
 
-        # Fetch last user message
-        user_msg = ""
-        user_created_at = ""
-        user_timestamp = None
+        # Fetch last 3 user messages (ordered by newest first)
         result_user = await self.db.execute(
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
             .where(ConversationMessage.role == 'user')
             .order_by(ConversationMessage.created_at.desc())
-            .limit(1)
+            .limit(3)
         )
-        msg_user = result_user.scalar_one_or_none()
-        if msg_user:
-            if msg_user.content:
-                user_msg = msg_user.content
-            if msg_user.created_at:
-                user_created_at = msg_user.created_at.isoformat()
-                user_timestamp = int(msg_user.created_at.timestamp())
+        msgs_user = result_user.scalars().all()
 
-        # Fetch last AI message
-        ai_msg = ""
-        ai_created_at = ""
-        ai_timestamp = None
+        # Fetch last 3 AI messages (ordered by newest first)
         result_ai = await self.db.execute(
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
             .where(ConversationMessage.role == 'assistant')
             .order_by(ConversationMessage.created_at.desc())
-            .limit(1)
+            .limit(3)
         )
-        msg_ai = result_ai.scalar_one_or_none()
-        if msg_ai:
-            if msg_ai.content:
-                ai_msg = msg_ai.content
-            if msg_ai.created_at:
-                ai_created_at = msg_ai.created_at.isoformat()
-                ai_timestamp = int(msg_ai.created_at.timestamp())
+        msgs_ai = result_ai.scalars().all()
 
         context['$msgRequest'] = {
-            'User': {
-                'last': user_msg,
-                'created_at': user_created_at,
-                'timestamp': user_timestamp
-            },
-            'AI': {
-                'last': ai_msg,
-                'created_at': ai_created_at,
-                'timestamp': ai_timestamp
-            }
+            'User': _build_role_group(msgs_user),
+            'AI': _build_role_group(msgs_ai)
         }
 
     async def execute(
