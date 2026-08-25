@@ -210,6 +210,9 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
         "transition_data": effective_transition_data,
         "recreated": is_recreated,
         "ignore_pause": True,
+        "disable_buffer_join": True,
+        "is_disparador": True,
+        "source": "disparador",
     })
 
     # ── Outbound Mode Routing ──────────────────────────────────────────────
