@@ -835,11 +835,24 @@ class WorkflowEngine:
 
         def _extract_msg_entry(msg: Optional[ConversationMessage]) -> Dict[str, Any]:
             if not msg:
-                return {'content': '', 'created_at': '', 'timestamp': None}
+                return {
+                    'content': '',
+                    'created_at': '',
+                    'timestamp': None,
+                    'webhook_path': '',
+                    'endpoint': ''
+                }
             content = msg.content or ''
             created_at = msg.created_at.isoformat() if msg.created_at else ''
             timestamp = int(msg.created_at.timestamp()) if msg.created_at else None
-            return {'content': content, 'created_at': created_at, 'timestamp': timestamp}
+            webhook_path = msg.webhook_path or ''
+            return {
+                'content': content,
+                'created_at': created_at,
+                'timestamp': timestamp,
+                'webhook_path': webhook_path,
+                'endpoint': webhook_path
+            }
 
         def _build_role_group(msgs: List[ConversationMessage]) -> Dict[str, Any]:
             m0 = _extract_msg_entry(msgs[0] if len(msgs) > 0 else None)
@@ -854,6 +867,8 @@ class WorkflowEngine:
                 'antepenultima': m2['content'],
                 'created_at': m0['created_at'],
                 'timestamp': m0['timestamp'],
+                'webhook_path': m0['webhook_path'],
+                'endpoint': m0['endpoint'],
                 'messages': [m0, m1, m2],
                 '0': m0,
                 '1': m1,
