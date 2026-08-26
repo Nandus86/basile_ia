@@ -154,14 +154,14 @@ def test_truncate_list_shows_correct_original_count():
     data = list(range(100))
     result = _truncate_large_response(data, max_len=10)
     assert result["total_items"] == 100
-    assert "from 100 items to 3" in result["warning"]
+    assert "from 100 items to 15" in result["warning"]
 
 
 def test_truncate_body_shows_correct_original_count():
     data = {"body": list(range(50))}
     result = _truncate_large_response(data, max_len=10)
-    assert "from 50 to 3" in result["warning"]
-    assert len(result["body"]) == 3
+    assert "from 50 to 15" in result["warning"]
+    assert len(result["body"]) == 15
 
 
 def test_truncate_small_data_unchanged():

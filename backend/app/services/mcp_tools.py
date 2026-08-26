@@ -345,28 +345,28 @@ def _filter_sensitive_response_fields(data: Any) -> Any:
     return data
 
 
-def _truncate_large_response(data: Any, max_len: int = 10000) -> Any:
+def _truncate_large_response(data: Any, max_len: int = 50000, max_items: int = 15) -> Any:
     """Truncates very large responses to prevent LLM context overflow/crashes"""
     text = json.dumps(data, ensure_ascii=False)
     if len(text) <= max_len:
         return data
         
     # If it's a list, try taking just the first few items
-    if isinstance(data, list) and len(data) > 3:
+    if isinstance(data, list) and len(data) > max_items:
         original_count = len(data)
-        truncated_list = data[:3]
+        truncated_list = data[:max_items]
         return {
             "items": truncated_list,
             "total_items": original_count,
-            "warning": f"Response truncated from {original_count} items to 3 to prevent context overflow."
+            "warning": f"Response truncated from {original_count} items to {max_items} to prevent context overflow."
         }
     
     # If it's a dict with a large body, truncate the body
     if isinstance(data, dict) and "body" in data and isinstance(data["body"], list):
         original_body_count = len(data["body"])
-        if original_body_count > 3:
-            data["body"] = data["body"][:3]
-            data["warning"] = f"Body list truncated from {original_body_count} to 3 items."
+        if original_body_count > max_items:
+            data["body"] = data["body"][:max_items]
+            data["warning"] = f"Body list truncated from {original_body_count} to {max_items} items."
             return data
 
     # Fallback to string truncation if still too big
