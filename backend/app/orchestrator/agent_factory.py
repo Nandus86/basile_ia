@@ -108,6 +108,43 @@ def _fingerprint_tool_call(name: str, args: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _clean_and_trim_messages(
+    messages: List[Any],
+    max_history: int = 8,
+    for_tools: bool = True,
+) -> List[Any]:
+    """
+    Cleans conversation messages for LLM consumption:
+    - Strips standalone ToolMessages that are not paired in history
+    - Converts AIMessages with tool_calls to clean AIMessages (preserving content if present)
+    - Trims history to the most recent `max_history` items
+    - When tools/function calling are enabled (for_tools=True), strips any trailing AIMessages
+      from the end of the history. This is strictly required by providers like DeepSeek (OpenRouter)
+      which reject requests where tools are enabled and the final message is an assistant prefix/prefill:
+      'Function call should not be used with prefix'.
+    """
+    from langchain_core.messages import ToolMessage, AIMessage
+
+    cleaned = []
+    for msg in messages:
+        if isinstance(msg, ToolMessage):
+            continue
+        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
+            if msg.content:
+                cleaned.append(AIMessage(content=msg.content))
+            continue
+        cleaned.append(msg)
+
+    trimmed = cleaned[-max_history:] if len(cleaned) > max_history else list(cleaned)
+
+    if for_tools:
+        # Strip trailing assistant messages to avoid prefix/prefill conflict with function calling
+        while trimmed and isinstance(trimmed[-1], AIMessage):
+            trimmed.pop()
+
+    return trimmed
+
+
 class AgentFactory:
     """
     Factory for creating LangGraph-compatible agents from database configurations.
@@ -804,13 +841,14 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             if dynamic_skills_prompt:
                 system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
             
+            trimmed_nr_messages = _clean_and_trim_messages(messages, max_history=8, for_tools=False)
             return {
                 "is_react": False,
                 "llm": llm,
                 "run_config": run_config,
                 "full_prompt": system_prompt,
                 "messages": messages,
-                "agent_messages": [SystemMessage(content=system_prompt)] + (messages[-8:] if len(messages) > 8 else messages)
+                "agent_messages": [SystemMessage(content=system_prompt)] + trimmed_nr_messages
             }
 
         tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
@@ -902,20 +940,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         if dynamic_skills_prompt:
             full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
             
-        from langchain_core.messages import ToolMessage, AIMessage
-        
-        cleaned_messages = []
-        for msg in messages:
-            if isinstance(msg, ToolMessage):
-                continue
-            if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-                if msg.content:
-                    cleaned_messages.append(AIMessage(content=msg.content))
-                continue
-            cleaned_messages.append(msg)
-            
-        trimmed_messages = cleaned_messages[-8:] if len(cleaned_messages) > 8 else cleaned_messages
-        
+        trimmed_messages = _clean_and_trim_messages(messages, max_history=8, for_tools=True)
         agent_messages = [SystemMessage(content=full_prompt)] + trimmed_messages
         llm_with_tools = llm.bind_tools(selected_tools)
         tool_node = ToolNode(selected_tools)
@@ -940,10 +965,17 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                     forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
                     if forced_tool_obj:
                         llm_forced = llm.bind_tools([forced_tool_obj])
-                        force_msg = SystemMessage(content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA MESMO.")
-                        response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
+                        force_msg = HumanMessage(content=f"[SISTEMA] VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA MESMO.")
+                        msgs_to_send = list(state["messages"])
+                        while len(msgs_to_send) > 1 and isinstance(msgs_to_send[-1], AIMessage):
+                            msgs_to_send.pop()
+                        response = await llm_forced.ainvoke(msgs_to_send + [force_msg], config=run_config)
                         return {"messages": [response]}
-            response = await llm_with_tools.ainvoke(state["messages"], config=run_config)
+            
+            msgs_to_send = list(state["messages"])
+            while len(msgs_to_send) > 1 and isinstance(msgs_to_send[-1], AIMessage):
+                msgs_to_send.pop()
+            response = await llm_with_tools.ainvoke(msgs_to_send, config=run_config)
             return {"messages": [response]}
 
         def should_continue_edge(state: AgentExecState) -> str:
@@ -970,8 +1002,11 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                     forced_tool_obj = next((t for t in selected_tools if t.name == t_name), None)
                     if forced_tool_obj:
                         llm_forced = llm.bind_tools([forced_tool_obj])
-                        force_msg = SystemMessage(content=f"⚠️ REGRA DO SISTEMA: VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR.")
-                        response = await llm_forced.ainvoke(list(state["messages"]) + [force_msg], config=run_config)
+                        force_msg = HumanMessage(content=f"[SISTEMA] VOCÊ DEVE OBRIGATORIAMENTE CHAMAR A FERRAMENTA '{t_name}' AGORA PARA FINALIZAR.")
+                        msgs_to_send = list(state["messages"])
+                        while len(msgs_to_send) > 1 and isinstance(msgs_to_send[-1], AIMessage):
+                            msgs_to_send.pop()
+                        response = await llm_forced.ainvoke(msgs_to_send + [force_msg], config=run_config)
                         return {"messages": [response]}
             return {"messages": []}
 
@@ -1536,7 +1571,8 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
         if dynamic_skills_prompt:
             system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
             
-        all_messages = [SystemMessage(content=system_prompt)] + messages
+        trimmed_structured_msgs = _clean_and_trim_messages(messages, max_history=8, for_tools=True)
+        all_messages = [SystemMessage(content=system_prompt)] + trimmed_structured_msgs
         
         try:
             result = await structured_llm.ainvoke(all_messages, config=run_config)
