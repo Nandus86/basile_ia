@@ -239,7 +239,7 @@ import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
-import axios from 'axios'
+import axios from '@/plugins/axios'
 
 import AgentGraphNode from '@/components/agent_graph/AgentGraphNode.vue'
 import AgentGraphPropertiesPanel from '@/components/agent_graph/AgentGraphPropertiesPanel.vue'

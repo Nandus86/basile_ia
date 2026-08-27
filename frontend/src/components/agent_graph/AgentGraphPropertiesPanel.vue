@@ -250,7 +250,7 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
-import axios from 'axios'
+import axios from '@/plugins/axios'
 
 const props = defineProps({
   selectedNode: {

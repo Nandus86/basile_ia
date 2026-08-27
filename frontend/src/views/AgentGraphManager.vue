@@ -167,7 +167,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import axios from '@/plugins/axios'
 
 const router = useRouter()
 
