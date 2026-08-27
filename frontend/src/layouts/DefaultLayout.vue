@@ -150,7 +150,7 @@
         </header>
 
         <!-- Router View -->
-        <div class="dashboard-content-wrapper pb-8 flex-grow-1" :class="{ 'px-8': !isWorkflowEditor }">
+        <div class="dashboard-content-wrapper flex-grow-1" :class="{ 'px-8 pb-8': !isWorkflowEditor }">
           <router-view v-slot="{ Component }">
             <transition name="page-fade" mode="out-in">
               <component :is="Component" />

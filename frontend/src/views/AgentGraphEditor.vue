@@ -17,7 +17,7 @@
           @keydown.enter="editingName = false"
           @blur="editingName = false"
         ></v-text-field>
-        <h2 v-else class="text-h6 mb-0 cursor-pointer" @click="editingName = true" title="Clique para editar o nome">
+        <h2 v-else class="text-h6 mb-0 cursor-pointer graph-name-display" @click="editingName = true" title="Clique para editar o nome">
           {{ graph.name || 'Carregando Grafo...' }}
           <v-icon size="14" class="ml-1 opacity-50">mdi-pencil</v-icon>
         </h2>
@@ -41,57 +41,162 @@
     </v-toolbar>
 
     <!-- Main Workspace -->
-    <div class="d-flex flex-grow-1 position-relative" style="overflow: hidden">
-      <!-- Toolbox Sidebar -->
+    <div class="d-flex flex-grow-1" style="overflow: hidden">
+      <!-- Toolbox Sidebar (Pattern identical to WorkflowEditor) -->
       <v-navigation-drawer permanent location="left" width="260" color="surface-variant" elevation="4">
         <div class="pa-4 text-center border-b">
           <h3 class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center justify-center ga-1">
             <v-icon size="20" color="primary">mdi-shape-plus</v-icon>Blocos de IA
           </h3>
-          <p class="text-caption text-medium-emphasis mb-0">Arraste os blocos para o diagrama</p>
+          <p class="text-caption text-medium-emphasis mb-0">Arraste para o canvas</p>
         </div>
 
-        <v-list class="pa-2" density="compact">
-          <div v-for="item in toolboxItems" :key="item.type"
-            class="dnd-block-item ma-2 pa-3 rounded border d-flex align-center ga-3 cursor-grab"
+        <v-list class="pt-0" density="compact">
+          <v-list-subheader class="font-weight-bold mt-2">Agentes & Supervisores</v-list-subheader>
+          <div
+            v-for="t in toolboxItems.filter(i => i.category === 'agents')"
+            :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border"
             :draggable="true"
-            @dragstart="onDragStart($event, item.type)"
+            @dragstart="onDragStart($event, t.type)"
           >
-            <div class="dnd-icon-wrapper" :style="{ backgroundColor: item.color + '25', color: item.color }">
-              <v-icon size="20">{{ item.icon }}</v-icon>
-            </div>
-            <div>
-              <div class="text-subtitle-2 font-weight-bold" style="font-size: 12px !important; line-height: 1.2;">{{ item.label }}</div>
-              <div class="text-caption text-medium-emphasis" style="font-size: 10px !important;">{{ item.desc }}</div>
-            </div>
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
+          </div>
+
+          <v-list-subheader class="font-weight-bold mt-2">Fluxo & Paralelismo</v-list-subheader>
+          <div
+            v-for="t in toolboxItems.filter(i => i.category === 'flow')"
+            :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border"
+            :draggable="true"
+            @dragstart="onDragStart($event, t.type)"
+          >
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
+          </div>
+
+          <v-list-subheader class="font-weight-bold mt-2">Decisão & Loops</v-list-subheader>
+          <div
+            v-for="t in toolboxItems.filter(i => i.category === 'decision')"
+            :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border"
+            :draggable="true"
+            @dragstart="onDragStart($event, t.type)"
+          >
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
+          </div>
+
+          <v-list-subheader class="font-weight-bold mt-2">Ações & Fim</v-list-subheader>
+          <div
+            v-for="t in toolboxItems.filter(i => i.category === 'actions')"
+            :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border"
+            :draggable="true"
+            @dragstart="onDragStart($event, t.type)"
+          >
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
           </div>
         </v-list>
       </v-navigation-drawer>
 
       <!-- Vue Flow Canvas -->
-      <div class="flex-grow-1 h-100 bg-background" @drop="onDrop" @dragover="onDragOver">
+      <div class="vue-flow-container flex-grow-1" style="position: relative;" @drop="onDrop" @dragover.prevent>
         <VueFlow
-          v-model="elements"
+          :nodes="nodes"
+          :edges="edges"
           :node-types="nodeTypes"
-          :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#3B82F6', strokeWidth: 2 } }"
-          fit-view-on-init
-          class="dark-canvas"
+          @pane-ready="onPaneReady"
           @node-click="onNodeClick"
           @pane-click="onPaneClick"
+          @edge-click="onEdgeClick"
+          @connect="onConnect"
+          @nodes-change="onNodesChange"
+          @edges-change="onEdgesChange"
+          :delete-key-code="['Backspace', 'Delete']"
+          :default-edge-options="{ type: 'smoothstep', animated: true, style: { stroke: '#3B82F6', strokeWidth: 2 } }"
+          :pan-on-drag="[1]"
+          :selection-on-drag="true"
+          :selection-key-code="true"
+          :pan-activation-key-code="'Space'"
         >
           <Background pattern-color="#2D3748" :gap="18" />
           <Controls />
           <MiniMap />
         </VueFlow>
+
+        <!-- Floating Menu for Connection Line Style / Delete -->
+        <div
+          v-if="showEdgeMenu"
+          class="floating-edge-menu pa-2 rounded border"
+          :style="{
+            position: 'fixed',
+            top: `${edgeMenuPosition.y}px`,
+            left: `${edgeMenuPosition.x}px`,
+            zIndex: 9999,
+            background: 'rgba(20, 20, 30, 0.98)',
+            borderColor: 'rgba(255,255,255,0.15)',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(10px)',
+            minWidth: '220px'
+          }"
+        >
+          <div class="d-flex align-center justify-space-between mb-2 px-1">
+            <span class="text-caption font-weight-bold text-medium-emphasis" style="font-size: 9px !important; letter-spacing: 0.5px; color: #9CA3AF !important;">ESTILO DE CONEXÃO</span>
+            <v-btn icon variant="text" size="x-small" @click="showEdgeMenu = false"><v-icon size="14">mdi-close</v-icon></v-btn>
+          </div>
+          <div class="d-flex flex-wrap px-1 mb-2" style="gap: 6px;">
+            <div
+              v-for="color in connectionColors"
+              :key="color.value"
+              class="color-dot cursor-pointer"
+              :style="{
+                backgroundColor: color.value,
+                width: '20px',
+                height: '20px',
+                borderRadius: '50%',
+                border: selectedEdge?.style?.stroke === color.value ? '2px solid white' : '1px solid rgba(255,255,255,0.2)',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                transition: 'transform 0.1s'
+              }"
+              @click="setEdgeColor(color.value)"
+              :title="color.name"
+            ></div>
+          </div>
+          <v-divider class="my-2 border-opacity-25"></v-divider>
+          <v-btn
+            color="error"
+            variant="text"
+            block
+            size="small"
+            density="compact"
+            prepend-icon="mdi-trash-can"
+            @click="deleteSelectedEdge"
+            class="justify-start"
+          >
+            Excluir Conexão
+          </v-btn>
+        </div>
       </div>
 
-      <!-- Properties Panel (Right Drawer) -->
-      <AgentGraphPropertiesPanel
-        v-if="selectedNode"
-        :selected-node="selectedNode"
-        @close="selectedNode = null"
-        @delete="deleteSelectedNode"
-      />
+      <!-- Properties Drawer (Right) -->
+      <v-navigation-drawer
+        :model-value="!!selectedNode"
+        location="right"
+        width="340"
+        color="surface"
+        elevation="4"
+        class="properties-drawer"
+      >
+        <AgentGraphPropertiesPanel
+          v-if="selectedNode"
+          :selected-node="selectedNode"
+          @close="selectedNode = null"
+          @delete="deleteSelectedNode"
+        />
+      </v-navigation-drawer>
     </div>
 
     <!-- Settings Dialog -->
@@ -233,12 +338,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, markRaw } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
 import axios from '@/plugins/axios'
 
 import AgentGraphNode from '@/components/agent_graph/AgentGraphNode.vue'
@@ -247,6 +354,9 @@ import AgentGraphPropertiesPanel from '@/components/agent_graph/AgentGraphProper
 const route = useRoute()
 const router = useRouter()
 const graphId = route.params.id
+
+const { project, getSelectedNodes } = useVueFlow()
+const vueFlowInstance = ref(null)
 
 const nodeTypes = {
   agentGraphNode: markRaw(AgentGraphNode),
@@ -262,31 +372,49 @@ const graph = reactive({
   definition: { nodes: [], edges: [] }
 })
 
-const elements = ref([])
+const nodes = ref([])
+const edges = ref([])
 const editingName = ref(false)
 const saving = ref(false)
 const saveStatus = reactive({ color: 'grey', icon: 'mdi-cloud-outline', text: 'Não salvo' })
 const showSettingsDialog = ref(false)
 const selectedNode = ref(null)
 
+// Floating edge styling menu variables
+const selectedEdge = ref(null)
+const edgeMenuPosition = ref({ x: 0, y: 0 })
+const showEdgeMenu = ref(false)
+const connectionColors = [
+  { name: 'Azul Padrão', value: '#3B82F6' },
+  { name: 'Verde (Aprovado / True)', value: '#10B981' },
+  { name: 'Vermelho (False / Erro)', value: '#EF4444' },
+  { name: 'Amarelo (Loop / Retry)', value: '#F59E0B' },
+  { name: 'Roxo (Supervisor)', value: '#8B5CF6' },
+  { name: 'Ciano (Paralelo)', value: '#06B6D4' },
+  { name: 'Rosa (Sintetizador)', value: '#EC4899' },
+]
+
 const showTestDrawer = ref(false)
 const testMessage = ref('')
 const runningTest = ref(false)
 const testResult = ref(null)
 
-const { addNodes, project, getNodes, getEdges, removeNodes } = useVueFlow()
-
 const toolboxItems = [
-  { type: 'start', label: 'Início', icon: 'mdi-play-circle', color: '#10B981', desc: 'Entrada da mensagem' },
-  { type: 'agent', label: 'Especialista', icon: 'mdi-robot', color: '#3B82F6', desc: 'Agente especialista' },
-  { type: 'router', label: 'Supervisor', icon: 'mdi-source-branch', color: '#8B5CF6', desc: 'Roteador inteligente' },
-  { type: 'parallel', label: 'Fan-Out Paralelo', icon: 'mdi-call-split', color: '#06B6D4', desc: 'Disparo concorrente' },
-  { type: 'synthesizer', label: 'Sintetizador', icon: 'mdi-call-merge', color: '#EC4899', desc: 'Consolida respostas' },
-  { type: 'condition', label: 'Decisão / Se', icon: 'mdi-help-rhombus', color: '#F59E0B', desc: 'Regra de desvio' },
-  { type: 'verifier', label: 'Verificador Loop', icon: 'mdi-shield-check', color: '#EAB308', desc: 'Validação & Auto-correção' },
-  { type: 'tool', label: 'Ação / MCP', icon: 'mdi-tools', color: '#14B8A6', desc: 'Chamada de ferramenta' },
-  { type: 'end', label: 'Fim / Resposta', icon: 'mdi-stop-circle', color: '#64748B', desc: 'Saída final' },
+  { type: 'start', label: 'Início / Trigger', icon: 'mdi-play-circle', color: '#10B981', category: 'flow' },
+  { type: 'agent', label: 'Agente Especialista', icon: 'mdi-robot', color: '#3B82F6', category: 'agents' },
+  { type: 'router', label: 'Supervisor / Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'agents' },
+  { type: 'parallel', label: 'Fan-Out Paralelo', icon: 'mdi-call-split', color: '#06B6D4', category: 'flow' },
+  { type: 'synthesizer', label: 'Sintetizador Fan-In', icon: 'mdi-call-merge', color: '#EC4899', category: 'flow' },
+  { type: 'condition', label: 'Decisão / Condição', icon: 'mdi-help-rhombus', color: '#F59E0B', category: 'decision' },
+  { type: 'verifier', label: 'Verificador (Loop)', icon: 'mdi-shield-check', color: '#EAB308', category: 'decision' },
+  { type: 'tool', label: 'Ação / Ferramenta', icon: 'mdi-tools', color: '#14B8A6', category: 'actions' },
+  { type: 'end', label: 'Fim / Resposta', icon: 'mdi-stop-circle', color: '#64748B', category: 'actions' },
 ]
+
+const onPaneReady = (instance) => {
+  vueFlowInstance.value = instance
+  instance.fitView()
+}
 
 const loadGraph = async () => {
   try {
@@ -300,15 +428,34 @@ const loadGraph = async () => {
     graph.timeout_seconds = data.timeout_seconds || 60
     graph.definition = data.definition || { nodes: [], edges: [] }
 
-    // Hydrate Vue Flow elements
+    // Hydrate Vue Flow nodes & edges
     const rawNodes = (graph.definition.nodes || []).map(n => ({
       ...n,
       type: 'agentGraphNode',
       data: { ...n.data }
     }))
-    const rawEdges = graph.definition.edges || []
+    const rawEdges = (graph.definition.edges || []).map((e, idx) => {
+      const sourceHandleVal = e.sourceHandle || null
+      const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'approved')
+        ? '#10B981'
+        : (sourceHandleVal === 'false')
+          ? '#EF4444'
+          : (sourceHandleVal === 'retry')
+            ? '#F59E0B'
+            : '#3B82F6'
+      return {
+        id: e.id || `e-${idx}-${Date.now()}`,
+        source: e.source,
+        target: e.target,
+        sourceHandle: sourceHandleVal,
+        targetHandle: e.targetHandle || null,
+        label: e.label || '',
+        type: 'smoothstep',
+        animated: true,
+        style: e.style || { stroke: defaultColor, strokeWidth: 2 }
+      }
+    })
 
-    // If empty graph, add Start and Agent by default
     if (rawNodes.length === 0) {
       const defaultStart = {
         id: 'start-1',
@@ -322,13 +469,13 @@ const loadGraph = async () => {
         position: { x: 380, y: 200 },
         data: { type: 'agent', label: 'Agente Especialista', config: {} }
       }
-      elements.value = [
-        defaultStart,
-        defaultAgent,
-        { id: 'e-start-agent', source: 'start-1', target: 'agent-1', type: 'smoothstep' }
+      nodes.value = [defaultStart, defaultAgent]
+      edges.value = [
+        { id: 'e-start-agent', source: 'start-1', target: 'agent-1', type: 'smoothstep', animated: true, style: { stroke: '#3B82F6', strokeWidth: 2 } }
       ]
     } else {
-      elements.value = [...rawNodes, ...rawEdges]
+      nodes.value = rawNodes
+      edges.value = rawEdges
     }
     saveStatus.color = 'success'
     saveStatus.icon = 'mdi-cloud-check'
@@ -344,16 +491,16 @@ const saveGraph = async () => {
   saveStatus.icon = 'mdi-cloud-sync'
   saveStatus.text = 'Salvando...'
   try {
-    const nodes = getNodes.value
-    const edges = getEdges.value
-
     const payload = {
       name: graph.name,
       description: graph.description,
       is_active: graph.is_active,
       recursion_limit: graph.recursion_limit,
       timeout_seconds: graph.timeout_seconds,
-      definition: { nodes, edges }
+      definition: {
+        nodes: nodes.value,
+        edges: edges.value
+      }
     }
 
     await axios.put(`/agent-graphs/${graphId}`, payload)
@@ -371,22 +518,14 @@ const saveGraph = async () => {
 }
 
 const onDragStart = (event, nodeType) => {
-  if (event.dataTransfer) {
-    event.dataTransfer.setData('application/vueflow-type', nodeType)
-    event.dataTransfer.effectAllowed = 'move'
-  }
-}
-
-const onDragOver = (event) => {
-  event.preventDefault()
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = 'move'
-  }
+  event.dataTransfer.setData('application/vueflow-type', nodeType)
+  event.dataTransfer.effectAllowed = 'move'
 }
 
 const onDrop = (event) => {
+  event.preventDefault()
   const type = event.dataTransfer?.getData('application/vueflow-type')
-  if (!type) return
+  if (!type || !vueFlowInstance.value) return
 
   const position = project({
     x: event.clientX - 260,
@@ -405,20 +544,120 @@ const onDrop = (event) => {
     }
   }
 
-  addNodes([newNode])
+  nodes.value = [...nodes.value, newNode]
+  saveStatus.color = 'grey'
+  saveStatus.icon = 'mdi-cloud-outline'
+  saveStatus.text = 'Não salvo'
+}
+
+function onConnect(params) {
+  const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'default'}-${Date.now()}`
+  const label = params.sourceHandle || ''
+  const defaultColor = (params.sourceHandle === 'true' || params.sourceHandle === 'approved')
+    ? '#10B981'
+    : (params.sourceHandle === 'false')
+      ? '#EF4444'
+      : (params.sourceHandle === 'retry')
+        ? '#F59E0B'
+        : '#3B82F6'
+
+  edges.value = [...edges.value, {
+    id: edgeId,
+    source: params.source,
+    target: params.target,
+    sourceHandle: params.sourceHandle || null,
+    targetHandle: params.targetHandle || null,
+    label,
+    type: 'smoothstep',
+    animated: true,
+    style: { stroke: defaultColor, strokeWidth: 2 },
+  }]
+  saveStatus.color = 'grey'
+  saveStatus.icon = 'mdi-cloud-outline'
+  saveStatus.text = 'Não salvo'
+}
+
+function onNodesChange(changes) {
+  for (const c of changes) {
+    if (c.type === 'position' && c.position) {
+      const node = nodes.value.find(n => n.id === c.id)
+      if (node) {
+        node.position = c.position
+        saveStatus.color = 'grey'
+        saveStatus.icon = 'mdi-cloud-outline'
+        saveStatus.text = 'Não salvo'
+      }
+    }
+    if (c.type === 'remove') {
+      nodes.value = nodes.value.filter(n => n.id !== c.id)
+      edges.value = edges.value.filter(e => e.source !== c.id && e.target !== c.id)
+      if (selectedNode.value && selectedNode.value.id === c.id) selectedNode.value = null
+      saveStatus.color = 'grey'
+      saveStatus.icon = 'mdi-cloud-outline'
+      saveStatus.text = 'Não salvo'
+    }
+  }
+}
+
+function onEdgesChange(changes) {
+  for (const c of changes) {
+    if (c.type === 'remove') {
+      edges.value = edges.value.filter(e => e.id !== c.id)
+      saveStatus.color = 'grey'
+      saveStatus.icon = 'mdi-cloud-outline'
+      saveStatus.text = 'Não salvo'
+    }
+  }
 }
 
 const onNodeClick = ({ node }) => {
   selectedNode.value = node
+  showEdgeMenu.value = false
 }
 
 const onPaneClick = () => {
   selectedNode.value = null
+  showEdgeMenu.value = false
+}
+
+const onEdgeClick = (edgeMouseEvent) => {
+  selectedEdge.value = edgeMouseEvent.edge
+  const e = edgeMouseEvent.event
+  if (e) {
+    edgeMenuPosition.value = { x: e.clientX + 10, y: e.clientY - 20 }
+    showEdgeMenu.value = true
+  }
+}
+
+const setEdgeColor = (colorHex) => {
+  if (!selectedEdge.value) return
+  const edge = edges.value.find(e => e.id === selectedEdge.value.id)
+  if (edge) {
+    edge.style = { ...(edge.style || {}), stroke: colorHex }
+    saveStatus.color = 'grey'
+    saveStatus.icon = 'mdi-cloud-outline'
+    saveStatus.text = 'Não salvo'
+  }
+  showEdgeMenu.value = false
+}
+
+const deleteSelectedEdge = () => {
+  if (!selectedEdge.value) return
+  edges.value = edges.value.filter(e => e.id !== selectedEdge.value.id)
+  selectedEdge.value = null
+  showEdgeMenu.value = false
+  saveStatus.color = 'grey'
+  saveStatus.icon = 'mdi-cloud-outline'
+  saveStatus.text = 'Não salvo'
 }
 
 const deleteSelectedNode = (nodeId) => {
-  removeNodes([nodeId])
+  nodes.value = nodes.value.filter(n => n.id !== nodeId)
+  edges.value = edges.value.filter(e => e.source !== nodeId && e.target !== nodeId)
   selectedNode.value = null
+  saveStatus.color = 'grey'
+  saveStatus.icon = 'mdi-cloud-outline'
+  saveStatus.text = 'Não salvo'
 }
 
 const runGraphTest = async () => {
@@ -427,9 +666,7 @@ const runGraphTest = async () => {
   testResult.value = null
 
   try {
-    // Save first to ensure server has latest topology
     await saveGraph()
-
     const res = await axios.post(`/agent-graphs/${graphId}/test`, {
       message: testMessage.value
     })
@@ -457,32 +694,41 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.dnd-block-item {
-  background: rgba(30, 41, 59, 0.7);
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  transition: all 0.15s ease;
+.agent-graph-editor-page {
+  background-color: #0F0F17;
 }
 
-.dnd-block-item:hover {
-  background: rgba(51, 65, 85, 0.9);
-  border-color: rgba(255, 255, 255, 0.3) !important;
-  transform: scale(1.02);
+.graph-name-display {
+  cursor: pointer;
+  transition: opacity 0.2s;
 }
 
-.dnd-icon-wrapper {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.graph-name-display:hover {
+  opacity: 0.75;
+}
+
+.dndnode {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  transition: all 0.2s ease;
+  user-select: none;
+  color: #ffffff !important;
+}
+
+.dndnode .text-subtitle-2 {
+  color: #ffffff !important;
+}
+
+.dndnode:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-2px);
 }
 
 .cursor-grab {
   cursor: grab;
 }
 
-.dark-canvas {
-  background-color: #0d111c;
+.properties-drawer {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
 }
 </style>
