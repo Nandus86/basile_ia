@@ -26,9 +26,12 @@ from app.models.user_analytics import UserAnalytics
 from app.models.analytics_config import AnalyticsConfig
 from app.models.analytics_report import AnalyticsReport
 
+from app.models.agent_graph import AgentGraph, agent_graph_tool_access
+
 __all__ = [
     "APIKey", 
     "Agent", "AgentCollaborator", "AccessLevel", "CollaborationStatus", "AgentGroup",
+    "AgentGraph", "agent_graph_tool_access",
     "MCP", "MCPGroup", "MCPExecutionLog",
     "AgentConfig", "PendingApproval",
     "Document", "DocumentStatus", "DocumentType",

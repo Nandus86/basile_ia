@@ -133,6 +133,10 @@ class Agent(Base):
         nullable=False,
     )
     
+    # Execution type: "standard" (single agent) vs "graph" (orchestrated agent graph)
+    execution_type = Column(String(20), default="standard", server_default=text("'standard'"), nullable=False)
+    graph_id = Column(UUID(as_uuid=True), ForeignKey("agent_graphs.id", ondelete="SET NULL"), nullable=True)
+
     # Response style for collaborator output ("structured" or "natural")
     response_style = Column(String(20), default="structured", nullable=False)
 
@@ -275,6 +279,22 @@ class Agent(Base):
     workflows = relationship(
         "Workflow",
         secondary=agent_workflow_access,
+        lazy="selectin"
+    )
+
+    # Primary Agent Graph (when execution_type == 'graph')
+    graph = relationship(
+        "AgentGraph",
+        foreign_keys=[graph_id],
+        back_populates="assigned_agents",
+        lazy="selectin"
+    )
+
+    # Agent Graphs attached as callable tools
+    graph_tools = relationship(
+        "AgentGraph",
+        secondary="agent_graph_tool_access",
+        back_populates="tool_users",
         lazy="selectin"
     )
 

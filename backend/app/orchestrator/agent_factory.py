@@ -175,6 +175,8 @@ class AgentFactory:
                 selectinload(Agent.information_bases),
                 selectinload(Agent.vfs_knowledge_bases),
                 selectinload(Agent.provider),
+                selectinload(Agent.graph),
+                selectinload(Agent.graph_tools),
             )
             .where(Agent.is_active == True)
         )
@@ -199,6 +201,8 @@ class AgentFactory:
                 selectinload(Agent.vfs_knowledge_bases),
                 selectinload(Agent.collaborator_settings),
                 selectinload(Agent.provider),
+                selectinload(Agent.graph),
+                selectinload(Agent.graph_tools),
             )
             .where(Agent.id == agent_id, Agent.is_active == True)
         )
@@ -230,6 +234,19 @@ class AgentFactory:
             # independentemente do input_schema do agente.
             logger.info(f"[AgentFactory] 🔍 DEBUG get_tools_for_agent context_data keys for '{agent.name}': {list(context_data.keys()) if context_data else 'None'}")
             tools = await get_tools_for_agent(self.db, agent_id, context_data)
+            
+            # Load Graph Tools attached to this agent
+            if hasattr(agent, 'graph_tools') and agent.graph_tools:
+                try:
+                    from app.services.agent_graph_compiler import build_graph_tool
+                    for gt in agent.graph_tools:
+                        if getattr(gt, 'is_active', True):
+                            g_tool = build_graph_tool(gt, self.db, context_data=context_data)
+                            tools.append(g_tool)
+                            logger.info(f"[AgentFactory] 🧩 Carregou Grafo como Ferramenta '{g_tool.name}' para '{agent.name}'")
+                except Exception as e:
+                    logger.error(f"[AgentFactory] ❌ Erro ao carregar graph_tools para '{agent.name}': {e}")
+
             if tools:
                 tool_names = [t.name for t in tools]
                 logger.info(f"[AgentFactory] 🧰 Agent '{agent.name}' carregou {len(tools)} tool(s): {tool_names}")
@@ -374,6 +391,9 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             "greeting_config": greeting_config,
             "provider": agent.provider if hasattr(agent, "provider") else None,
             "execution_mode": getattr(getattr(agent, "execution_mode", None), "value", "balanced"),
+            "execution_type": getattr(agent, "execution_type", "standard") or "standard",
+            "graph_id": str(agent.graph_id) if getattr(agent, "graph_id", None) else None,
+            "graph": getattr(agent, "graph", None),
             "bypass_llm": getattr(agent, "bypass_llm", False),
         }
         
@@ -1121,6 +1141,35 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         execution_mode_override: Optional[str] = None,
     ) -> str:
         """Invoke an agent with messages and return response."""
+        # ── Graph Execution Mode (Orchestrated Agent Graph) ───────────────────
+        if agent_config.get("execution_type") == "graph" and agent_config.get("graph_id"):
+            try:
+                from app.services.agent_graph_compiler import AgentGraphCompiler
+                from app.models.agent_graph import AgentGraph
+                from uuid import UUID
+                graph_id = UUID(str(agent_config["graph_id"]))
+                result = await self.db.execute(select(AgentGraph).where(AgentGraph.id == graph_id, AgentGraph.is_active == True))
+                graph_obj = result.scalar_one_or_none()
+                if graph_obj:
+                    user_msg = ""
+                    for m in reversed(messages):
+                        if isinstance(m, HumanMessage) or (isinstance(m, dict) and m.get("role") == "user"):
+                            user_msg = m.content if isinstance(m, HumanMessage) else m.get("content", "")
+                            if user_msg:
+                                break
+                    session_id = context_data.get("session_id") if context_data else None
+                    compiler = AgentGraphCompiler(self.db)
+                    exec_res = await compiler.execute_graph(
+                        graph=graph_obj,
+                        message=user_msg or "Iniciar atendimento",
+                        context_data=context_data,
+                        session_id=session_id
+                    )
+                    logger.info(f"[AgentFactory] 🕸️ Agente '{agent_config['name']}' executado via Grafo '{graph_obj.name}' (status: {exec_res.status})")
+                    return exec_res.final_output
+            except Exception as e:
+                logger.error(f"[AgentFactory] ❌ Erro ao executar agente '{agent_config.get('name')}' em modo grafo: {e}", exc_info=True)
+
         prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
         
         if not prep["is_react"]:

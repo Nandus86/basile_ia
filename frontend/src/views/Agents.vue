@@ -321,12 +321,46 @@
                   </v-col>
                 </v-row>
                 
+                <v-row>
+                  <v-col cols="12" :md="formData.execution_type === 'graph' ? 6 : 12">
+                    <v-select
+                      v-model="formData.execution_type"
+                      label="Modo de Execução"
+                      :items="[
+                        { title: 'Agente Simples (Padrão)', value: 'standard' },
+                        { title: 'Grafo Orquestrado (Agent Graph)', value: 'graph' }
+                      ]"
+                      prepend-inner-icon="mdi-graph-outline"
+                      hint="Executar como agente individual ou como um time de agentes orquestrado em grafo"
+                      persistent-hint
+                    ></v-select>
+                  </v-col>
+                  <v-col cols="12" md="6" v-if="formData.execution_type === 'graph'">
+                    <v-autocomplete
+                      v-model="formData.graph_id"
+                      label="Grafo Orquestrado Vinculado"
+                      :items="agentGraphs"
+                      item-title="name"
+                      item-value="id"
+                      prepend-inner-icon="mdi-transit-connection-variant"
+                      hint="Selecione o grafo que assumirá a execução deste agente"
+                      persistent-hint
+                      clearable
+                    >
+                      <template v-slot:item="{ props, item }">
+                        <v-list-item v-bind="props" :subtitle="`${item.raw.node_count || 0} nós configurados`"></v-list-item>
+                      </template>
+                    </v-autocomplete>
+                  </v-col>
+                </v-row>
+                
                 <v-textarea
                   v-model="formData.description"
                   label="Descrição"
                   placeholder="Descreva brevemente a função deste agente..."
                   rows="2"
                   prepend-inner-icon="mdi-text"
+                  class="mt-2"
                 ></v-textarea>
                 
                 <v-textarea
@@ -1136,6 +1170,43 @@
                     </template>
                   </v-list-item>
                 </v-list>
+
+                <!-- Graph as Tool Section -->
+                <v-divider class="my-6"></v-divider>
+                <div class="d-flex justify-space-between align-center mb-3">
+                  <h3 class="text-subtitle-1 font-weight-bold">
+                    <v-icon size="20" class="mr-1" color="primary">mdi-graph-outline</v-icon>
+                    Grafos de Agentes como Ferramentas (Graph-as-a-Tool)
+                  </h3>
+                  <v-btn size="small" variant="text" color="primary" to="/agent-graphs" target="_blank">
+                    Gerenciar Grafos <v-icon end>mdi-open-in-new</v-icon>
+                  </v-btn>
+                </div>
+
+                <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+                  <template v-slot:prepend>
+                    <v-icon>mdi-information</v-icon>
+                  </template>
+                  Vincule grafos de agentes para que este agente possa chamá-los como ferramentas dinâmicas (sub-rotinas com múltiplos especialistas).
+                </v-alert>
+
+                <v-autocomplete
+                  v-model="formData.graph_tool_ids"
+                  :items="agentGraphs"
+                  item-title="name"
+                  item-value="id"
+                  label="Grafos Vinculados como Ferramentas"
+                  multiple
+                  chips
+                  closable-chips
+                  variant="outlined"
+                  density="compact"
+                  placeholder="Selecione um ou mais grafos..."
+                >
+                  <template v-slot:item="{ props, item }">
+                    <v-list-item v-bind="props" :subtitle="`${item.raw.node_count || 0} nós configurados`"></v-list-item>
+                  </template>
+                </v-autocomplete>
               </div>
             </v-window-item>
 
@@ -2665,8 +2736,18 @@ import { agentGroupService } from '@/services/agentGroupService'
 
 // State
 const agents = ref([])
+const agentGraphs = ref([])
 const loading = ref(false)
 const search = ref('')
+
+async function fetchAgentGraphs() {
+  try {
+    const res = await axios.get('/agent-graphs')
+    agentGraphs.value = res.data.graphs || []
+  } catch (error) {
+    console.error('Error fetching agent graphs:', error)
+  }
+}
 
 // Form dialog
 const dialog = ref(false)
@@ -2700,6 +2781,9 @@ const formData = reactive({
   is_active: true,
   access_level: 'normal',
   collaboration_enabled: true,
+  execution_type: 'standard',
+  graph_id: null,
+  graph_tool_ids: [],
   swarm_mode: false,
   vector_memory_enabled: false,
   information_bases_global_search_enabled: false,
@@ -3611,6 +3695,9 @@ async function openDialog(agent = null) {
         is_active: fullAgent.is_active ?? true,
         access_level: fullAgent.access_level || 'normal',
         collaboration_enabled: fullAgent.collaboration_enabled ?? true,
+        execution_type: fullAgent.execution_type || 'standard',
+        graph_id: fullAgent.graph_id || null,
+        graph_tool_ids: (fullAgent.graph_tools || []).map(gt => gt.id),
         swarm_mode: fullAgent.swarm_mode ?? false,
         vector_memory_enabled: fullAgent.vector_memory_enabled ?? false,
         information_bases_global_search_enabled: fullAgent.information_bases_global_search_enabled ?? false,
@@ -3743,7 +3830,8 @@ async function openDialog(agent = null) {
         fetchAllVFSBases(),
         fetchAgentVFSBases(fullAgent.id),
         fetchEmotionalProfiles(),
-        fetchCustomProviders()
+        fetchCustomProviders(),
+        fetchAgentGraphs()
       ])
     } catch (error) {
       console.error('Error fetching agent details:', error)
@@ -3753,6 +3841,7 @@ async function openDialog(agent = null) {
   } else {
     editing.value = false
     resetForm()
+    fetchAgentGraphs()
   }
   dialog.value = true
 }
@@ -4315,6 +4404,7 @@ onMounted(() => {
   fetchAllMcpGroups()
   fetchGroups()
   fetchCustomProviders()
+  fetchAgentGraphs()
 })
 </script>
 

@@ -26,7 +26,7 @@ for _mod in ("app.services.mcp_tools", "app.orchestrator.agent_factory",
 # ─────────────────────────────────────────────────────────────────────────────
 
 from app.database import engine, Base
-from app.api import webhook, agents, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control, backup, auth, qa_eval
+from app.api import webhook, agents, agent_graphs, mcp, mcp_groups, database, health, documents, emotional_profiles, models, skills, information_bases, vfs, memory, workflows, skill_groups, agent_groups, agent_control, backup, auth, qa_eval
 from app.api.endpoints import (
     ai_providers,
     webhooks_config,
@@ -59,6 +59,10 @@ async def lifespan(app: FastAPI):
                 )
                 WHERE church_name IS NULL AND request_payload IS NOT NULL;
             """))
+            await conn.execute(text("ALTER TABLE agents ADD COLUMN IF NOT EXISTS execution_type VARCHAR(20) DEFAULT 'standard';"))
+            await conn.execute(text("ALTER TABLE agents ADD COLUMN IF NOT EXISTS graph_id UUID REFERENCES agent_graphs(id) ON DELETE SET NULL;"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agents_graph_id ON agents (graph_id);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_agents_execution_type ON agents (execution_type);"))
         except Exception as e:
             logging.warning(f"[DB Startup] Migration warning: {e}")
         
@@ -138,6 +142,8 @@ app.include_router(dispatcher_config.router, prefix="/disparador-configs", tags=
 app.include_router(dispatcher_proxy.router, prefix="/disparador", tags=["Dispatcher Proxy"])
 app.include_router(workflows.router, prefix="/workflows", tags=["Workflows"])
 app.include_router(workflows.router, prefix="/api/workflows", tags=["Workflows"])
+app.include_router(agent_graphs.router, prefix="/agent-graphs", tags=["Agent Graphs"])
+app.include_router(agent_graphs.router, prefix="/api/agent-graphs", tags=["Agent Graphs"])
 app.include_router(vfs.router, prefix="/vfs-knowledge-bases", tags=["VFS Knowledge Bases"])
 app.include_router(memory.router, prefix="/memory", tags=["Memory Management"])
 app.include_router(skill_groups.router, prefix="/skill-groups", tags=["Skill Groups"])

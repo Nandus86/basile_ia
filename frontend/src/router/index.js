@@ -93,6 +93,16 @@ const routes = [
         component: () => import('@/views/WorkflowEditor.vue')
       },
       {
+        path: 'agent-graphs',
+        name: 'AgentGraphs',
+        component: () => import('@/views/AgentGraphManager.vue')
+      },
+      {
+        path: 'agent-graphs/:id',
+        name: 'AgentGraphEditor',
+        component: () => import('@/views/AgentGraphEditor.vue')
+      },
+      {
         path: 'disparador',
         name: 'Disparador',
         component: () => import('@/views/Disparador.vue')

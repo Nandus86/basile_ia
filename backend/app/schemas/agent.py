@@ -58,6 +58,15 @@ class CollaboratorSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class GraphSummary(BaseModel):
+    """Summary of an Agent Graph attached to agent"""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CollaboratorUpdate(BaseModel):
     """Update collaboration status for an agent"""
     collaborator_id: UUID
@@ -99,6 +108,8 @@ class AgentBase(BaseModel):
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
     execution_mode: ExecutionModeEnum = ExecutionModeEnum.BALANCED
+    execution_type: str = "standard"  # "standard" | "graph"
+    graph_id: Optional[UUID] = None
 
 
 class AgentCreate(AgentBase):
@@ -109,6 +120,7 @@ class AgentCreate(AgentBase):
     mcp_group_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grupos MCP com acesso")
     skill_ids: Optional[List[UUID]] = Field(default=[], description="IDs das Skills com acesso")
     thinker_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Thinkers vinculados a este agente")
+    graph_tool_ids: Optional[List[UUID]] = Field(default=[], description="IDs dos Grafos anexados como ferramentas")
     is_orchestrator: bool = False
     is_planner: bool = False
     is_thinker: bool = False
@@ -142,6 +154,7 @@ class AgentUpdate(BaseModel):
     mcp_group_ids: Optional[List[UUID]] = None
     skill_ids: Optional[List[UUID]] = None
     thinker_ids: Optional[List[UUID]] = None
+    graph_tool_ids: Optional[List[UUID]] = None
     is_orchestrator: Optional[bool] = None
     is_planner: Optional[bool] = None
     is_thinker: Optional[bool] = None
@@ -177,6 +190,8 @@ class AgentUpdate(BaseModel):
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
     execution_mode: Optional[ExecutionModeEnum] = None
+    execution_type: Optional[str] = None
+    graph_id: Optional[UUID] = None
 
 
 class AgentResponse(BaseModel):
@@ -228,6 +243,10 @@ class AgentResponse(BaseModel):
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
     execution_mode: ExecutionModeEnum = ExecutionModeEnum.BALANCED
+    execution_type: str = "standard"
+    graph_id: Optional[UUID] = None
+    graph: Optional[GraphSummary] = None
+    graph_tools: List[GraphSummary] = []
     created_at: datetime
     updated_at: datetime
     mcps: List[MCPSummary] = []
@@ -261,6 +280,8 @@ class AgentListItem(BaseModel):
     group_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
     execution_mode: ExecutionModeEnum = ExecutionModeEnum.BALANCED
+    execution_type: str = "standard"
+    graph_id: Optional[UUID] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

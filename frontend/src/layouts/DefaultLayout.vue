@@ -169,7 +169,7 @@ import { useTheme, useDisplay } from 'vuetify'
 
 const route = useRoute()
 const theme = useTheme()
-const isWorkflowEditor = computed(() => route.path.startsWith('/workflows/'))
+const isWorkflowEditor = computed(() => route.path.startsWith('/workflows/') || route.path.startsWith('/agent-graphs/'))
 const { mobile } = useDisplay()
 const drawer = ref(true)
 const rail = ref(false)
@@ -177,6 +177,7 @@ const rail = ref(false)
 const menuItems = [
   { title: 'Dashboard', icon: 'mdi-view-dashboard-outline', to: '/' },
   { title: 'Workflows', icon: 'mdi-sitemap-outline', to: '/workflows' },
+  { title: 'Grafos de Agentes', icon: 'mdi-graph-outline', to: '/agent-graphs' },
   { title: 'Acompanhamento', icon: 'mdi-chart-timeline-variant', to: '/acompanhamento' },
   { title: 'Analytics', icon: 'mdi-google-analytics', to: '/analytics' },
   { title: 'Q&A Eval', icon: 'mdi-clipboard-check-outline', to: '/qa-eval' },
@@ -186,19 +187,20 @@ const menuItems = [
   { title: 'Entrada (Ingress)', icon: 'mdi-login-variant', to: '/ingress' },
   { title: 'Saída (Egress)', icon: 'mdi-logout-variant', to: '/egress' },
   { title: 'Conhecimento', icon: 'mdi-book-open-page-variant-outline', to: '/documents' },
-  { title: 'Integraes MCP', icon: 'mdi-connection', to: '/mcp' },
+  { title: 'Integrações MCP', icon: 'mdi-connection', to: '/mcp' },
   { title: 'Criador de Skills', icon: 'mdi-star-shooting-outline', to: '/skills' },
-  { title: 'Bases de Informaes', icon: 'mdi-database-search', to: '/information-bases' },
+  { title: 'Bases de Informações', icon: 'mdi-database-search', to: '/information-bases' },
   { title: 'Base VFS (RAG 3.0)', icon: 'mdi-file-document-multiple-outline', to: '/vfs-knowledge' },
-  { title: 'Gerenciar Memrias', icon: 'mdi-memory', to: '/memory' },
+  { title: 'Gerenciar Memórias', icon: 'mdi-memory', to: '/memory' },
   { title: 'Banco de Dados', icon: 'mdi-database-outline', to: '/database' },
-  { title: 'Configuraes de IA', icon: 'mdi-cog-box', to: '/ia-settings' },
+  { title: 'Configurações de IA', icon: 'mdi-cog-box', to: '/ia-settings' },
   { title: 'Backup & Restore', icon: 'mdi-database-export-outline', to: '/backup-restore' }
 ]
 
 const pageTitleMap = {
-  '/': 'Ol, Fernando ',
+  '/': 'Olá, Fernando 👋',
   '/workflows': 'Workflows Visuais',
+  '/agent-graphs': 'Grafos de Agentes',
   '/acompanhamento': 'Acompanhamento',
   '/analytics': 'Analytics & Relatórios',
   '/qa-eval': 'Q&A Eval',

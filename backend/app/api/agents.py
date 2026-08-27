@@ -47,7 +47,9 @@ async def list_agents(
         selectinload(Agent.mcp_groups),
         selectinload(Agent.skills),
         selectinload(Agent.information_bases),
-        selectinload(Agent.collaborator_settings)
+        selectinload(Agent.collaborator_settings),
+        selectinload(Agent.graph),
+        selectinload(Agent.graph_tools)
     )
     
     if is_active is not None:
@@ -94,6 +96,8 @@ async def list_agents(
             group_id=agent.group_id,
             provider_id=agent.provider_id,
             execution_mode=ExecutionModeEnum(getattr(agent.execution_mode, 'value', 'balanced')),
+            execution_type=getattr(agent, 'execution_type', 'standard') or 'standard',
+            graph_id=agent.graph_id,
             bypass_llm=agent.bypass_llm,
             swarm_mode=agent.swarm_mode,
             created_at=agent.created_at
@@ -117,7 +121,9 @@ async def get_agent(
             selectinload(Agent.information_bases),
             selectinload(Agent.collaborator_settings).selectinload(AgentCollaborator.collaborator),
             selectinload(Agent.emotional_profile),
-            selectinload(Agent.provider)
+            selectinload(Agent.provider),
+            selectinload(Agent.graph),
+            selectinload(Agent.graph_tools)
         )
         .where(Agent.id == agent_id)
     )
@@ -162,6 +168,26 @@ async def get_agent(
     for row in result_thinkers:
         thinker_ids.append(row[0])
     
+    # Build graph summaries
+    graph_data = None
+    if agent.graph:
+        from app.schemas.agent import GraphSummary
+        graph_data = GraphSummary(
+            id=agent.graph.id,
+            name=agent.graph.name,
+            description=agent.graph.description
+        )
+    
+    graph_tools_data = []
+    if agent.graph_tools:
+        from app.schemas.agent import GraphSummary
+        for gt in agent.graph_tools:
+            graph_tools_data.append(GraphSummary(
+                id=gt.id,
+                name=gt.name,
+                description=gt.description
+            ))
+    
     return AgentResponse(
         id=agent.id,
         name=agent.name,
@@ -193,6 +219,10 @@ async def get_agent(
         true_trigger_match_mode=agent.true_trigger_match_mode or "word",
         provider_id=agent.provider_id,
         execution_mode=ExecutionModeEnum(getattr(agent.execution_mode, 'value', 'balanced')),
+        execution_type=getattr(agent, 'execution_type', 'standard') or 'standard',
+        graph_id=agent.graph_id,
+        graph=graph_data,
+        graph_tools=graph_tools_data,
         is_thinker=agent.is_thinker,
         thinker_prompt=agent.thinker_prompt,
         thinker_model=agent.thinker_model,
@@ -223,7 +253,8 @@ async def create_agent(
     mcp_group_ids = agent_data.mcp_group_ids or []
     skill_ids = agent_data.skill_ids or []
     thinker_ids = agent_data.thinker_ids or []  # NEW
-    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids", "skill_ids", "thinker_ids"})
+    graph_tool_ids = agent_data.graph_tool_ids or []
+    agent_dict = agent_data.model_dump(exclude={"mcp_ids", "mcp_group_ids", "skill_ids", "thinker_ids", "graph_tool_ids"})
     
     # Convert enum to model enum
     agent_dict["access_level"] = AccessLevel(agent_dict["access_level"].value)
@@ -275,6 +306,14 @@ async def create_agent(
             )
         print(f"[API] Linked {len(thinker_ids)} thinkers to new agent")
     
+    # Link Graph Tools if provided
+    if graph_tool_ids:
+        from app.models.agent_graph import AgentGraph
+        g_res = await db.execute(
+            select(AgentGraph).where(AgentGraph.id.in_(graph_tool_ids))
+        )
+        agent.graph_tools = list(g_res.scalars().all())
+    
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
@@ -291,7 +330,11 @@ async def update_agent(
     """Update an existing agent"""
     result = await db.execute(
         select(Agent)
-        .options(selectinload(Agent.mcps), selectinload(Agent.mcp_groups))
+        .options(
+            selectinload(Agent.mcps),
+            selectinload(Agent.mcp_groups),
+            selectinload(Agent.graph_tools)
+        )
         .where(Agent.id == agent_id)
     )
     agent = result.scalar_one_or_none()
@@ -303,7 +346,7 @@ async def update_agent(
         )
     
     # Update only provided fields
-    update_data = agent_data.model_dump(exclude_unset=True, exclude={"mcp_ids", "mcp_group_ids", "skill_ids", "thinker_ids"})
+    update_data = agent_data.model_dump(exclude_unset=True, exclude={"mcp_ids", "mcp_group_ids", "skill_ids", "thinker_ids", "graph_tool_ids"})
     
     # Handle access_level enum conversion
     if "access_level" in update_data and update_data["access_level"] is not None:
@@ -346,6 +389,14 @@ async def update_agent(
         bases = ib_result.scalars().all()
         agent.information_bases = list(bases)
     
+    # Update Graph Tools if provided
+    if hasattr(agent_data, 'graph_tool_ids') and agent_data.graph_tool_ids is not None:
+        from app.models.agent_graph import AgentGraph
+        gt_result = await db.execute(
+            select(AgentGraph).where(AgentGraph.id.in_(agent_data.graph_tool_ids))
+        )
+        agent.graph_tools = list(gt_result.scalars().all())
+
     # Update Thinker links if provided
     if hasattr(agent_data, 'thinker_ids') and agent_data.thinker_ids is not None:
         # First, delete existing links
