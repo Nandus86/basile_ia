@@ -469,6 +469,8 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         # Determina o provedor e as credenciais
         provider = agent_config.get("provider")
+        openrouter_specials = ["sambanova", "groq"]
+        is_openrouter = provider == "openrouter" or "/" in model_id or model_id in openrouter_specials
         
         # 1. Checar se é Google Gemini (nativamente, com ou sem provider configurado)
         is_google = False
@@ -530,9 +532,6 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         else:
             # 4. Fallback para OpenRouter / OpenAI
-            openrouter_specials = ["sambanova", "groq"]
-            is_openrouter = provider == "openrouter" or "/" in model_id or model_id in openrouter_specials
-
             if is_openrouter:
                 # OpenRouter model
                 kwargs["api_key"] = settings.OPENROUTER_API_KEY
@@ -540,6 +539,45 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             else:
                 # OpenAI direct
                 kwargs["api_key"] = settings.OPENAI_API_KEY
+
+        # OpenRouter Advanced Routing (Provider Preferences, Privacy & Models Fallback)
+        effective_base_url = kwargs.get("base_url", "") or ""
+        is_effective_openrouter = is_openrouter or ("openrouter.ai" in effective_base_url.lower())
+
+        if is_effective_openrouter:
+            # 1. Provider Routing preferences (order, sort, only, ignore, allow_fallbacks, data_collection, zdr, quantizations)
+            provider_routing = None
+            if "provider" in extra_config and isinstance(extra_config["provider"], dict):
+                provider_routing = extra_config["provider"]
+            elif "openrouter_provider" in extra_config and isinstance(extra_config["openrouter_provider"], dict):
+                provider_routing = extra_config["openrouter_provider"]
+            elif "provider_routing" in extra_config and isinstance(extra_config["provider_routing"], dict):
+                provider_routing = extra_config["provider_routing"]
+
+            if provider_routing:
+                if "extra_body" not in kwargs:
+                    kwargs["extra_body"] = {}
+                kwargs["extra_body"]["provider"] = provider_routing
+                logger.info(f"[AgentFactory] 🔀 Custom OpenRouter provider routing configured for '{model_id}': {provider_routing}")
+
+            # 2. Model Fallback chain
+            model_fallbacks = None
+            if "models" in extra_config and isinstance(extra_config["models"], list):
+                model_fallbacks = extra_config["models"]
+            elif "model_fallbacks" in extra_config and isinstance(extra_config["model_fallbacks"], list):
+                model_fallbacks = extra_config["model_fallbacks"]
+
+            if model_fallbacks:
+                if "extra_body" not in kwargs:
+                    kwargs["extra_body"] = {}
+                kwargs["extra_body"]["models"] = model_fallbacks
+                logger.info(f"[AgentFactory] 🔀 Custom OpenRouter model fallbacks configured for '{model_id}': {model_fallbacks}")
+
+            # 3. Routing strategy override (e.g. route: "fallback")
+            if "route" in extra_config and isinstance(extra_config["route"], str):
+                if "extra_body" not in kwargs:
+                    kwargs["extra_body"] = {}
+                kwargs["extra_body"]["route"] = extra_config["route"]
 
         # Apply resilience timeout
         resilience_cfg = agent_config.get("resilience", {})
