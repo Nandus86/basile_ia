@@ -256,7 +256,7 @@
       v-model="showTestDrawer"
       location="right"
       temporary
-      width="450"
+      width="540"
       class="bg-surface border-l"
     >
       <div class="pa-4 d-flex flex-column h-100">
@@ -268,15 +268,59 @@
           <v-btn icon="mdi-close" variant="text" size="small" @click="showTestDrawer = false"></v-btn>
         </div>
 
+        <!-- User Message -->
         <v-textarea
           v-model="testMessage"
-          label="Mensagem do Usuário"
+          label="Mensagem do Usuário / Prompt *"
           variant="outlined"
           density="compact"
-          rows="3"
+          rows="2"
           placeholder="Ex: Como está a saúde financeira e de membros da minha igreja?"
           class="mb-3"
+          hint="Mensagem enviada para iniciar a execução do grafo"
+          persistent-hint
         ></v-textarea>
+
+        <!-- JSON Context Parameters (Similar to Workflow) -->
+        <div class="mb-4">
+          <div class="d-flex align-center justify-space-between mb-1">
+            <span class="text-caption font-weight-bold text-medium-emphasis d-flex align-center ga-1">
+              <v-icon size="16" color="primary">mdi-code-json</v-icon>
+              Parâmetros de Entrada / Contexto (JSON)
+            </span>
+            <div class="d-flex align-center ga-1">
+              <v-btn
+                variant="text"
+                size="x-small"
+                density="compact"
+                color="primary"
+                prepend-icon="mdi-format-align-left"
+                @click="formatTestJson"
+              >
+                Formatar JSON
+              </v-btn>
+              <v-btn
+                variant="text"
+                size="x-small"
+                density="compact"
+                color="secondary"
+                prepend-icon="mdi-code-tags"
+                @click="insertExampleJson"
+              >
+                Exemplo
+              </v-btn>
+            </div>
+          </div>
+          <v-textarea
+            v-model="testPayloadJson"
+            variant="outlined"
+            density="compact"
+            rows="6"
+            placeholder='{\n  "church_name": "Igreja Central",\n  "user_name": "Fernando"\n}'
+            class="monospace-field"
+            hide-details
+          ></v-textarea>
+        </div>
 
         <v-btn
           color="primary"
@@ -396,8 +440,29 @@ const connectionColors = [
 
 const showTestDrawer = ref(false)
 const testMessage = ref('')
+const testPayloadJson = ref('{\n  "church_name": "Igreja Central",\n  "user_name": "Fernando"\n}')
 const runningTest = ref(false)
 const testResult = ref(null)
+
+const formatTestJson = () => {
+  try {
+    if (!testPayloadJson.value.trim()) return
+    const parsed = JSON.parse(testPayloadJson.value)
+    testPayloadJson.value = JSON.stringify(parsed, null, 2)
+  } catch (e) {
+    alert('JSON com formato inválido: ' + e.message)
+  }
+}
+
+const insertExampleJson = () => {
+  testPayloadJson.value = JSON.stringify({
+    church_name: "Igreja Batista Central",
+    user_name: "Fernando",
+    user_phone: "5511999999999",
+    user_role: "membro",
+    current_date: new Date().toISOString().split('T')[0]
+  }, null, 2)
+}
 
 const toolboxItems = [
   { type: 'start', label: 'Início / Trigger', icon: 'mdi-play-circle', color: '#10B981', category: 'flow' },
@@ -662,20 +727,32 @@ const deleteSelectedNode = (nodeId) => {
 
 const runGraphTest = async () => {
   if (!testMessage.value.trim()) return
+
+  let contextData = {}
+  try {
+    if (testPayloadJson.value && testPayloadJson.value.trim()) {
+      contextData = JSON.parse(testPayloadJson.value)
+    }
+  } catch (e) {
+    alert('JSON de Parâmetros com formato inválido: ' + e.message)
+    return
+  }
+
   runningTest.value = true
   testResult.value = null
 
   try {
     await saveGraph()
     const res = await axios.post(`/agent-graphs/${graphId}/test`, {
-      message: testMessage.value
+      message: testMessage.value,
+      context_data: contextData
     })
     testResult.value = res.data
   } catch (e) {
     console.error('Erro ao testar grafo:', e)
     testResult.value = {
       status: 'error',
-      final_output: 'Erro ao executar teste do grafo.',
+      final_output: 'Erro ao executar teste do grafo: ' + (e.response?.data?.detail || e.message),
       steps: [],
       total_duration_ms: 0
     }
@@ -730,5 +807,10 @@ onMounted(() => {
 
 .properties-drawer {
   border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.monospace-field :deep(textarea) {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 12px !important;
 }
 </style>
