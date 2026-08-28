@@ -617,14 +617,44 @@ const onDrop = (event) => {
 
 function onConnect(params) {
   const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'default'}-${Date.now()}`
-  const label = params.sourceHandle || ''
-  const defaultColor = (params.sourceHandle === 'true' || params.sourceHandle === 'approved')
-    ? '#10B981'
-    : (params.sourceHandle === 'false')
-      ? '#EF4444'
-      : (params.sourceHandle === 'retry')
-        ? '#F59E0B'
-        : '#3B82F6'
+  
+  const sourceNode = nodes.value.find(n => n.id === params.source)
+  let label = params.sourceHandle || ''
+  let defaultColor = '#3B82F6'
+  let strokeDasharray = undefined
+
+  // 1. Is this a loopback / return connection to lateral yellow handles?
+  if (params.targetHandle === 'loop_in_left' || params.targetHandle === 'loop_in_right') {
+    defaultColor = '#F59E0B'
+    label = label || 'Retorno / Loop'
+    strokeDasharray = '5,5'
+  } else if (params.sourceHandle === 'true') {
+    defaultColor = '#10B981'
+    label = 'Verdadeiro'
+  } else if (params.sourceHandle === 'false') {
+    defaultColor = '#EF4444'
+    label = 'Falso'
+  } else if (params.sourceHandle === 'approved') {
+    defaultColor = '#10B981'
+    label = 'Aprovado'
+  } else if (params.sourceHandle === 'retry') {
+    defaultColor = '#F59E0B'
+    label = 'Loop Refazer'
+    strokeDasharray = '5,5'
+  } else if (params.sourceHandle === 'default') {
+    defaultColor = '#EF4444'
+    label = 'Outro / Fallback'
+  } else if (params.sourceHandle && params.sourceHandle.startsWith('route_')) {
+    defaultColor = '#8B5CF6'
+    // Look up route name from source node configuration
+    const routes = sourceNode?.data?.config?.routes || []
+    const r = routes.find(item => item.id === params.sourceHandle) || routes[parseInt(params.sourceHandle.replace('route_', ''))]
+    if (r && r.name) {
+      label = r.name
+    } else {
+      label = params.sourceHandle
+    }
+  }
 
   edges.value = [...edges.value, {
     id: edgeId,
@@ -635,7 +665,7 @@ function onConnect(params) {
     label,
     type: 'smoothstep',
     animated: true,
-    style: { stroke: defaultColor, strokeWidth: 2 },
+    style: { stroke: defaultColor, strokeWidth: 2, ...(strokeDasharray ? { strokeDasharray } : {}) },
   }]
   saveStatus.color = 'grey'
   saveStatus.icon = 'mdi-cloud-outline'

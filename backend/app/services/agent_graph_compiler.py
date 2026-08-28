@@ -5,6 +5,7 @@ import logging
 import time
 import asyncio
 import re
+import json
 from typing import List, Dict, Any, Optional, TypedDict, Callable
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.models.agent_graph import AgentGraph
 from app.models.agent import Agent
+from app.models.skill import Skill
 from app.schemas.agent_graph import AgentGraphExecuteResponse, AgentGraphStepTrace
 from app.utils.llm_fallback import FallbackChatOpenAI as ChatOpenAI
 from app.config import settings
@@ -139,95 +141,236 @@ class AgentGraphCompiler:
                     step_trace.output_data = "Grafo iniciado"
                     state["final_output"] = state["original_message"]
 
-                # ── 2. AGENT NODE ──────────────────────────────────────────────
+                # ── 2. AGENT NODE (System Agent or Inline Clean Agent) ───────────
                 elif node_type == "agent":
-                    agent_id = node_config.get("agent_id")
-                    agent_name = node_config.get("agent_name", "Agente")
-                    step_trace.agent_id = str(agent_id) if agent_id else None
-                    step_trace.agent_name = agent_name
+                    agent_mode = node_config.get("agent_mode", "existing" if node_config.get("agent_id") else "inline")
+                    inline_agent = node_config.get("inline_agent")
 
-                    if agent_id:
-                        agent_obj = await self._get_agent_by_id(str(agent_id))
-                        if agent_obj:
-                            from app.orchestrator.agent_factory import AgentFactory
-                            factory = AgentFactory(self.db)
-                            agent_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
-                            
-                            # Inject loop feedback if available
-                            input_msgs = list(state["messages"])
-                            if current_node_id in state["loop_feedbacks"]:
-                                feedback = state["loop_feedbacks"][current_node_id]
-                                input_msgs.append(SystemMessage(content=f"⚠️ FEEDBACK DO VERIFICADOR (Corrija sua resposta anterior):\n{feedback}"))
+                    if agent_mode == "inline" or (inline_agent and not node_config.get("agent_id")):
+                        # ── INLINE CLEAN AGENT ─────────────────────────────────
+                        inline_cfg = inline_agent or node_config
+                        inline_name = inline_cfg.get("name", "Agente Limpo")
+                        system_prompt = inline_cfg.get("system_prompt", "Você é um assistente prestativo e direto.")
+                        provider_id = inline_cfg.get("provider_id", "openai")
+                        model_name = inline_cfg.get("model", "gpt-4o-mini")
+                        temperature = float(inline_cfg.get("temperature", 0.7))
+                        max_tokens = int(inline_cfg.get("max_tokens", 2000))
+                        skill_ids = inline_cfg.get("skill_ids", []) or []
+                        mcp_ids = inline_cfg.get("mcp_ids", []) or []
 
-                            # Execute agent
-                            resp_content = await factory.invoke_agent(
-                                agent_config=agent_cfg,
-                                messages=input_msgs,
-                                context_data=state["context_data"]
-                            )
-                            state["final_output"] = resp_content
-                            state["messages"].append(AIMessage(content=resp_content))
-                            step_trace.output_data = resp_content
+                        step_trace.agent_name = f"[Limpo] {inline_name}"
+
+                        # 1. Inject Skills
+                        skills_prompt = ""
+                        if skill_ids:
+                            clean_skill_ids = []
+                            for sid in skill_ids:
+                                try:
+                                    clean_skill_ids.append(UUID(str(sid)))
+                                except Exception:
+                                    pass
+                            if clean_skill_ids:
+                                skill_res = await self.db.execute(
+                                    select(Skill).where(Skill.id.in_(clean_skill_ids), Skill.is_active == True)
+                                )
+                                skills = skill_res.scalars().all()
+                                for sk in skills:
+                                    if sk.content_md:
+                                        skills_prompt += f"\n\n---\n## 🔹 HABILIDADE / SKILL ATIVA: {sk.name}\n\n{sk.content_md}\n---\n"
+
+                        # 2. Attach MCP Tools if configured
+                        tools = []
+                        if mcp_ids:
+                            try:
+                                from app.services.mcp_tools import MCPToolsService
+                                mcp_service = MCPToolsService(self.db)
+                                tools = await mcp_service.get_tools_for_mcps(mcp_ids)
+                            except Exception as e:
+                                logger.warning(f"[AgentGraphCompiler] Erro ao carregar ferramentas MCP: {e}")
+
+                        # 3. Build LLM
+                        from app.orchestrator.agent_factory import AgentFactory
+                        factory = AgentFactory(self.db)
+                        llm = await factory._build_llm(
+                            provider=provider_id,
+                            model_name=model_name,
+                            temperature=temperature,
+                            max_tokens=max_tokens
+                        )
+                        if tools:
+                            llm_callable = llm.bind_tools(tools)
                         else:
-                            state["final_output"] = f"Agente '{agent_name}' não encontrado no banco."
-                            step_trace.status = "error"
-                            step_trace.error = "Agent not found"
-                    else:
-                        state["final_output"] = "Nenhum agente vinculado a este nó."
-                        step_trace.output_data = state["final_output"]
+                            llm_callable = llm
 
-                # ── 3. ROUTER / SUPERVISOR NODE ────────────────────────────────
+                        # 4. Prepare input messages
+                        full_system_prompt = system_prompt + skills_prompt
+                        input_msgs: List[BaseMessage] = [SystemMessage(content=full_system_prompt)]
+                        for m in state["messages"]:
+                            if isinstance(m, BaseMessage):
+                                input_msgs.append(m)
+                            elif isinstance(m, str):
+                                input_msgs.append(HumanMessage(content=m))
+
+                        # Inject loop feedback if available
+                        if current_node_id in state["loop_feedbacks"]:
+                            feedback = state["loop_feedbacks"][current_node_id]
+                            input_msgs.append(SystemMessage(content=f"⚠️ FEEDBACK DO VERIFICADOR (Corrija sua resposta anterior):\n{feedback}"))
+
+                        resp = await llm_callable.ainvoke(input_msgs)
+                        resp_content = resp.content if isinstance(resp.content, str) else str(resp.content)
+
+                        state["final_output"] = resp_content
+                        state["messages"].append(AIMessage(content=resp_content))
+                        step_trace.output_data = resp_content
+
+                    else:
+                        # ── SYSTEM AGENT ───────────────────────────────────────
+                        agent_id = node_config.get("agent_id")
+                        agent_name = node_config.get("agent_name", "Agente")
+                        step_trace.agent_id = str(agent_id) if agent_id else None
+                        step_trace.agent_name = agent_name
+
+                        if agent_id:
+                            agent_obj = await self._get_agent_by_id(str(agent_id))
+                            if agent_obj:
+                                from app.orchestrator.agent_factory import AgentFactory
+                                factory = AgentFactory(self.db)
+                                agent_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
+                                
+                                # Inject loop feedback if available
+                                input_msgs = list(state["messages"])
+                                if current_node_id in state["loop_feedbacks"]:
+                                    feedback = state["loop_feedbacks"][current_node_id]
+                                    input_msgs.append(SystemMessage(content=f"⚠️ FEEDBACK DO VERIFICADOR (Corrija sua resposta anterior):\n{feedback}"))
+
+                                # Execute agent
+                                resp_content = await factory.invoke_agent(
+                                    agent_config=agent_cfg,
+                                    messages=input_msgs,
+                                    context_data=state["context_data"]
+                                )
+                                state["final_output"] = resp_content
+                                state["messages"].append(AIMessage(content=resp_content))
+                                step_trace.output_data = resp_content
+                            else:
+                                state["final_output"] = f"Agente '{agent_name}' não encontrado no banco."
+                                step_trace.status = "error"
+                                step_trace.error = "Agent not found"
+                        else:
+                            state["final_output"] = "Nenhum agente vinculado a este nó."
+                            step_trace.output_data = state["final_output"]
+
+                # ── 3. ROUTER / SUPERVISOR NODE (Dynamic Semantic Routes) ───────
                 elif node_type in ("router", "supervisor"):
                     outgoing_edges = adj_list.get(current_node_id, [])
-                    choices = []
-                    for e in outgoing_edges:
-                        target_id = e.get("target")
-                        target_node = node_map.get(target_id, {})
-                        t_label = target_node.get("data", {}).get("label", target_id)
-                        t_desc = target_node.get("data", {}).get("description", "")
-                        choices.append(f"- ID '{target_id}': {t_label} ({t_desc})")
+                    routes = node_config.get("routes", [])
 
-                    custom_prompt = node_config.get("prompt") or (
-                        "Você é o Supervisor do Grafo de Agentes. Analise a mensagem do usuário e escolha exatamente o ID do nó de destino mais apropriado.\n"
-                        f"Opções disponíveis:\n" + "\n".join(choices) + "\n\n"
-                        "Responda SOMENTE em JSON com o formato: {\"selected_node_id\": \"<ID>\", \"reasoning\": \"<motivo>\"}"
-                    )
-                    
-                    llm_resp = await self.llm_default.ainvoke([
-                        SystemMessage(content=custom_prompt),
-                        HumanMessage(content=state["original_message"])
-                    ])
-                    content_str = llm_resp.content.strip()
-                    
-                    # Parse selected node id
-                    chosen_id = None
-                    import json
-                    try:
-                        clean_json = re.search(r'\{.*\}', content_str, re.DOTALL)
-                        if clean_json:
-                            data = json.loads(clean_json.group(0))
-                            chosen_id = data.get("selected_node_id")
-                    except Exception:
-                        pass
-                    
-                    # Fallback if parsing failed
-                    if not chosen_id and outgoing_edges:
-                        chosen_id = outgoing_edges[0].get("target")
+                    if routes:
+                        # Roteamento baseado na lista de rotas dinâmicas
+                        route_descriptions = []
+                        for idx, r in enumerate(routes):
+                            r_id = r.get("id") or f"route_{idx}"
+                            r_name = r.get("name") or f"Rota {idx + 1}"
+                            r_desc = r.get("description") or "Sem descrição específica."
+                            route_descriptions.append(f'- ID: "{r_id}" | Nome: "{r_name}" | Quando acionar: {r_desc}')
 
-                    step_trace.output_data = f"Roteado para {chosen_id} (resposta: {content_str[:150]}...)"
-                    state["current_node_id"] = chosen_id
-                    # Skip normal next edge calculation
-                    step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
-                    steps_trace.append(step_trace)
-                    current_node_id = chosen_id
-                    continue
+                        route_descriptions.append('- ID: "default" | Nome: "Outro / Fallback" | Quando acionar: Nenhuma das rotas acima corresponde adequadamente à intenção da mensagem.')
+
+                        prompt_routes_str = "\n".join(route_descriptions)
+                        supervisor_instruction = node_config.get("prompt") or "Você é o Supervisor e Roteador Inteligente do Grafo de Agentes."
+
+                        router_prompt = (
+                            f"{supervisor_instruction}\n\n"
+                            "Analise cuidadosamente a mensagem do usuário (e o estado do fluxo) e escolha exatamente o ID da rota mais apropriada.\n\n"
+                            f"ROTAS DISPONÍVEIS:\n{prompt_routes_str}\n\n"
+                            "Responda SOMENTE em JSON com o formato estrito:\n"
+                            "{\n"
+                            '  "selected_route_id": "<ID da rota escolhida (ex: route_0, route_1 ou default)>",\n'
+                            '  "reasoning": "<breve justificativa em 1 linha>"\n'
+                            "}"
+                        )
+
+                        llm_resp = await self.llm_default.ainvoke([
+                            SystemMessage(content=router_prompt),
+                            HumanMessage(content=state["original_message"])
+                        ])
+                        content_str = llm_resp.content.strip()
+
+                        chosen_route_id = None
+                        reasoning = ""
+                        try:
+                            clean_json = re.search(r'\{.*\}', content_str, re.DOTALL)
+                            if clean_json:
+                                data = json.loads(clean_json.group(0))
+                                chosen_route_id = data.get("selected_route_id")
+                                reasoning = data.get("reasoning", "")
+                        except Exception:
+                            pass
+
+                        if not chosen_route_id:
+                            chosen_route_id = "default"
+
+                        # Find outgoing edge with sourceHandle == chosen_route_id
+                        next_edge = next((e for e in outgoing_edges if e.get("sourceHandle") == chosen_route_id), None)
+                        if not next_edge and chosen_route_id == "default":
+                            next_edge = next((e for e in outgoing_edges if e.get("sourceHandle") in ("default", None) or "outro" in e.get("label", "").lower() or "fallback" in e.get("label", "").lower()), None)
+                        if not next_edge and outgoing_edges:
+                            next_edge = outgoing_edges[0]
+
+                        chosen_id = next_edge.get("target") if next_edge else None
+                        step_trace.output_data = f"Roteado para Rota '{chosen_route_id}' -> Nó destino: {chosen_id} (Motivo: {reasoning})"
+                        state["current_node_id"] = chosen_id
+                        step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
+                        steps_trace.append(step_trace)
+                        current_node_id = chosen_id
+                        continue
+
+                    else:
+                        # Roteamento baseado diretamente nos nós de destino conectados
+                        choices = []
+                        for e in outgoing_edges:
+                            target_id = e.get("target")
+                            target_node = node_map.get(target_id, {})
+                            t_label = target_node.get("data", {}).get("label", target_id)
+                            t_desc = target_node.get("data", {}).get("description", "")
+                            choices.append(f"- ID '{target_id}': {t_label} ({t_desc})")
+
+                        custom_prompt = node_config.get("prompt") or (
+                            "Você é o Supervisor do Grafo de Agentes. Analise a mensagem do usuário e escolha exatamente o ID do nó de destino mais apropriado.\n"
+                            f"Opções disponíveis:\n" + "\n".join(choices) + "\n\n"
+                            "Responda SOMENTE em JSON com o formato: {\"selected_node_id\": \"<ID>\", \"reasoning\": \"<motivo>\"}"
+                        )
+                        
+                        llm_resp = await self.llm_default.ainvoke([
+                            SystemMessage(content=custom_prompt),
+                            HumanMessage(content=state["original_message"])
+                        ])
+                        content_str = llm_resp.content.strip()
+                        
+                        chosen_id = None
+                        try:
+                            clean_json = re.search(r'\{.*\}', content_str, re.DOTALL)
+                            if clean_json:
+                                data = json.loads(clean_json.group(0))
+                                chosen_id = data.get("selected_node_id")
+                        except Exception:
+                            pass
+                        
+                        if not chosen_id and outgoing_edges:
+                            chosen_id = outgoing_edges[0].get("target")
+
+                        step_trace.output_data = f"Roteado para {chosen_id} (resposta: {content_str[:150]}...)"
+                        state["current_node_id"] = chosen_id
+                        step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
+                        steps_trace.append(step_trace)
+                        current_node_id = chosen_id
+                        continue
 
                 # ── 4. PARALLEL FAN-OUT NODE ────────────────────────────────────
                 elif node_type == "parallel":
                     outgoing_edges = adj_list.get(current_node_id, [])
                     target_nodes = [node_map[e["target"]] for e in outgoing_edges if e.get("target") in node_map]
                     
-                    # Run all target nodes concurrently
                     parallel_tasks = []
                     for t_node in target_nodes:
                         parallel_tasks.append(self._execute_single_sub_node(t_node, state))
@@ -313,7 +456,6 @@ class AgentGraphCompiler:
                     
                     is_approved = True
                     feedback = ""
-                    import json
                     try:
                         clean_json = re.search(r'\{.*\}', llm_resp.content, re.DOTALL)
                         if clean_json:
@@ -331,7 +473,7 @@ class AgentGraphCompiler:
                         state["retry_counts"][current_node_id] = retries + 1
                         state["loop_feedbacks"][current_node_id] = feedback
                         step_trace.output_data = f"Reprovado (Feedback: {feedback}) -> Iniciando Loop de Correção (Tentativa {retries + 1}/{max_retries})"
-                        next_edge = next((e for e in adj_list.get(current_node_id, []) if e.get("sourceHandle") == "retry" or "reprov" in e.get("label", "").lower() or "loop" in e.get("label", "").lower()), None)
+                        next_edge = next((e for e in adj_list.get(current_node_id, []) if e.get("sourceHandle") in ("retry", "loop_in_left", "loop_in_right") or "reprov" in e.get("label", "").lower() or "loop" in e.get("label", "").lower()), None)
 
                     if not next_edge and adj_list.get(current_node_id):
                         next_edge = adj_list[current_node_id][0]
@@ -381,23 +523,47 @@ class AgentGraphCompiler:
         )
 
     async def _execute_single_sub_node(self, node: Dict[str, Any], state: AgentGraphState) -> str:
-        """Helper to execute an isolated node in parallel"""
+        """Helper to execute an isolated node in parallel (supports system & inline agents)"""
         node_type = node.get("data", {}).get("type", "agent")
         node_config = node.get("data", {}).get("config", {})
         
         if node_type == "agent":
-            agent_id = node_config.get("agent_id")
-            if agent_id:
-                agent_obj = await self._get_agent_by_id(str(agent_id))
-                if agent_obj:
-                    from app.orchestrator.agent_factory import AgentFactory
-                    factory = AgentFactory(self.db)
-                    agent_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
-                    return await factory.invoke_agent(
-                        agent_config=agent_cfg,
-                        messages=state["messages"],
-                        context_data=state["context_data"]
-                    )
+            agent_mode = node_config.get("agent_mode", "existing" if node_config.get("agent_id") else "inline")
+            inline_agent = node_config.get("inline_agent")
+
+            if agent_mode == "inline" or (inline_agent and not node_config.get("agent_id")):
+                inline_cfg = inline_agent or node_config
+                system_prompt = inline_cfg.get("system_prompt", "Você é um assistente especialista.")
+                provider_id = inline_cfg.get("provider_id", "openai")
+                model_name = inline_cfg.get("model", "gpt-4o-mini")
+                temperature = float(inline_cfg.get("temperature", 0.7))
+                max_tokens = int(inline_cfg.get("max_tokens", 2000))
+
+                from app.orchestrator.agent_factory import AgentFactory
+                factory = AgentFactory(self.db)
+                llm = await factory._build_llm(
+                    provider=provider_id,
+                    model_name=model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens
+                )
+                msgs = [SystemMessage(content=system_prompt), HumanMessage(content=state["original_message"])]
+                resp = await llm.ainvoke(msgs)
+                return resp.content if isinstance(resp.content, str) else str(resp.content)
+
+            else:
+                agent_id = node_config.get("agent_id")
+                if agent_id:
+                    agent_obj = await self._get_agent_by_id(str(agent_id))
+                    if agent_obj:
+                        from app.orchestrator.agent_factory import AgentFactory
+                        factory = AgentFactory(self.db)
+                        agent_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
+                        return await factory.invoke_agent(
+                            agent_config=agent_cfg,
+                            messages=state["messages"],
+                            context_data=state["context_data"]
+                        )
         return f"Sub-nó {node.get('id')} executado"
 
     async def _get_agent_by_id(self, agent_id: str) -> Optional[Agent]:

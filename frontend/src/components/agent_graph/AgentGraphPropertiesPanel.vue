@@ -39,62 +39,318 @@
 
       <!-- ── 1. AGENT NODE PROPERTIES ─────────────────────────────────── -->
       <div v-if="nodeType === 'agent'">
-        <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
-          <v-icon size="16" color="primary">mdi-robot</v-icon>Configuração do Especialista
-        </h4>
-
-        <v-autocomplete
-          v-model="nodeConfig.agent_id"
-          :items="availableAgents"
-          item-title="name"
-          item-value="id"
-          label="Selecionar Agente do Sistema"
-          variant="outlined"
+        <!-- Mode Toggle: System Agent vs Clean/Inline Agent -->
+        <v-btn-toggle
+          v-model="agentMode"
+          mandatory
           density="compact"
-          class="mb-3"
-          prepend-inner-icon="mdi-account-tie"
-          @update:model-value="onAgentSelect"
+          color="primary"
+          class="mb-3 w-100"
+          divided
+          variant="outlined"
         >
-          <template v-slot:item="{ props, item }">
-            <v-list-item v-bind="props" :subtitle="item.raw.model || 'gpt-4o-mini'"></v-list-item>
-          </template>
-        </v-autocomplete>
+          <v-btn value="existing" size="small" class="flex-grow-1">
+            <v-icon start size="16">mdi-account-check</v-icon>
+            Agente do Sistema
+          </v-btn>
+          <v-btn value="inline" size="small" class="flex-grow-1">
+            <v-icon start size="16">mdi-pencil-plus</v-icon>
+            Agente Limpo
+          </v-btn>
+        </v-btn-toggle>
 
-        <v-text-field
-          v-model="nodeConfig.agent_name"
-          label="Nome do Agente"
-          variant="outlined"
-          density="compact"
-          readonly
-          class="mb-3"
-          disabled
-        ></v-text-field>
+        <!-- Mode A: Existing System Agent -->
+        <template v-if="agentMode === 'existing'">
+          <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
+            <v-icon size="16" color="primary">mdi-robot</v-icon>Selecionar Agente Cadastrado
+          </h4>
 
-        <v-textarea
-          v-model="nodeConfig.prompt_override"
-          label="Instrução Adicional (Opcional)"
-          variant="outlined"
-          density="compact"
-          rows="3"
-          placeholder="Instruções específicas para o comportamento deste agente neste grafo..."
-          hint="Será anexado ao prompt original do agente"
-          persistent-hint
-        ></v-textarea>
+          <v-autocomplete
+            v-model="nodeConfig.agent_id"
+            :items="availableAgents"
+            item-title="name"
+            item-value="id"
+            label="Agente do Sistema"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            prepend-inner-icon="mdi-account-tie"
+            @update:model-value="onAgentSelect"
+          >
+            <template v-slot:item="{ props, item }">
+              <v-list-item v-bind="props" :subtitle="item.raw.model || 'gpt-4o-mini'"></v-list-item>
+            </template>
+          </v-autocomplete>
+
+          <v-text-field
+            v-model="nodeConfig.agent_name"
+            label="Nome do Agente"
+            variant="outlined"
+            density="compact"
+            readonly
+            class="mb-3"
+            disabled
+          ></v-text-field>
+
+          <v-textarea
+            v-model="nodeConfig.prompt_override"
+            label="Instrução Adicional (Opcional)"
+            variant="outlined"
+            density="compact"
+            rows="3"
+            placeholder="Instruções específicas para o comportamento deste agente neste grafo..."
+            hint="Será anexado ao prompt original do agente"
+            persistent-hint
+          ></v-textarea>
+        </template>
+
+        <!-- Mode B: Clean / Inline Agent -->
+        <template v-else-if="agentMode === 'inline'">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+            <v-icon start size="14">mdi-information</v-icon>
+            Crie um agente personalizado e limpo para este grafo, com controle total de provedor, ferramentas (MCPs) e habilidades (Skills).
+          </v-alert>
+
+          <v-text-field
+            v-model="inlineAgent.name"
+            label="Nome do Agente"
+            placeholder="Agente Limpo Especialista"
+            variant="outlined"
+            density="compact"
+            class="mb-3"
+            hide-details
+            @update:model-value="onInlineAgentChange"
+          ></v-text-field>
+
+          <v-row dense class="mb-1">
+            <v-col cols="6">
+              <v-select
+                v-model="inlineAgent.provider_id"
+                :items="providerOptions"
+                item-title="title"
+                item-value="value"
+                label="Provedor de IA"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onProviderChange"
+              ></v-select>
+            </v-col>
+            <v-col cols="6">
+              <v-combobox
+                v-model="inlineAgent.model"
+                :items="inlineModelOptions"
+                item-title="title"
+                item-value="value"
+                :return-object="false"
+                label="Modelo"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onInlineAgentChange"
+              ></v-combobox>
+            </v-col>
+          </v-row>
+
+          <v-row dense class="mb-2">
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="inlineAgent.temperature"
+                label="Temperatura"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onInlineAgentChange"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="inlineAgent.max_tokens"
+                label="Max Tokens"
+                type="number"
+                min="100"
+                max="128000"
+                step="100"
+                variant="outlined"
+                density="compact"
+                hide-details
+                @update:model-value="onInlineAgentChange"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+
+          <!-- MCP Tools Selection -->
+          <v-autocomplete
+            v-model="inlineAgent.mcp_ids"
+            :items="availableMcps"
+            item-title="name"
+            item-value="id"
+            label="MCPs / Ferramentas Disponíveis"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            class="mb-3"
+            hint="Selecione as ferramentas MCP que este agente poderá chamar"
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          >
+            <template v-slot:chip="{ props, item }">
+              <v-chip
+                v-bind="props"
+                size="small"
+                color="teal-darken-1"
+                variant="tonal"
+                prepend-icon="mdi-connection"
+              >
+                {{ item.raw.name }}
+              </v-chip>
+            </template>
+          </v-autocomplete>
+
+          <!-- Skills Selection -->
+          <v-autocomplete
+            v-model="inlineAgent.skill_ids"
+            :items="availableSkills"
+            item-title="name"
+            item-value="id"
+            label="Skills / Habilidades Disponíveis"
+            variant="outlined"
+            density="compact"
+            multiple
+            chips
+            closable-chips
+            clearable
+            class="mb-3"
+            hint="Selecione as skills cujas instruções serão fornecidas a este agente"
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          >
+            <template v-slot:chip="{ props, item }">
+              <v-chip
+                v-bind="props"
+                size="small"
+                color="indigo-darken-1"
+                variant="tonal"
+                prepend-icon="mdi-star-shooting"
+              >
+                {{ item.raw.name }}
+              </v-chip>
+            </template>
+          </v-autocomplete>
+
+          <!-- Clean System Prompt -->
+          <v-textarea
+            v-model="inlineAgent.system_prompt"
+            label="System Prompt (Prompt Limpo)"
+            placeholder="Você é um assistente especialista que analisa e processa a solicitação do usuário..."
+            variant="outlined"
+            density="compact"
+            rows="6"
+            class="mb-3 monospace-field"
+            hint="Instrução principal e direta do agente. Não contém nenhuma regra global herdada."
+            persistent-hint
+            @update:model-value="onInlineAgentChange"
+          ></v-textarea>
+        </template>
       </div>
 
       <!-- ── 2. ROUTER / SUPERVISOR NODE PROPERTIES ───────────────────── -->
       <div v-else-if="nodeType === 'router' || nodeType === 'supervisor'">
-        <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
-          <v-icon size="16" color="purple">mdi-source-branch</v-icon>Instruções de Roteamento
-        </h4>
+        <div class="d-flex align-center justify-space-between mb-2">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="purple">mdi-source-branch</v-icon>Rotas do Supervisor
+          </h4>
+          <v-btn size="x-small" variant="tonal" color="purple" prepend-icon="mdi-plus" @click="addRoute">
+            Adicionar Rota
+          </v-btn>
+        </div>
+
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          <v-icon start size="14">mdi-information</v-icon>
+          O supervisor analisará a mensagem e escolherá dinamicamente a rota ideal com base no <strong>Nome</strong> e na <strong>Descrição de quando chamar</strong> de cada rota.
+        </v-alert>
+
+        <!-- Dynamic Routes List -->
+        <div
+          v-for="(route, idx) in routerRoutes"
+          :key="idx"
+          class="route-card mb-3 pa-3 rounded border"
+          style="background: rgba(139, 92, 246, 0.05); border-color: rgba(139, 92, 246, 0.25) !important;"
+        >
+          <div class="d-flex justify-space-between align-center mb-2">
+            <div class="d-flex align-center ga-1">
+              <v-icon size="16" color="purple">mdi-call-split</v-icon>
+              <span class="text-caption font-weight-bold">Rota {{ idx + 1 }}</span>
+              <v-chip size="x-small" color="purple" variant="flat" density="compact" class="ml-1">
+                #{{ route.id || `route_${idx}` }}
+              </v-chip>
+            </div>
+            <div class="d-flex align-center">
+              <v-btn icon variant="text" size="x-small" :disabled="idx === 0" @click="moveRoute(idx, -1)" title="Mover para cima">
+                <v-icon size="14">mdi-arrow-up</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" :disabled="idx === routerRoutes.length - 1" @click="moveRoute(idx, 1)" title="Mover para baixo">
+                <v-icon size="14">mdi-arrow-down</v-icon>
+              </v-btn>
+              <v-btn icon variant="text" size="x-small" color="error" @click="removeRoute(idx)" title="Excluir rota">
+                <v-icon size="14">mdi-close</v-icon>
+              </v-btn>
+            </div>
+          </div>
+
+          <v-text-field
+            v-model="route.name"
+            label="Nome da Rota"
+            placeholder="Ex: Suporte Financeiro"
+            variant="outlined"
+            density="compact"
+            class="mb-2"
+            hide-details
+            @update:model-value="onRoutesChange"
+          ></v-text-field>
+
+          <v-textarea
+            v-model="route.description"
+            label="Quando acionar esta rota?"
+            placeholder="Ex: Quando o usuário perguntar sobre dízimos, ofertas, relatórios financeiros ou doações."
+            variant="outlined"
+            density="compact"
+            rows="2"
+            class="mb-1"
+            hint="Critério semântico que o LLM usará para escolher esta rota"
+            persistent-hint
+            @update:model-value="onRoutesChange"
+          ></v-textarea>
+        </div>
+
+        <!-- Fallback Route Card -->
+        <div class="route-card-fallback mb-3 pa-3 rounded border" style="background: rgba(239, 68, 68, 0.05); border-color: rgba(239, 68, 68, 0.25) !important;">
+          <div class="d-flex align-center justify-space-between mb-1">
+            <span class="text-caption font-weight-bold text-error d-flex align-center ga-1">
+              <v-icon size="16" color="error">mdi-help-circle-outline</v-icon>Rota Padrão / Fallback (#default)
+            </span>
+            <v-chip size="x-small" color="error" variant="flat" density="compact">Saída Vermelha</v-chip>
+          </div>
+          <span class="text-caption text-medium-emphasis">
+            Esta saída será acionada caso a intenção do usuário não corresponda a nenhuma das rotas acima.
+          </span>
+        </div>
+
         <v-textarea
           v-model="nodeConfig.prompt"
-          label="Prompt do Supervisor"
+          label="Instruções Adicionais do Supervisor (Opcional)"
           variant="outlined"
           density="compact"
-          rows="5"
-          placeholder="Ex: Analise a intenção da mensagem e direcione para o especialista correto com base nas regras..."
-          hint="O supervisor analisará a mensagem e escolherá o próximo nó"
+          rows="3"
+          placeholder="Ex: Dê preferência ao especialista financeiro se houver qualquer dúvida sobre valores..."
+          hint="Será incorporado ao prompt de decisão do roteador"
           persistent-hint
         ></v-textarea>
       </div>
@@ -249,7 +505,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import axios from '@/plugins/axios'
 
 const props = defineProps({
@@ -262,6 +518,10 @@ const props = defineProps({
 const emit = defineEmits(['close', 'delete'])
 
 const availableAgents = ref([])
+const availableMcps = ref([])
+const availableSkills = ref([])
+const availableAiProviders = ref([])
+const availableModels = ref([])
 
 const nodeData = computed(() => {
   if (!props.selectedNode.data) props.selectedNode.data = {}
@@ -275,6 +535,178 @@ const nodeConfig = computed(() => {
 
 const nodeType = computed(() => nodeData.value.type || 'agent')
 const nodeTitle = computed(() => nodeData.value.label || 'Configurar Nó')
+
+// ── AGENT STATE ─────────────────────────────────────────────────────────────
+const agentMode = ref(nodeConfig.value.agent_mode || (nodeConfig.value.inline_agent ? 'inline' : 'existing'))
+
+const inlineAgent = ref({
+  name: nodeConfig.value.inline_agent?.name || '',
+  system_prompt: nodeConfig.value.inline_agent?.system_prompt || '',
+  provider_id: nodeConfig.value.inline_agent?.provider_id || 'openai',
+  model: nodeConfig.value.inline_agent?.model || 'gpt-4o-mini',
+  temperature: nodeConfig.value.inline_agent?.temperature ?? 0.7,
+  max_tokens: nodeConfig.value.inline_agent?.max_tokens ?? 2000,
+  mcp_ids: nodeConfig.value.inline_agent?.mcp_ids || [],
+  skill_ids: nodeConfig.value.inline_agent?.skill_ids || [],
+})
+
+const providerOptions = computed(() => {
+  const options = [
+    { title: '🟢 OpenAI', value: 'openai' },
+    { title: '🟡 Google Gemini', value: 'google' },
+    { title: '🟣 DeepSeek', value: 'deepseek' },
+    { title: '🔵 OpenRouter', value: 'openrouter' }
+  ]
+  if (Array.isArray(availableAiProviders.value)) {
+    availableAiProviders.value.forEach(p => {
+      options.push({
+        title: `🌐 ${p.name}`,
+        value: p.id,
+        isCustom: true,
+        default_model: p.default_model
+      })
+    })
+  }
+  return options
+})
+
+const inlineModelOptions = computed(() => {
+  const currentProv = inlineAgent.value.provider_id || 'openai'
+  const filtered = (availableModels.value || [])
+    .filter(m => m.provider === currentProv)
+    .map(m => ({ title: m.name || m.id, value: m.id }))
+
+  if (filtered.length > 0) return filtered
+
+  if (inlineAgent.value.provider_id) {
+    const prov = (availableAiProviders.value || []).find(p => p.id === inlineAgent.value.provider_id)
+    if (prov && prov.default_model) {
+      return [{ title: prov.default_model, value: prov.default_model }]
+    }
+  }
+
+  if (currentProv === 'google') {
+    return [
+      { title: 'gemini-2.5-flash', value: 'gemini-2.5-flash' },
+      { title: 'gemini-2.5-pro', value: 'gemini-2.5-pro' },
+      { title: 'gemini-2.0-flash', value: 'gemini-2.0-flash' },
+      { title: 'gemini-1.5-flash', value: 'gemini-1.5-flash' }
+    ]
+  }
+  if (currentProv === 'deepseek') {
+    return [
+      { title: 'deepseek-chat', value: 'deepseek-chat' },
+      { title: 'deepseek-reasoner', value: 'deepseek-reasoner' }
+    ]
+  }
+  if (currentProv === 'openrouter') {
+    return [
+      { title: 'anthropic/claude-3.5-sonnet', value: 'anthropic/claude-3.5-sonnet' },
+      { title: 'meta-llama/llama-3.3-70b-instruct', value: 'meta-llama/llama-3.3-70b-instruct' },
+      { title: 'google/gemini-2.5-flash', value: 'google/gemini-2.5-flash' }
+    ]
+  }
+  return [
+    { title: 'gpt-4o-mini', value: 'gpt-4o-mini' },
+    { title: 'gpt-4o', value: 'gpt-4o' },
+    { title: 'o3-mini', value: 'o3-mini' }
+  ]
+})
+
+function onProviderChange(provId) {
+  if (!provId) {
+    inlineAgent.value.provider_id = 'openai'
+    provId = 'openai'
+  }
+  const available = (availableModels.value || []).filter(m => m.provider === provId)
+  if (available.length > 0) {
+    inlineAgent.value.model = available[0].id
+  } else {
+    const prov = (availableAiProviders.value || []).find(p => p.id === provId)
+    if (prov && prov.default_model) {
+      inlineAgent.value.model = prov.default_model
+    } else if (provId === 'google') {
+      inlineAgent.value.model = 'gemini-2.5-flash'
+    } else if (provId === 'deepseek') {
+      inlineAgent.value.model = 'deepseek-chat'
+    } else if (provId === 'openrouter') {
+      inlineAgent.value.model = 'anthropic/claude-3.5-sonnet'
+    } else {
+      inlineAgent.value.model = 'gpt-4o-mini'
+    }
+  }
+  onInlineAgentChange()
+}
+
+function onInlineAgentChange() {
+  nodeConfig.value.inline_agent = { ...inlineAgent.value }
+  nodeConfig.value.agent_mode = 'inline'
+}
+
+watch(agentMode, (newMode) => {
+  nodeConfig.value.agent_mode = newMode
+  if (newMode === 'inline') {
+    nodeConfig.value.agent_id = null
+    if (!nodeConfig.value.inline_agent) {
+      nodeConfig.value.inline_agent = { ...inlineAgent.value }
+    }
+  } else {
+    nodeConfig.value.inline_agent = null
+  }
+})
+
+// ── ROUTER STATE ────────────────────────────────────────────────────────────
+const routerRoutes = ref(nodeConfig.value.routes || [])
+
+function addRoute() {
+  const newIndex = routerRoutes.value.length
+  const newRoute = {
+    id: `route_${newIndex}`,
+    name: `Rota ${newIndex + 1}`,
+    description: ''
+  }
+  routerRoutes.value.push(newRoute)
+  onRoutesChange()
+}
+
+function removeRoute(idx) {
+  routerRoutes.value.splice(idx, 1)
+  // Re-index IDs
+  routerRoutes.value.forEach((r, i) => {
+    if (r.id.startsWith('route_')) {
+      r.id = `route_${i}`
+    }
+  })
+  onRoutesChange()
+}
+
+function moveRoute(idx, delta) {
+  const targetIdx = idx + delta
+  if (targetIdx < 0 || targetIdx >= routerRoutes.value.length) return
+  const item = routerRoutes.value.splice(idx, 1)[0]
+  routerRoutes.value.splice(targetIdx, 0, item)
+  onRoutesChange()
+}
+
+function onRoutesChange() {
+  nodeConfig.value.routes = [...routerRoutes.value]
+}
+
+// ── SYNC ON NODE CHANGE ─────────────────────────────────────────────────────
+watch(() => props.selectedNode.id, () => {
+  agentMode.value = nodeConfig.value.agent_mode || (nodeConfig.value.inline_agent ? 'inline' : 'existing')
+  inlineAgent.value = {
+    name: nodeConfig.value.inline_agent?.name || '',
+    system_prompt: nodeConfig.value.inline_agent?.system_prompt || '',
+    provider_id: nodeConfig.value.inline_agent?.provider_id || 'openai',
+    model: nodeConfig.value.inline_agent?.model || 'gpt-4o-mini',
+    temperature: nodeConfig.value.inline_agent?.temperature ?? 0.7,
+    max_tokens: nodeConfig.value.inline_agent?.max_tokens ?? 2000,
+    mcp_ids: nodeConfig.value.inline_agent?.mcp_ids || [],
+    skill_ids: nodeConfig.value.inline_agent?.skill_ids || [],
+  }
+  routerRoutes.value = nodeConfig.value.routes || []
+})
 
 const NODE_META = {
   start:        { icon: 'mdi-play-circle',       color: '#10B981', label: 'Início / Trigger' },
@@ -306,6 +738,42 @@ const fetchAgents = async () => {
   }
 }
 
+const fetchMcps = async () => {
+  try {
+    const res = await axios.get('/mcp')
+    availableMcps.value = res.data.mcps || []
+  } catch (e) {
+    console.error('Erro ao buscar MCPs:', e)
+  }
+}
+
+const fetchSkills = async () => {
+  try {
+    const res = await axios.get('/skills/', { params: { all: true, limit: 200 } })
+    availableSkills.value = res.data.skills || []
+  } catch (e) {
+    console.error('Erro ao buscar Skills:', e)
+  }
+}
+
+const fetchAiProviders = async () => {
+  try {
+    const res = await axios.get('/ai-providers', { params: { limit: 100 } })
+    availableAiProviders.value = res.data.providers || []
+  } catch (e) {
+    console.error('Erro ao buscar Provedores de IA:', e)
+  }
+}
+
+const fetchModels = async () => {
+  try {
+    const res = await axios.get('/models')
+    availableModels.value = res.data.models || []
+  } catch (e) {
+    console.error('Erro ao buscar Modelos:', e)
+  }
+}
+
 const onAgentSelect = (agentId) => {
   const ag = availableAgents.value.find(a => a.id === agentId)
   if (ag) {
@@ -318,13 +786,30 @@ const onAgentSelect = (agentId) => {
 
 onMounted(() => {
   fetchAgents()
+  fetchMcps()
+  fetchSkills()
+  fetchAiProviders()
+  fetchModels()
 })
 </script>
 
 <style scoped>
 .properties-panel {
-  width: 320px;
+  width: 340px;
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   background: #111625 !important;
+}
+
+.route-card {
+  transition: all 0.2s ease;
+}
+
+.route-card:hover {
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+}
+
+.monospace-field :deep(textarea) {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  font-size: 12px !important;
 }
 </style>
