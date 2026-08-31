@@ -66,8 +66,10 @@ class AgentGraphList(BaseModel):
 class AgentGraphExecuteRequest(BaseModel):
     """Request payload to test or trigger an Agent Graph"""
     message: str = Field(..., min_length=1, description="Mensagem de entrada para o grafo")
+    history: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Histórico de mensagens para conversas multi-turnos")
     context_data: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Dados de contexto adicionais (ex: dados da igreja, contato)")
     session_id: Optional[str] = Field(None, description="ID da sessão para manter memória/histórico")
+    definition: Optional[Dict[str, Any]] = Field(None, description="Definição temporária do grafo vinda do canvas para testes antes de salvar")
 
 
 class AgentGraphStepTrace(BaseModel):
@@ -82,6 +84,7 @@ class AgentGraphStepTrace(BaseModel):
     duration_ms: float = 0.0
     status: str = "success"  # success, error, skipped
     error: Optional[str] = None
+    feedback: Optional[str] = None
 
 
 class AgentGraphExecuteResponse(BaseModel):
@@ -94,3 +97,4 @@ class AgentGraphExecuteResponse(BaseModel):
     status: str = "success"  # success, error, timeout
     error: Optional[str] = None
     context_data: Optional[Dict[str, Any]] = None
+    session_id: Optional[str] = None

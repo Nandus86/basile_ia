@@ -229,7 +229,9 @@ async def test_agent_graph(
         graph=graph,
         message=payload.message,
         context_data=payload.context_data,
-        session_id=payload.session_id
+        session_id=payload.session_id,
+        history=payload.history,
+        override_definition=payload.definition
     )
 
     return response

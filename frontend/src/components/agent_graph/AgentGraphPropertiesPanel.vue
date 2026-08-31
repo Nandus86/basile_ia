@@ -432,25 +432,153 @@
         ></v-text-field>
       </div>
 
-      <!-- ── 6. VERIFIER / GUARDRAIL (LOOP) NODE PROPERTIES ───────────── -->
-      <div v-else-if="nodeType === 'verifier' || nodeType === 'guardrail'">
+      <!-- ── 6. WORKFLOW / SUB-WORKFLOW NODE PROPERTIES ────────────────── -->
+      <div v-else-if="nodeType === 'workflow' || nodeType === 'sub_workflow'">
         <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
-          <v-icon size="16" color="amber-darken-2">mdi-shield-check</v-icon>Verificador de Qualidade & Loop
+          <v-icon size="16" color="blue">mdi-sitemap</v-icon>Executar Workflow (Zero Custo LLM)
         </h4>
+
+        <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+          <v-icon start size="14">mdi-information</v-icon>
+          Workflows executam automações determinísticas (APIs HTTP, queries no banco, scripts) e injetam os resultados no contexto para os agentes seguintes.
+        </v-alert>
+
+        <v-autocomplete
+          v-model="nodeConfig.workflow_id"
+          :items="availableWorkflows"
+          item-title="name"
+          item-value="id"
+          label="Workflow Alvo *"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+          prepend-inner-icon="mdi-sitemap"
+          @update:model-value="onWorkflowSelect"
+        >
+          <template v-slot:item="{ props, item }">
+            <v-list-item v-bind="props" :subtitle="item.raw.description || 'Sem descrição'"></v-list-item>
+          </template>
+        </v-autocomplete>
+
+        <v-text-field
+          v-model="nodeConfig.output_key"
+          label="Chave de Saída no Contexto ($output_key)"
+          variant="outlined"
+          density="compact"
+          placeholder="ex: dados_membros, relatorio_financeiro"
+          class="mb-3"
+          hint="O resultado do workflow ficará gravado nesta chave em $context"
+          persistent-hint
+        ></v-text-field>
+
+        <v-switch
+          v-model="nodeConfig.inject_into_prompt"
+          color="primary"
+          density="compact"
+          label="Injetar automaticamente no Prompt dos próximos Agentes"
+          class="mb-2"
+          hint="Se ativado, os dados trazidos pelo workflow aparecem diretamente para o agente responder"
+          persistent-hint
+        ></v-switch>
+      </div>
+
+      <!-- ── 7. JUDGE / CURATOR / VERIFIER (LOOP) NODE PROPERTIES ───────── -->
+      <div v-else-if="nodeType === 'judge' || nodeType === 'curator' || nodeType === 'verifier' || nodeType === 'guardrail'">
+        <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
+          <v-icon size="16" color="amber-darken-2">mdi-scale-balance</v-icon>Juiz de Qualidade & Curadoria
+        </h4>
+
+        <v-alert type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
+          <div class="d-flex flex-column ga-1">
+            <span><strong>● Saída Verde (True / Aprovado):</strong> Segue para o próximo passo.</span>
+            <span><strong>● Saída Amarela (False / Refazer):</strong> Conecte de volta à entrada do agente para aplicar as correções sugeridas.</span>
+          </div>
+        </v-alert>
+
+        <v-select
+          v-model="nodeConfig.judge_mode"
+          :items="[
+            { title: '⚡ LLM Rápido (Prompt Inline)', value: 'llm' },
+            { title: '🤖 Agente Especialista do Sistema', value: 'agent' }
+          ]"
+          label="Modo de Julgamento"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+        ></v-select>
+
+        <v-autocomplete
+          v-if="nodeConfig.judge_mode === 'agent'"
+          v-model="nodeConfig.agent_id"
+          :items="availableAgents"
+          item-title="name"
+          item-value="id"
+          label="Agente Juiz / Auditor"
+          variant="outlined"
+          density="compact"
+          class="mb-3"
+        ></v-autocomplete>
+
+        <!-- Presets de Curadoria -->
+        <div class="mb-2">
+          <span class="text-caption font-weight-bold text-medium-emphasis mb-1 d-block">
+            Modelos de Critério Rápidos:
+          </span>
+          <div class="d-flex flex-wrap ga-1 mb-2">
+            <v-chip
+              size="x-small"
+              variant="outlined"
+              color="primary"
+              class="cursor-pointer"
+              @click="applyCriteriaPreset('precisao')"
+            >
+              Precisão & Fidelidade
+            </v-chip>
+            <v-chip
+              size="x-small"
+              variant="outlined"
+              color="teal"
+              class="cursor-pointer"
+              @click="applyCriteriaPreset('pastoral')"
+            >
+              Tom Pastoral & Acolhedor
+            </v-chip>
+            <v-chip
+              size="x-small"
+              variant="outlined"
+              color="amber"
+              class="cursor-pointer"
+              @click="applyCriteriaPreset('conformidade')"
+            >
+              Conformidade & Regras
+            </v-chip>
+            <v-chip
+              size="x-small"
+              variant="outlined"
+              color="indigo"
+              class="cursor-pointer"
+              @click="applyCriteriaPreset('completude')"
+            >
+              Completude Total
+            </v-chip>
+          </div>
+        </div>
 
         <v-textarea
           v-model="nodeConfig.criteria"
-          label="Critério de Validação"
+          label="Critérios de Avaliação do Juiz *"
           variant="outlined"
           density="compact"
           rows="3"
-          placeholder="Ex: Verifique se a resposta respondeu de forma acolhedora, precisa e sem alucinações."
+          placeholder="Ex: Verifique se a resposta está precisa, de tom acolhedor, respondeu a todas as dúvidas e não alucinou dados."
           class="mb-3"
+          hint="O Juiz analisará a resposta do agente com base nestes critérios"
+          persistent-hint
         ></v-textarea>
 
         <v-slider
           v-model="nodeConfig.max_retries"
-          label="Máximo de Tentativas (Loops)"
+          label="Limite de Loops de Auto-Correção"
           min="1"
           max="5"
           step="1"
@@ -459,11 +587,11 @@
           class="mt-4"
         ></v-slider>
         <span class="text-caption text-medium-emphasis">
-          Se a resposta for rejeitada, ela retorna pela saída <strong>Loop Refazer</strong> com as instruções de correção até atingir o limite.
+          Após atingir o limite de tentativas, a resposta segue com aviso para evitar loops infinitos.
         </span>
       </div>
 
-      <!-- ── 7. TOOL / ACTION NODE PROPERTIES ─────────────────────────── -->
+      <!-- ── 8. TOOL / ACTION NODE PROPERTIES ─────────────────────────── -->
       <div v-else-if="nodeType === 'tool' || nodeType === 'action'">
         <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
           <v-icon size="16" color="teal">mdi-tools</v-icon>Ação / Ferramenta
@@ -518,6 +646,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'delete'])
 
 const availableAgents = ref([])
+const availableWorkflows = ref([])
 const availableMcps = ref([])
 const availableSkills = ref([])
 const availableAiProviders = ref([])
@@ -671,7 +800,6 @@ function addRoute() {
 
 function removeRoute(idx) {
   routerRoutes.value.splice(idx, 1)
-  // Re-index IDs
   routerRoutes.value.forEach((r, i) => {
     if (r.id.startsWith('route_')) {
       r.id = `route_${i}`
@@ -690,6 +818,19 @@ function moveRoute(idx, delta) {
 
 function onRoutesChange() {
   nodeConfig.value.routes = [...routerRoutes.value]
+}
+
+// ── CRITERIA PRESETS ────────────────────────────────────────────────────────
+function applyCriteriaPreset(presetKey) {
+  if (presetKey === 'precisao') {
+    nodeConfig.value.criteria = 'Verifique se a resposta está precisa, lógica, fiel aos dados reais e sem qualquer tipo de alucinação ou suposição infundada.'
+  } else if (presetKey === 'pastoral') {
+    nodeConfig.value.criteria = 'Verifique se a resposta utiliza um tom acolhedor, empático, amoroso e encorajador, adequado ao ambiente eclesiástico/pastoral.'
+  } else if (presetKey === 'conformidade') {
+    nodeConfig.value.criteria = 'Verifique se a resposta respeita estritamente as regras de conformidade, sigilo de dados (LGPD) e validação correta de registros e valores.'
+  } else if (presetKey === 'completude') {
+    nodeConfig.value.criteria = 'Verifique se todas as dúvidas, instruções ou perguntas feitas pelo usuário foram integralmente e diretamente respondidas sem deixar pontas soltas.'
+  }
 }
 
 // ── SYNC ON NODE CHANGE ─────────────────────────────────────────────────────
@@ -711,12 +852,16 @@ watch(() => props.selectedNode.id, () => {
 const NODE_META = {
   start:        { icon: 'mdi-play-circle',       color: '#10B981', label: 'Início / Trigger' },
   agent:        { icon: 'mdi-robot',             color: '#3B82F6', label: 'Agente Especialista' },
+  workflow:     { icon: 'mdi-sitemap',           color: '#2563EB', label: 'Workflow (Dados)' },
+  sub_workflow: { icon: 'mdi-sitemap',           color: '#2563EB', label: 'Workflow (Dados)' },
   router:       { icon: 'mdi-source-branch',     color: '#8B5CF6', label: 'Supervisor / Router' },
   supervisor:   { icon: 'mdi-account-supervisor', color: '#8B5CF6', label: 'Supervisor / Router' },
   parallel:     { icon: 'mdi-call-split',        color: '#06B6D4', label: 'Fan-Out Paralelo' },
   synthesizer:  { icon: 'mdi-call-merge',        color: '#EC4899', label: 'Sintetizador Fan-In' },
   condition:    { icon: 'mdi-help-rhombus',      color: '#F59E0B', label: 'Decisão / Condição' },
   decision:     { icon: 'mdi-help-rhombus',      color: '#F59E0B', label: 'Decisão / Condição' },
+  judge:        { icon: 'mdi-scale-balance',     color: '#EAB308', label: 'Juiz / Curador' },
+  curator:      { icon: 'mdi-shield-check',      color: '#EAB308', label: 'Juiz / Curador' },
   verifier:     { icon: 'mdi-shield-check',      color: '#EAB308', label: 'Verificador (Loop)' },
   guardrail:    { icon: 'mdi-shield-check',      color: '#EAB308', label: 'Verificador (Loop)' },
   tool:         { icon: 'mdi-tools',             color: '#14B8A6', label: 'Ferramenta / Ação' },
@@ -735,6 +880,15 @@ const fetchAgents = async () => {
     availableAgents.value = res.data.agents || []
   } catch (e) {
     console.error('Erro ao buscar agentes:', e)
+  }
+}
+
+const fetchWorkflows = async () => {
+  try {
+    const res = await axios.get('/workflows?limit=200')
+    availableWorkflows.value = res.data.workflows || res.data || []
+  } catch (e) {
+    console.error('Erro ao buscar workflows:', e)
   }
 }
 
@@ -784,8 +938,22 @@ const onAgentSelect = (agentId) => {
   }
 }
 
+const onWorkflowSelect = (wfId) => {
+  const wf = availableWorkflows.value.find(w => w.id === wfId)
+  if (wf) {
+    nodeConfig.value.workflow_name = wf.name
+    if (!nodeConfig.value.output_key) {
+      nodeConfig.value.output_key = (wf.name || 'wf_data').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 25)
+    }
+    if (!nodeData.value.label || nodeData.value.label === 'Workflow (Dados)') {
+      nodeData.value.label = wf.name
+    }
+  }
+}
+
 onMounted(() => {
   fetchAgents()
+  fetchWorkflows()
   fetchMcps()
   fetchSkills()
   fetchAiProviders()

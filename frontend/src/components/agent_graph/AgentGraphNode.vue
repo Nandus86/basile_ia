@@ -3,7 +3,11 @@
     :class="[
       'agent-graph-node',
       `node-type-${data.type || 'agent'}`,
-      { 'node-active-highlight': data?._isActive, 'node-error-highlight': data?._hasError }
+      {
+        'node-active-highlight': data?._isActive,
+        'node-error-highlight': data?._hasError,
+        'node-executed': data?._isExecuted
+      }
     ]"
     @dblclick="$emit('edit', id)"
   >
@@ -81,6 +85,24 @@
           </div>
         </div>
 
+        <!-- Workflow Block Details -->
+        <div v-else-if="data.type === 'workflow' || data.type === 'sub_workflow'" class="d-flex flex-column ga-1">
+          <div class="d-flex align-center ga-1 text-caption text-medium-emphasis">
+            <v-icon size="14" color="blue">mdi-sitemap</v-icon>
+            <span class="text-truncate font-weight-medium text-blue" style="max-width: 160px;">
+              {{ data.config?.workflow_name || 'Selecione um workflow...' }}
+            </span>
+          </div>
+          <div v-if="data.config?.output_key" class="d-flex align-center ga-1 mt-1">
+            <v-chip size="x-small" color="blue-darken-1" variant="tonal" density="compact">
+              ${{ data.config?.output_key }}
+            </v-chip>
+            <span v-if="data.config?.inject_into_prompt !== false" class="text-caption text-success font-weight-bold" style="font-size: 9px !important;">
+              ● Injetar no Prompt
+            </span>
+          </div>
+        </div>
+
         <!-- Router / Supervisor with dynamic routes list -->
         <div v-else-if="data.type === 'router' || data.type === 'supervisor'">
           <div v-if="routesList.length > 0" class="router-routes-container mt-1">
@@ -131,10 +153,18 @@
           <span>Modo: {{ data.config?.mode || 'LLM' }}</span>
         </div>
 
-        <!-- Verifier / Guardrail (Loop) -->
-        <div v-else-if="data.type === 'verifier' || data.type === 'guardrail'" class="text-caption text-medium-emphasis">
-          <v-icon size="14" color="amber" class="mr-1">mdi-refresh</v-icon>
-          <span>Max Loops: {{ data.config?.max_retries || 2 }}</span>
+        <!-- Judge / Curator / Verifier (Loop) -->
+        <div v-else-if="data.type === 'judge' || data.type === 'curator' || data.type === 'verifier' || data.type === 'guardrail'" class="text-caption text-medium-emphasis">
+          <div class="d-flex align-center ga-1 mb-1">
+            <v-icon size="14" color="amber-darken-1">mdi-scale-balance</v-icon>
+            <span class="font-weight-medium text-amber-lighten-1">Juiz de Qualidade</span>
+          </div>
+          <div class="d-flex align-center justify-space-between">
+            <span>Max Loops: {{ data.config?.max_retries || 2 }}</span>
+            <v-chip size="x-small" color="amber" variant="outlined" density="compact">
+              {{ data.config?.judge_mode === 'agent' ? 'Agente Auditor' : 'LLM Inline' }}
+            </v-chip>
+          </div>
         </div>
 
         <!-- Tool / Action -->
@@ -143,15 +173,15 @@
         </div>
       </div>
 
-      <!-- Handle indicators list for Decision / Verifier -->
+      <!-- Handle indicators list for Decision / Verifier / Judge -->
       <div v-if="data.type === 'condition' || data.type === 'decision'" class="branch-indicators mt-2 d-flex justify-space-between px-1">
         <span class="handle-label text-success font-weight-bold">● Verdadeiro</span>
         <span class="handle-label text-error font-weight-bold">● Falso</span>
       </div>
 
-      <div v-if="data.type === 'verifier' || data.type === 'guardrail'" class="branch-indicators mt-2 d-flex justify-space-between px-1">
-        <span class="handle-label text-success font-weight-bold">● Aprovado</span>
-        <span class="handle-label text-amber-darken-1 font-weight-bold">● Loop Refazer</span>
+      <div v-if="data.type === 'judge' || data.type === 'curator' || data.type === 'verifier' || data.type === 'guardrail'" class="branch-indicators mt-2 d-flex justify-space-between px-1">
+        <span class="handle-label text-success font-weight-bold">● Aprovado (True)</span>
+        <span class="handle-label text-amber-darken-1 font-weight-bold">● Refazer (False)</span>
       </div>
     </div>
 
@@ -239,15 +269,15 @@
       />
     </template>
 
-    <!-- 6. VERIFIER / GUARDRAIL: Approved (Bottom) / Retry (Bottom/Lateral) -->
-    <template v-if="data.type === 'verifier' || data.type === 'guardrail'">
+    <!-- 6. JUDGE / CURATOR / VERIFIER / GUARDRAIL: Approved (Bottom) / Retry (Bottom/Lateral) -->
+    <template v-if="data.type === 'judge' || data.type === 'curator' || data.type === 'verifier' || data.type === 'guardrail'">
       <Handle
         type="source"
         :position="Position.Bottom"
         id="approved"
         class="node-handle handle-branch handle-true"
         :style="{ left: '30%' }"
-        title="Aprovado (Seguir)"
+        title="Aprovado (True / Seguir)"
       />
       <Handle
         type="source"
@@ -255,7 +285,7 @@
         id="retry"
         class="node-handle handle-branch handle-loop-out"
         :style="{ left: '70%' }"
-        title="Reprovado (Loop de Correção)"
+        title="Reprovado (False / Loop de Correção)"
       />
     </template>
   </div>
@@ -276,12 +306,16 @@ defineEmits(['edit'])
 const NODE_META = {
   start:        { icon: 'mdi-play-circle',       color: '#10B981', label: 'Início / Trigger' },
   agent:        { icon: 'mdi-robot',             color: '#3B82F6', label: 'Agente Especialista' },
+  workflow:     { icon: 'mdi-sitemap',           color: '#2563EB', label: 'Workflow (Dados)' },
+  sub_workflow: { icon: 'mdi-sitemap',           color: '#2563EB', label: 'Workflow (Dados)' },
   router:       { icon: 'mdi-source-branch',     color: '#8B5CF6', label: 'Supervisor / Router' },
   supervisor:   { icon: 'mdi-account-supervisor', color: '#8B5CF6', label: 'Supervisor / Router' },
   parallel:     { icon: 'mdi-call-split',        color: '#06B6D4', label: 'Fan-Out Paralelo' },
   synthesizer:  { icon: 'mdi-call-merge',        color: '#EC4899', label: 'Sintetizador Fan-In' },
   condition:    { icon: 'mdi-help-rhombus',      color: '#F59E0B', label: 'Decisão / Condição' },
   decision:     { icon: 'mdi-help-rhombus',      color: '#F59E0B', label: 'Decisão / Condição' },
+  judge:        { icon: 'mdi-scale-balance',      color: '#EAB308', label: 'Juiz / Curador' },
+  curator:      { icon: 'mdi-shield-check',      color: '#EAB308', label: 'Juiz / Curador' },
   verifier:     { icon: 'mdi-shield-check',      color: '#EAB308', label: 'Verificador (Loop)' },
   guardrail:    { icon: 'mdi-shield-check',      color: '#EAB308', label: 'Verificador (Loop)' },
   tool:         { icon: 'mdi-tools',             color: '#14B8A6', label: 'Ferramenta / Ação' },
@@ -460,12 +494,27 @@ function getRouterHandlePosition(index, total) {
   box-shadow: 0 0 20px rgba(239, 68, 68, 0.6) !important;
 }
 
+.node-executed {
+  border-color: #6366F1 !important;
+  box-shadow: 0 0 16px rgba(99, 102, 241, 0.75) !important;
+  animation: pulse-executed 2s infinite alternate;
+}
+
 @keyframes pulse-active {
   from {
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
   }
   to {
     box-shadow: 0 0 25px rgba(59, 130, 246, 0.9);
+  }
+}
+
+@keyframes pulse-executed {
+  from {
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
+  }
+  to {
+    box-shadow: 0 0 22px rgba(99, 102, 241, 0.95);
   }
 }
 </style>

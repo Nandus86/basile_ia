@@ -32,8 +32,8 @@
       <v-btn variant="tonal" class="mr-2" @click="showSettingsDialog = true" prepend-icon="mdi-cog">
         Configurações
       </v-btn>
-      <v-btn variant="tonal" color="info" class="mr-2" @click="showTestDrawer = true" prepend-icon="mdi-play-circle">
-        Testar Grafo
+      <v-btn variant="tonal" color="info" class="mr-2" @click="openTestChatDrawer" prepend-icon="mdi-chat-processing-outline">
+        Testar Grafo (Chat)
       </v-btn>
       <v-btn color="primary" @click="saveGraph" :loading="saving" prepend-icon="mdi-content-save">
         Salvar
@@ -42,7 +42,7 @@
 
     <!-- Main Workspace -->
     <div class="d-flex flex-grow-1" style="overflow: hidden">
-      <!-- Toolbox Sidebar (Pattern identical to WorkflowEditor) -->
+      <!-- Toolbox Sidebar -->
       <v-navigation-drawer permanent location="left" width="260" color="surface-variant" elevation="4">
         <div class="pa-4 text-center border-b">
           <h3 class="text-subtitle-1 font-weight-bold mb-1 d-flex align-center justify-center ga-1">
@@ -64,6 +64,18 @@
             <div class="text-subtitle-2">{{ t.label }}</div>
           </div>
 
+          <v-list-subheader class="font-weight-bold mt-2">Automação & Workflows</v-list-subheader>
+          <div
+            v-for="t in toolboxItems.filter(i => i.category === 'workflows')"
+            :key="t.type"
+            class="dndnode text-center ma-2 pa-3 cursor-grab rounded border"
+            :draggable="true"
+            @dragstart="onDragStart($event, t.type)"
+          >
+            <v-icon :color="t.color" class="mb-1">{{ t.icon }}</v-icon>
+            <div class="text-subtitle-2">{{ t.label }}</div>
+          </div>
+
           <v-list-subheader class="font-weight-bold mt-2">Fluxo & Paralelismo</v-list-subheader>
           <div
             v-for="t in toolboxItems.filter(i => i.category === 'flow')"
@@ -76,7 +88,7 @@
             <div class="text-subtitle-2">{{ t.label }}</div>
           </div>
 
-          <v-list-subheader class="font-weight-bold mt-2">Decisão & Loops</v-list-subheader>
+          <v-list-subheader class="font-weight-bold mt-2">Julgamento, Decisão & Loops</v-list-subheader>
           <div
             v-for="t in toolboxItems.filter(i => i.category === 'decision')"
             :key="t.type"
@@ -251,130 +263,203 @@
       </v-card>
     </v-dialog>
 
-    <!-- Live Test Drawer -->
+    <!-- ═══ INTERACTIVE MULTI-TURN TEST CHAT DRAWER ═══ -->
     <v-navigation-drawer
       v-model="showTestDrawer"
       location="right"
       temporary
-      width="540"
-      class="bg-surface border-l"
+      width="580"
+      class="bg-surface border-l test-chat-drawer"
     >
-      <div class="pa-4 d-flex flex-column h-100">
-        <div class="d-flex align-center justify-space-between mb-3 border-b pb-3">
+      <div class="d-flex flex-column h-100">
+        <!-- Header -->
+        <div class="pa-3 border-b d-flex align-center justify-space-between bg-surface-variant">
           <div class="d-flex align-center ga-2">
-            <v-icon color="info" size="24">mdi-play-circle</v-icon>
-            <h3 class="text-subtitle-1 font-weight-bold mb-0">Testar Execução do Grafo</h3>
+            <v-icon color="primary" size="22">mdi-chat-processing</v-icon>
+            <div>
+              <h3 class="text-subtitle-2 font-weight-bold mb-0">Chat de Teste do Grafo</h3>
+              <span class="text-caption text-medium-emphasis" style="font-size: 10px !important;">
+                Sessão: {{ testSessionId.slice(0, 8) }}...
+              </span>
+            </div>
           </div>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="showTestDrawer = false"></v-btn>
+          <div class="d-flex align-center ga-1">
+            <v-btn
+              icon="mdi-code-json"
+              variant="text"
+              size="small"
+              :color="showContextEditor ? 'primary' : 'default'"
+              @click="showContextEditor = !showContextEditor"
+              title="Parâmetros de Contexto (JSON)"
+            ></v-btn>
+            <v-btn
+              icon="mdi-refresh"
+              variant="text"
+              size="small"
+              color="warning"
+              @click="resetChatSession"
+              title="Reiniciar Conversa / Nova Sessão"
+            ></v-btn>
+            <v-btn icon="mdi-close" variant="text" size="small" @click="showTestDrawer = false"></v-btn>
+          </div>
         </div>
 
-        <!-- User Message -->
-        <v-textarea
-          v-model="testMessage"
-          label="Mensagem do Usuário / Prompt *"
-          variant="outlined"
-          density="compact"
-          rows="2"
-          placeholder="Ex: Como está a saúde financeira e de membros da minha igreja?"
-          class="mb-3"
-          hint="Mensagem enviada para iniciar a execução do grafo"
-          persistent-hint
-        ></v-textarea>
+        <!-- Collapsible Context Editor -->
+        <v-expand-transition>
+          <div v-if="showContextEditor" class="pa-3 border-b bg-surface">
+            <div class="d-flex align-center justify-space-between mb-1">
+              <span class="text-caption font-weight-bold text-medium-emphasis d-flex align-center ga-1">
+                <v-icon size="14" color="primary">mdi-code-json</v-icon>
+                Contexto / Parâmetros Iniciais (JSON)
+              </span>
+              <div class="d-flex align-center ga-1">
+                <v-btn variant="text" size="x-small" density="compact" color="primary" @click="formatTestJson">
+                  Formatar
+                </v-btn>
+                <v-btn variant="text" size="x-small" density="compact" color="secondary" @click="insertExampleJson">
+                  Exemplo
+                </v-btn>
+              </div>
+            </div>
+            <v-textarea
+              v-model="testPayloadJson"
+              variant="outlined"
+              density="compact"
+              rows="4"
+              placeholder='{\n  "church_name": "Igreja Central",\n  "user_name": "Fernando"\n}'
+              class="monospace-field"
+              hide-details
+            ></v-textarea>
+          </div>
+        </v-expand-transition>
 
-        <!-- JSON Context Parameters (Similar to Workflow) -->
-        <div class="mb-4">
-          <div class="d-flex align-center justify-space-between mb-1">
-            <span class="text-caption font-weight-bold text-medium-emphasis d-flex align-center ga-1">
-              <v-icon size="16" color="primary">mdi-code-json</v-icon>
-              Parâmetros de Entrada / Contexto (JSON)
-            </span>
-            <div class="d-flex align-center ga-1">
+        <!-- Chat Messages Flow -->
+        <div ref="chatContainerRef" class="chat-messages-container flex-grow-1 overflow-y-auto pa-4">
+          <!-- Empty State -->
+          <div v-if="chatMessages.length === 0" class="empty-chat text-center pa-6">
+            <v-icon size="48" color="primary" class="mb-3 opacity-60">mdi-robot-outline</v-icon>
+            <h4 class="text-subtitle-1 font-weight-bold mb-1">Pronto para Testar</h4>
+            <p class="text-caption text-medium-emphasis mb-4">
+              Envie uma mensagem abaixo para iniciar a execução do grafo e acompanhar em tempo real o caminho percorrido pelos agentes no canvas.
+            </p>
+            <div class="d-flex flex-column ga-2 max-w-sm mx-auto">
               <v-btn
-                variant="text"
-                size="x-small"
-                density="compact"
-                color="primary"
-                prepend-icon="mdi-format-align-left"
-                @click="formatTestJson"
+                variant="tonal"
+                size="small"
+                class="text-caption text-left text-none justify-start"
+                @click="sendQuickPrompt('Olá! Como está a frequência da minha célula nesta semana?')"
               >
-                Formatar JSON
+                💬 "Como está a frequência da minha célula nesta semana?"
               </v-btn>
               <v-btn
-                variant="text"
-                size="x-small"
-                density="compact"
-                color="secondary"
-                prepend-icon="mdi-code-tags"
-                @click="insertExampleJson"
+                variant="tonal"
+                size="small"
+                class="text-caption text-left text-none justify-start"
+                @click="sendQuickPrompt('Quais são os membros e visitantes cadastrados?')"
               >
-                Exemplo
+                💬 "Quais são os membros e visitantes cadastrados?"
               </v-btn>
             </div>
           </div>
-          <v-textarea
-            v-model="testPayloadJson"
-            variant="outlined"
-            density="compact"
-            rows="6"
-            placeholder='{\n  "church_name": "Igreja Central",\n  "user_name": "Fernando"\n}'
-            class="monospace-field"
-            hide-details
-          ></v-textarea>
-        </div>
 
-        <v-btn
-          color="primary"
-          block
-          size="large"
-          prepend-icon="mdi-lightning-bolt"
-          :loading="runningTest"
-          @click="runGraphTest"
-          class="mb-4"
-        >
-          Executar Grafo
-        </v-btn>
-
-        <!-- Test Result Section -->
-        <div v-if="testResult" class="flex-grow-1 overflow-y-auto">
-          <!-- Status Banner -->
-          <v-alert
-            :type="testResult.status === 'success' ? 'success' : 'error'"
-            variant="tonal"
-            density="compact"
-            class="mb-3"
-          >
-            <div class="d-flex align-center justify-space-between">
-              <span>Status: <strong>{{ testResult.status }}</strong></span>
-              <span>Tempo Total: <strong>{{ testResult.total_duration_ms }}ms</strong></span>
-            </div>
-          </v-alert>
-
-          <!-- Steps Trace Timeline -->
-          <h4 class="text-subtitle-2 font-weight-bold mb-2">Trilha de Execução dos Nós</h4>
-          <v-timeline density="compact" side="end" class="mb-4">
-            <v-timeline-item
-              v-for="(step, idx) in testResult.steps"
-              :key="idx"
-              :dot-color="step.status === 'success' ? 'primary' : 'error'"
-              size="x-small"
-            >
-              <div class="d-flex flex-column ga-1">
-                <div class="d-flex align-center justify-space-between">
-                  <span class="text-caption font-weight-bold">{{ step.node_label }} ({{ step.node_type }})</span>
-                  <span class="text-caption text-medium-emphasis">{{ step.duration_ms }}ms</span>
-                </div>
-                <div class="text-caption text-medium-emphasis pa-2 rounded bg-surface-variant font-mono" style="font-size: 11px !important;">
-                  {{ typeof step.output_data === 'object' ? JSON.stringify(step.output_data) : step.output_data }}
+          <!-- Message Bubbles -->
+          <div v-for="msg in chatMessages" :key="msg.id" class="message-bubble-wrapper mb-4">
+            <!-- User Message -->
+            <div v-if="msg.role === 'user'" class="d-flex justify-end">
+              <div class="user-bubble pa-3 rounded-xl bg-primary text-white" style="max-width: 85%;">
+                <div class="text-body-2" style="white-space: pre-wrap;">{{ msg.content }}</div>
+                <div class="text-right text-caption opacity-60 mt-1" style="font-size: 10px !important;">
+                  {{ msg.timestamp }}
                 </div>
               </div>
-            </v-timeline-item>
-          </v-timeline>
+            </div>
 
-          <!-- Final Output -->
-          <h4 class="text-subtitle-2 font-weight-bold mb-1">Resposta Final</h4>
-          <v-card class="pa-3 bg-surface-variant rounded-lg border">
-            <div class="text-body-2" style="white-space: pre-wrap;">{{ testResult.final_output }}</div>
-          </v-card>
+            <!-- Assistant Message -->
+            <div v-else class="d-flex flex-column align-start" style="max-width: 92%;">
+              <div class="assistant-bubble pa-3 rounded-xl bg-surface-variant border w-100">
+                <div class="d-flex align-center justify-space-between mb-2 pb-1 border-b">
+                  <div class="d-flex align-center ga-1">
+                    <v-icon size="16" color="primary">mdi-graphql</v-icon>
+                    <span class="text-caption font-weight-bold">{{ graph.name || 'Grafo' }}</span>
+                  </div>
+                  <v-chip v-if="msg.duration_ms" size="x-small" color="primary" variant="flat" density="compact">
+                    {{ msg.duration_ms }}ms
+                  </v-chip>
+                </div>
+
+                <div class="text-body-2 mb-2" style="white-space: pre-wrap;">{{ msg.content }}</div>
+
+                <!-- Execution Steps Accordion -->
+                <v-expansion-panels v-if="msg.steps && msg.steps.length" variant="accordion" density="compact" class="mt-2">
+                  <v-expansion-panel>
+                    <v-expansion-panel-title class="py-1 px-2 text-caption font-weight-bold" style="min-height: 32px;">
+                      <v-icon size="14" color="info" class="mr-1">mdi-map-marker-path</v-icon>
+                      Rastro da Execução ({{ msg.steps.length }} nós percorridos)
+                    </v-expansion-panel-title>
+                    <v-expansion-panel-text class="pa-2">
+                      <v-timeline density="compact" side="end" class="mt-1">
+                        <v-timeline-item
+                          v-for="(step, idx) in msg.steps"
+                          :key="idx"
+                          :dot-color="step.status === 'success' ? 'primary' : 'error'"
+                          size="x-small"
+                        >
+                          <div class="d-flex flex-column ga-1">
+                            <div class="d-flex align-center justify-space-between">
+                              <span class="text-caption font-weight-bold">
+                                {{ step.node_label }}
+                                <span class="text-medium-emphasis font-weight-regular">({{ step.node_type }})</span>
+                              </span>
+                              <span class="text-caption text-medium-emphasis" style="font-size: 10px !important;">{{ step.duration_ms }}ms</span>
+                            </div>
+                            <div class="text-caption text-medium-emphasis pa-2 rounded bg-surface font-mono" style="font-size: 10px !important; max-height: 120px; overflow-y: auto;">
+                              {{ typeof step.output_data === 'object' ? JSON.stringify(step.output_data, null, 2) : step.output_data }}
+                            </div>
+                          </div>
+                        </v-timeline-item>
+                      </v-timeline>
+                    </v-expansion-panel-text>
+                  </v-expansion-panel>
+                </v-expansion-panels>
+
+                <div class="text-right text-caption text-medium-emphasis mt-1" style="font-size: 10px !important;">
+                  {{ msg.timestamp }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Loading Indicator -->
+          <div v-if="runningTest" class="d-flex align-center ga-2 pa-3 rounded-xl bg-surface-variant border mb-3" style="width: fit-content;">
+            <v-progress-circular indeterminate size="16" width="2" color="primary"></v-progress-circular>
+            <span class="text-caption text-medium-emphasis">Processando fluxo nos especialistas...</span>
+          </div>
+        </div>
+
+        <!-- Chat Input Bar -->
+        <div class="pa-3 border-t bg-surface">
+          <div class="d-flex align-center ga-2">
+            <v-textarea
+              v-model="chatInput"
+              placeholder="Digite sua mensagem para o grafo..."
+              variant="outlined"
+              density="compact"
+              rows="1"
+              auto-grow
+              max-rows="4"
+              hide-details
+              :disabled="runningTest"
+              @keydown.enter.exact.prevent="sendChatMessage"
+            ></v-textarea>
+            <v-btn
+              color="primary"
+              icon="mdi-send"
+              size="small"
+              :loading="runningTest"
+              :disabled="!chatInput.trim()"
+              @click="sendChatMessage"
+            ></v-btn>
+          </div>
         </div>
       </div>
     </v-navigation-drawer>
@@ -382,7 +467,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
+import { ref, reactive, onMounted, nextTick, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -399,7 +484,7 @@ const route = useRoute()
 const router = useRouter()
 const graphId = route.params.id
 
-const { project, getSelectedNodes } = useVueFlow()
+const { project } = useVueFlow()
 const vueFlowInstance = ref(null)
 
 const nodeTypes = {
@@ -438,11 +523,15 @@ const connectionColors = [
   { name: 'Rosa (Sintetizador)', value: '#EC4899' },
 ]
 
+// ═══ INTERACTIVE CHAT TEST STATE ═══
 const showTestDrawer = ref(false)
-const testMessage = ref('')
+const showContextEditor = ref(false)
+const testSessionId = ref(`sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
+const chatInput = ref('')
 const testPayloadJson = ref('{\n  "church_name": "Igreja Central",\n  "user_name": "Fernando"\n}')
 const runningTest = ref(false)
-const testResult = ref(null)
+const chatMessages = ref([])
+const chatContainerRef = ref(null)
 
 const formatTestJson = () => {
   try {
@@ -468,8 +557,10 @@ const toolboxItems = [
   { type: 'start', label: 'Início / Trigger', icon: 'mdi-play-circle', color: '#10B981', category: 'flow' },
   { type: 'agent', label: 'Agente Especialista', icon: 'mdi-robot', color: '#3B82F6', category: 'agents' },
   { type: 'router', label: 'Supervisor / Router', icon: 'mdi-source-branch', color: '#8B5CF6', category: 'agents' },
+  { type: 'workflow', label: 'Workflow (Dados)', icon: 'mdi-sitemap', color: '#2563EB', category: 'workflows' },
   { type: 'parallel', label: 'Fan-Out Paralelo', icon: 'mdi-call-split', color: '#06B6D4', category: 'flow' },
   { type: 'synthesizer', label: 'Sintetizador Fan-In', icon: 'mdi-call-merge', color: '#EC4899', category: 'flow' },
+  { type: 'judge', label: 'Juiz de Qualidade', icon: 'mdi-scale-balance', color: '#EAB308', category: 'decision' },
   { type: 'condition', label: 'Decisão / Condição', icon: 'mdi-help-rhombus', color: '#F59E0B', category: 'decision' },
   { type: 'verifier', label: 'Verificador (Loop)', icon: 'mdi-shield-check', color: '#EAB308', category: 'decision' },
   { type: 'tool', label: 'Ação / Ferramenta', icon: 'mdi-tools', color: '#14B8A6', category: 'actions' },
@@ -623,7 +714,6 @@ function onConnect(params) {
   let defaultColor = '#3B82F6'
   let strokeDasharray = undefined
 
-  // 1. Is this a loopback / return connection to lateral yellow handles?
   if (params.targetHandle === 'loop_in_left' || params.targetHandle === 'loop_in_right') {
     defaultColor = '#F59E0B'
     label = label || 'Retorno / Loop'
@@ -636,17 +726,16 @@ function onConnect(params) {
     label = 'Falso'
   } else if (params.sourceHandle === 'approved') {
     defaultColor = '#10B981'
-    label = 'Aprovado'
+    label = 'Aprovado (True)'
   } else if (params.sourceHandle === 'retry') {
     defaultColor = '#F59E0B'
-    label = 'Loop Refazer'
+    label = 'Loop Refazer (False)'
     strokeDasharray = '5,5'
   } else if (params.sourceHandle === 'default') {
     defaultColor = '#EF4444'
     label = 'Outro / Fallback'
   } else if (params.sourceHandle && params.sourceHandle.startsWith('route_')) {
     defaultColor = '#8B5CF6'
-    // Look up route name from source node configuration
     const routes = sourceNode?.data?.config?.routes || []
     const r = routes.find(item => item.id === params.sourceHandle) || routes[parseInt(params.sourceHandle.replace('route_', ''))]
     if (r && r.name) {
@@ -755,8 +844,122 @@ const deleteSelectedNode = (nodeId) => {
   saveStatus.text = 'Não salvo'
 }
 
-const runGraphTest = async () => {
-  if (!testMessage.value.trim()) return
+// ═══ CANVAS HIGHLIGHTING (LIVE TRACE / SOMBRA) ═══
+function applyExecutionHighlights(steps) {
+  if (!steps || !steps.length) return
+  const executedNodeIds = new Set(steps.map(s => s.node_id))
+
+  // 1. Highlight traversed nodes
+  nodes.value = nodes.value.map(n => ({
+    ...n,
+    data: {
+      ...n.data,
+      _isExecuted: executedNodeIds.has(n.id),
+      _status: executedNodeIds.has(n.id) ? 'success' : undefined
+    }
+  }))
+
+  // 2. Highlight traversed edges with animated glow & shadow
+  const executedPairs = new Set()
+  for (let i = 0; i < steps.length - 1; i++) {
+    executedPairs.add(`${steps[i].node_id}->${steps[i + 1].node_id}`)
+  }
+
+  edges.value = edges.value.map(e => {
+    const isTraversed = executedPairs.has(`${e.source}->${e.target}`)
+    if (isTraversed) {
+      return {
+        ...e,
+        animated: true,
+        style: {
+          ...(e.style || {}),
+          stroke: '#6366F1',
+          strokeWidth: 3.5,
+          filter: 'drop-shadow(0 0 8px rgba(99, 102, 241, 0.9))'
+        }
+      }
+    } else {
+      const sourceHandleVal = e.sourceHandle || e.label || null
+      const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'approved')
+        ? '#10B981'
+        : (sourceHandleVal === 'false')
+          ? '#EF4444'
+          : (sourceHandleVal === 'retry')
+            ? '#F59E0B'
+            : '#3B82F6'
+      return {
+        ...e,
+        animated: false,
+        style: {
+          stroke: defaultColor,
+          strokeWidth: 1.5,
+          opacity: 0.25
+        }
+      }
+    }
+  })
+}
+
+function clearExecutionHighlights() {
+  nodes.value = nodes.value.map(n => ({
+    ...n,
+    data: {
+      ...n.data,
+      _isExecuted: false,
+      _status: undefined
+    }
+  }))
+  edges.value = edges.value.map(e => {
+    const sourceHandleVal = e.sourceHandle || e.label || null
+    const defaultColor = (sourceHandleVal === 'true' || sourceHandleVal === 'approved')
+      ? '#10B981'
+      : (sourceHandleVal === 'false')
+        ? '#EF4444'
+        : (sourceHandleVal === 'retry')
+          ? '#F59E0B'
+          : '#3B82F6'
+    return {
+      ...e,
+      animated: true,
+      style: {
+        ...(e.style || {}),
+        stroke: defaultColor,
+        strokeWidth: 2,
+        opacity: 1,
+        filter: undefined
+      }
+    }
+  })
+}
+
+// ═══ INTERACTIVE CHAT METHODS ═══
+const openTestChatDrawer = () => {
+  showTestDrawer.value = true
+  scrollToChatBottom()
+}
+
+const resetChatSession = () => {
+  testSessionId.value = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+  chatMessages.value = []
+  clearExecutionHighlights()
+}
+
+const sendQuickPrompt = (promptText) => {
+  chatInput.value = promptText
+  sendChatMessage()
+}
+
+const scrollToChatBottom = () => {
+  nextTick(() => {
+    if (chatContainerRef.value) {
+      chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
+    }
+  })
+}
+
+const sendChatMessage = async () => {
+  const userText = chatInput.value.trim()
+  if (!userText || runningTest.value) return
 
   let contextData = {}
   try {
@@ -768,26 +971,65 @@ const runGraphTest = async () => {
     return
   }
 
+  // Add user bubble
+  const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  chatMessages.value.push({
+    id: `user_${Date.now()}`,
+    role: 'user',
+    content: userText,
+    timestamp: now
+  })
+  chatInput.value = ''
+  scrollToChatBottom()
+
   runningTest.value = true
-  testResult.value = null
 
   try {
-    await saveGraph()
-    const res = await axios.post(`/agent-graphs/${graphId}/test`, {
-      message: testMessage.value,
-      context_data: contextData
-    })
-    testResult.value = res.data
-  } catch (e) {
-    console.error('Erro ao testar grafo:', e)
-    testResult.value = {
-      status: 'error',
-      final_output: 'Erro ao executar teste do grafo: ' + (e.response?.data?.detail || e.message),
-      steps: [],
-      total_duration_ms: 0
+    const currentDefinition = {
+      nodes: nodes.value,
+      edges: edges.value
     }
+
+    const historyPayload = chatMessages.value.slice(0, -1).map(m => ({
+      role: m.role,
+      content: m.content
+    }))
+
+    const res = await axios.post(`/agent-graphs/${graphId}/test`, {
+      message: userText,
+      history: historyPayload,
+      context_data: contextData,
+      session_id: testSessionId.value,
+      definition: currentDefinition
+    })
+
+    const data = res.data
+
+    // Add assistant bubble
+    chatMessages.value.push({
+      id: `asst_${Date.now()}`,
+      role: 'assistant',
+      content: data.final_output || 'Nenhuma resposta gerada.',
+      steps: data.steps || [],
+      duration_ms: data.total_duration_ms,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    })
+
+    // Highlight path on canvas
+    applyExecutionHighlights(data.steps || [])
+  } catch (e) {
+    console.error('Erro ao testar grafo no chat:', e)
+    chatMessages.value.push({
+      id: `err_${Date.now()}`,
+      role: 'assistant',
+      content: '❌ Erro ao executar grafo: ' + (e.response?.data?.detail || e.message),
+      steps: [],
+      duration_ms: 0,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    })
   } finally {
     runningTest.value = false
+    scrollToChatBottom()
   }
 }
 
@@ -835,12 +1077,27 @@ onMounted(() => {
   cursor: grab;
 }
 
-.properties-drawer {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+.properties-drawer, .test-chat-drawer {
+  border-left: 1px solid rgba(255, 255, 255, 0.1) !important;
 }
 
 .monospace-field :deep(textarea) {
   font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
   font-size: 12px !important;
 }
+
+.chat-messages-container {
+  background: #0d111d;
+}
+
+.user-bubble {
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.25);
+}
+
+.assistant-bubble {
+  background: #161b2e !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
 </style>
+

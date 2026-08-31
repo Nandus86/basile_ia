@@ -63,19 +63,34 @@ class AgentGraphCompiler:
         message: str,
         context_data: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
+        override_definition: Optional[Dict[str, Any]] = None,
     ) -> AgentGraphExecuteResponse:
         """
         Executes the agent graph definition with the provided input message.
         Tracks all step transitions, latencies, and node outputs.
         """
         start_time = time.monotonic()
-        definition = graph.definition or {}
+        definition = override_definition if override_definition is not None else (graph.definition or {})
         nodes = definition.get("nodes", [])
         edges = definition.get("edges", [])
 
+        # Build initial messages including multi-turn history
+        initial_messages: List[BaseMessage] = []
+        for h in (history or []):
+            r = h.get("role")
+            c = h.get("content", "")
+            if r == "user":
+                initial_messages.append(HumanMessage(content=c))
+            elif r == "assistant":
+                initial_messages.append(AIMessage(content=c))
+            elif r == "system":
+                initial_messages.append(SystemMessage(content=c))
+        initial_messages.append(HumanMessage(content=message))
+
         steps_trace: List[AgentGraphStepTrace] = []
         state: AgentGraphState = {
-            "messages": [HumanMessage(content=message)],
+            "messages": initial_messages,
             "original_message": message,
             "context_data": context_data or {},
             "session_id": session_id,
@@ -97,7 +112,8 @@ class AgentGraphCompiler:
                 steps=[],
                 total_duration_ms=0.0,
                 status="error",
-                error="Nenhum nó encontrado no grafo."
+                error="Nenhum nó encontrado no grafo.",
+                session_id=session_id
             )
 
         # Index nodes and edges by id
@@ -211,10 +227,16 @@ class AgentGraphCompiler:
                             elif isinstance(m, str):
                                 input_msgs.append(HumanMessage(content=m))
 
-                        # Inject loop feedback if available
-                        if current_node_id in state["loop_feedbacks"]:
-                            feedback = state["loop_feedbacks"][current_node_id]
-                            input_msgs.append(SystemMessage(content=f"⚠️ FEEDBACK DO VERIFICADOR (Corrija sua resposta anterior):\n{feedback}"))
+                        # Inject loop feedback from Judge/Curator if available
+                        feedback = state["loop_feedbacks"].get(current_node_id) or state["loop_feedbacks"].get("last")
+                        if feedback:
+                            input_msgs.append(SystemMessage(content=(
+                                f"⚠️ FEEDBACK DO JUIZ / CURADOR (Sua resposta anterior precisa ser corrigida):\n"
+                                f"{feedback}\n"
+                                f"Por favor, revise os pontos apontados e gere uma resposta aprimorada."
+                            )))
+                            state["loop_feedbacks"].pop(current_node_id, None)
+                            state["loop_feedbacks"].pop("last", None)
 
                         resp = await llm_callable.ainvoke(input_msgs)
                         resp_content = resp.content if isinstance(resp.content, str) else str(resp.content)
@@ -237,11 +259,16 @@ class AgentGraphCompiler:
                                 factory = AgentFactory(self.db)
                                 agent_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
                                 
-                                # Inject loop feedback if available
                                 input_msgs = list(state["messages"])
-                                if current_node_id in state["loop_feedbacks"]:
-                                    feedback = state["loop_feedbacks"][current_node_id]
-                                    input_msgs.append(SystemMessage(content=f"⚠️ FEEDBACK DO VERIFICADOR (Corrija sua resposta anterior):\n{feedback}"))
+                                feedback = state["loop_feedbacks"].get(current_node_id) or state["loop_feedbacks"].get("last")
+                                if feedback:
+                                    input_msgs.append(SystemMessage(content=(
+                                        f"⚠️ FEEDBACK DO JUIZ / CURADOR (Sua resposta anterior precisa ser corrigida):\n"
+                                        f"{feedback}\n"
+                                        f"Por favor, revise os pontos apontados e gere uma resposta aprimorada."
+                                    )))
+                                    state["loop_feedbacks"].pop(current_node_id, None)
+                                    state["loop_feedbacks"].pop("last", None)
 
                                 # Execute agent
                                 resp_content = await factory.invoke_agent(
@@ -260,13 +287,62 @@ class AgentGraphCompiler:
                             state["final_output"] = "Nenhum agente vinculado a este nó."
                             step_trace.output_data = state["final_output"]
 
-                # ── 3. ROUTER / SUPERVISOR NODE (Dynamic Semantic Routes) ───────
+                # ── 3. WORKFLOW / SUB-WORKFLOW NODE (Zero-Cost Data & Pipeline) ──
+                elif node_type in ("workflow", "sub_workflow"):
+                    wf_id = node_config.get("workflow_id")
+                    wf_name = node_config.get("workflow_name", "Workflow")
+                    output_key = node_config.get("output_key") or f"workflow_{current_node_id}"
+                    inject_into_prompt = node_config.get("inject_into_prompt", True)
+
+                    if wf_id:
+                        try:
+                            from app.services.workflow_engine import WorkflowEngine
+                            engine = WorkflowEngine(self.db)
+
+                            trigger_data = {
+                                "message": state["original_message"],
+                                "user_message": state["original_message"],
+                                **state.get("context_data", {})
+                            }
+
+                            custom_inputs = node_config.get("input_mapping")
+                            if custom_inputs and isinstance(custom_inputs, dict):
+                                trigger_data.update(custom_inputs)
+
+                            wf_uuid = UUID(str(wf_id))
+                            exec_res = await engine.execute(
+                                workflow_id=wf_uuid,
+                                trigger_data=trigger_data,
+                                session_id=state.get("session_id")
+                            )
+
+                            wf_output = exec_res.get("result") or exec_res.get("context") or {}
+                            state["context_data"][output_key] = wf_output
+
+                            if inject_into_prompt:
+                                formatted_info = json.dumps(wf_output, ensure_ascii=False, indent=2) if isinstance(wf_output, (dict, list)) else str(wf_output)
+                                state["messages"].append(SystemMessage(
+                                    content=f"## Informações Coletadas via Workflow ({wf_name}):\n```json\n{formatted_info}\n```"
+                                ))
+
+                            step_trace.output_data = wf_output
+                            if not state.get("final_output"):
+                                state["final_output"] = str(wf_output)
+                            logger.info(f"[AgentGraphCompiler] ⚙️ Workflow '{wf_name}' ({wf_id}) executado com sucesso no grafo.")
+                        except Exception as wf_err:
+                            logger.error(f"[AgentGraphCompiler] Erro ao executar workflow {wf_id}: {wf_err}", exc_info=True)
+                            step_trace.status = "error"
+                            step_trace.error = str(wf_err)
+                            step_trace.output_data = f"Erro no Workflow: {str(wf_err)}"
+                    else:
+                        step_trace.output_data = "Nenhum workflow selecionado no bloco."
+
+                # ── 4. ROUTER / SUPERVISOR NODE (Dynamic Semantic Routes) ───────
                 elif node_type in ("router", "supervisor"):
                     outgoing_edges = adj_list.get(current_node_id, [])
                     routes = node_config.get("routes", [])
 
                     if routes:
-                        # Roteamento baseado na lista de rotas dinâmicas
                         route_descriptions = []
                         for idx, r in enumerate(routes):
                             r_id = r.get("id") or f"route_{idx}"
@@ -310,7 +386,6 @@ class AgentGraphCompiler:
                         if not chosen_route_id:
                             chosen_route_id = "default"
 
-                        # Find outgoing edge with sourceHandle == chosen_route_id
                         next_edge = next((e for e in outgoing_edges if e.get("sourceHandle") == chosen_route_id), None)
                         if not next_edge and chosen_route_id == "default":
                             next_edge = next((e for e in outgoing_edges if e.get("sourceHandle") in ("default", None) or "outro" in e.get("label", "").lower() or "fallback" in e.get("label", "").lower()), None)
@@ -326,7 +401,6 @@ class AgentGraphCompiler:
                         continue
 
                     else:
-                        # Roteamento baseado diretamente nos nós de destino conectados
                         choices = []
                         for e in outgoing_edges:
                             target_id = e.get("target")
@@ -366,7 +440,7 @@ class AgentGraphCompiler:
                         current_node_id = chosen_id
                         continue
 
-                # ── 4. PARALLEL FAN-OUT NODE ────────────────────────────────────
+                # ── 5. PARALLEL FAN-OUT NODE ────────────────────────────────────
                 elif node_type == "parallel":
                     outgoing_edges = adj_list.get(current_node_id, [])
                     target_nodes = [node_map[e["target"]] for e in outgoing_edges if e.get("target") in node_map]
@@ -386,7 +460,7 @@ class AgentGraphCompiler:
                     state["parallel_outputs"] = parallel_dict
                     step_trace.output_data = f"Executados {len(parallel_dict)} caminhos em paralelo: {list(parallel_dict.keys())}"
 
-                # ── 5. SYNTHESIZER (FAN-IN) NODE ────────────────────────────────
+                # ── 6. SYNTHESIZER (FAN-IN) NODE ────────────────────────────────
                 elif node_type == "synthesizer":
                     outputs = state.get("parallel_outputs", {})
                     combined_text = "\n\n".join([f"--- Parecer Especialista ({k}) ---\n{v}" for k, v in outputs.items()])
@@ -404,7 +478,7 @@ class AgentGraphCompiler:
                     state["messages"].append(AIMessage(content=llm_resp.content))
                     step_trace.output_data = llm_resp.content
 
-                # ── 6. CONDITION / DECISION NODE ───────────────────────────────
+                # ── 7. CONDITION / DECISION NODE ───────────────────────────────
                 elif node_type in ("condition", "decision"):
                     mode = node_config.get("mode", "llm")
                     condition_result = True
@@ -426,7 +500,6 @@ class AgentGraphCompiler:
 
                     step_trace.output_data = f"Resultado da condição: {condition_result}"
                     
-                    # Choose handle
                     handle_target = "true" if condition_result else "false"
                     next_edge = next((e for e in adj_list.get(current_node_id, []) if e.get("sourceHandle") == handle_target or e.get("label", "").lower() == handle_target), None)
                     if not next_edge and adj_list.get(current_node_id):
@@ -438,42 +511,115 @@ class AgentGraphCompiler:
                     current_node_id = chosen_id
                     continue
 
-                # ── 7. VERIFIER / GUARDRAIL (LOOP) NODE ────────────────────────
-                elif node_type in ("verifier", "guardrail"):
+                # ── 8. JUDGE / CURATOR / VERIFIER (LOOP) NODE ───────────────────
+                elif node_type in ("judge", "curator", "verifier", "guardrail"):
                     retries = state["retry_counts"].get(current_node_id, 0)
-                    max_retries = node_config.get("max_retries", 2)
-                    verifier_criteria = node_config.get("criteria", "Verifique se a resposta está correta, segura e responde objetivamente à pergunta.")
-
-                    v_prompt = (
-                        f"Você é um Verificador de Qualidade de Respostas.\n"
-                        f"Mensagem do Usuário: {state['original_message']}\n"
-                        f"Resposta Gerada: {state['final_output']}\n"
-                        f"Critério de Validação: {verifier_criteria}\n\n"
-                        "Avalie se a resposta é APROVADA ou REPROVADA.\n"
-                        "Responda SOMENTE em JSON: {\"status\": \"APPROVED\" ou \"REJECTED\", \"feedback\": \"motivo ou instruções de melhoria\"}"
+                    max_retries = int(node_config.get("max_retries", 2))
+                    judge_criteria = node_config.get("criteria") or (
+                        "Verifique se a resposta está precisa, de tom acolhedor e profissional, responde diretamente à pergunta do usuário, "
+                        "não contém erros ou alucinações e cumpre as regras de negócio."
                     )
-                    llm_resp = await self.llm_default.ainvoke([SystemMessage(content=v_prompt)])
-                    
+                    judge_mode = node_config.get("judge_mode", "llm")
+                    agent_judge_id = node_config.get("agent_id")
+
                     is_approved = True
                     feedback = ""
-                    try:
-                        clean_json = re.search(r'\{.*\}', llm_resp.content, re.DOTALL)
-                        if clean_json:
-                            data = json.loads(clean_json.group(0))
-                            is_approved = data.get("status", "").upper() == "APPROVED"
-                            feedback = data.get("feedback", "")
-                    except Exception:
-                        is_approved = "approved" in llm_resp.content.lower()
+                    score = 10
+
+                    if judge_mode == "agent" and agent_judge_id:
+                        try:
+                            agent_obj = await self._get_agent_by_id(str(agent_judge_id))
+                            if agent_obj:
+                                from app.orchestrator.agent_factory import AgentFactory
+                                factory = AgentFactory(self.db)
+                                judge_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
+                                
+                                judge_instruction = (
+                                    f"Você é o Juiz e Curador de Qualidade ({agent_obj.name}).\n"
+                                    f"Critérios de Avaliação: {judge_criteria}\n\n"
+                                    f"Pergunta do Usuário: {state['original_message']}\n"
+                                    f"Resposta Gerada: {state['final_output']}\n\n"
+                                    "Avalie a resposta e responda EXCLUSIVAMENTE em formato JSON:\n"
+                                    "{\n"
+                                    '  "status": "APPROVED" ou "REJECTED",\n'
+                                    '  "score": <nota de 1 a 10>,\n'
+                                    '  "feedback": "<instruções específicas do que o agente deve corrigir/melhorar se rejeitado, ou breve motivo da aprovação>"\n'
+                                    "}"
+                                )
+                                judge_msgs = [SystemMessage(content=judge_instruction)]
+                                raw_resp = await factory.invoke_agent(
+                                    agent_config=judge_cfg,
+                                    messages=judge_msgs,
+                                    context_data=state["context_data"]
+                                )
+                                clean_json = re.search(r'\{.*\}', raw_resp, re.DOTALL)
+                                if clean_json:
+                                    data = json.loads(clean_json.group(0))
+                                    is_approved = data.get("status", "").upper() == "APPROVED"
+                                    feedback = data.get("feedback", "")
+                                    score = data.get("score", 10 if is_approved else 5)
+                                else:
+                                    is_approved = "approved" in raw_resp.lower() or "aprovado" in raw_resp.lower()
+                                    feedback = raw_resp
+                        except Exception as j_err:
+                            logger.warning(f"[AgentGraphCompiler] Erro ao executar agente juiz: {j_err}")
+                            is_approved = True
+                    else:
+                        v_prompt = (
+                            f"Você é um Juiz e Curador de Qualidade de Respostas de IA.\n\n"
+                            f"Mensagem do Usuário: {state['original_message']}\n"
+                            f"Resposta Gerada pelo Agente: {state['final_output']}\n\n"
+                            f"Critérios de Curadoria / Qualidade:\n{judge_criteria}\n\n"
+                            "Avalie se a resposta cumpre os critérios e está aprovada para entrega final.\n"
+                            "Responda SOMENTE em JSON no seguinte formato estrito:\n"
+                            "{\n"
+                            '  "status": "APPROVED" ou "REJECTED",\n'
+                            '  "score": <nota de 1 a 10>,\n'
+                            '  "feedback": "<instruções cirúrgicas e específicas do que o agente deve corrigir caso rejeitado, ou breve resumo de aprovação>"\n'
+                            "}"
+                        )
+                        llm_resp = await self.llm_default.ainvoke([SystemMessage(content=v_prompt)])
+                        try:
+                            clean_json = re.search(r'\{.*\}', llm_resp.content, re.DOTALL)
+                            if clean_json:
+                                data = json.loads(clean_json.group(0))
+                                is_approved = data.get("status", "").upper() == "APPROVED"
+                                feedback = data.get("feedback", "")
+                                score = data.get("score", 10 if is_approved else 5)
+                        except Exception:
+                            is_approved = "approved" in llm_resp.content.lower() or "aprovado" in llm_resp.content.lower()
+
+                    step_trace.feedback = feedback
 
                     if is_approved or retries >= max_retries:
-                        step_trace.output_data = f"Aprovado (Tentativas: {retries}/{max_retries})"
-                        next_edge = next((e for e in adj_list.get(current_node_id, []) if e.get("sourceHandle") == "approved" or "aprov" in e.get("label", "").lower()), None)
+                        if retries >= max_retries and not is_approved:
+                            step_trace.output_data = f"⚠️ Limite de Loops ({retries}/{max_retries}) atingido -> Aprovado com ressalvas: {feedback}"
+                        else:
+                            step_trace.output_data = f"✅ Aprovado (Nota {score}/10) | {feedback or 'Resposta conforme os padrões esperados.'}"
+                        
+                        next_edge = next((
+                            e for e in adj_list.get(current_node_id, [])
+                            if e.get("sourceHandle") in ("approved", "true", "success", "sucesso") 
+                            or "aprov" in e.get("label", "").lower() 
+                            or "true" in e.get("label", "").lower()
+                            or "sim" in e.get("label", "").lower()
+                        ), None)
                     else:
-                        # REJECTED -> Trigger loop
                         state["retry_counts"][current_node_id] = retries + 1
                         state["loop_feedbacks"][current_node_id] = feedback
-                        step_trace.output_data = f"Reprovado (Feedback: {feedback}) -> Iniciando Loop de Correção (Tentativa {retries + 1}/{max_retries})"
-                        next_edge = next((e for e in adj_list.get(current_node_id, []) if e.get("sourceHandle") in ("retry", "loop_in_left", "loop_in_right") or "reprov" in e.get("label", "").lower() or "loop" in e.get("label", "").lower()), None)
+                        state["loop_feedbacks"]["last"] = feedback
+                        step_trace.output_data = f"❌ Reprovado (Nota {score}/10) -> Loop de Correção ({retries + 1}/{max_retries}): {feedback}"
+                        
+                        next_edge = next((
+                            e for e in adj_list.get(current_node_id, [])
+                            if e.get("sourceHandle") in ("retry", "false", "loop_in_left", "loop_in_right", "loop", "rejected", "reprovado")
+                            or "reprov" in e.get("label", "").lower()
+                            or "loop" in e.get("label", "").lower()
+                            or "refazer" in e.get("label", "").lower()
+                            or "false" in e.get("label", "").lower()
+                            or "nao" in e.get("label", "").lower()
+                            or "não" in e.get("label", "").lower()
+                        ), None)
 
                     if not next_edge and adj_list.get(current_node_id):
                         next_edge = adj_list[current_node_id][0]
@@ -484,12 +630,12 @@ class AgentGraphCompiler:
                     current_node_id = chosen_id
                     continue
 
-                # ── 8. TOOL / ACTION NODE ──────────────────────────────────────
+                # ── 9. TOOL / ACTION NODE ──────────────────────────────────────
                 elif node_type in ("tool", "action"):
                     action_type = node_config.get("action_type", "mcp")
                     step_trace.output_data = f"Ação executada: {action_type}"
 
-                # ── 9. END NODE ────────────────────────────────────────────────
+                # ── 10. END NODE ───────────────────────────────────────────────
                 elif node_type in ("end", "output"):
                     step_trace.output_data = "Grafo finalizado com sucesso"
                     step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
@@ -519,7 +665,8 @@ class AgentGraphCompiler:
             total_duration_ms=total_duration,
             status=state.get("status", "success"),
             error=state.get("error"),
-            context_data=state.get("context_data")
+            context_data=state.get("context_data"),
+            session_id=session_id
         )
 
     async def _execute_single_sub_node(self, node: Dict[str, Any], state: AgentGraphState) -> str:
