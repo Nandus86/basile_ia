@@ -166,7 +166,7 @@ class AgentGraphCompiler:
                         # ── INLINE CLEAN AGENT ─────────────────────────────────
                         inline_cfg = inline_agent or node_config
                         inline_name = inline_cfg.get("name", "Agente Limpo")
-                        system_prompt = inline_cfg.get("system_prompt", "Você é um assistente prestativo e direto.")
+                        system_prompt = inline_cfg.get("system_prompt") or "Você é um assistente prestativo e direto."
                         provider_id = inline_cfg.get("provider_id", "openai")
                         model_name = inline_cfg.get("model", "gpt-4o-mini")
                         temperature = float(inline_cfg.get("temperature", 0.7))
@@ -198,25 +198,52 @@ class AgentGraphCompiler:
                         tools = []
                         if mcp_ids:
                             try:
-                                from app.services.mcp_tools import MCPToolsService
-                                mcp_service = MCPToolsService(self.db)
-                                tools = await mcp_service.get_tools_for_mcps(mcp_ids)
+                                from app.models.mcp import MCP
+                                from app.services.mcp_tools import MCPToolExecutor
+                                clean_mcp_ids = []
+                                for mid in mcp_ids:
+                                    try:
+                                        clean_mcp_ids.append(UUID(str(mid)))
+                                    except Exception:
+                                        pass
+                                if clean_mcp_ids:
+                                    mcp_res = await self.db.execute(
+                                        select(MCP).where(MCP.id.in_(clean_mcp_ids), MCP.is_active == True)
+                                    )
+                                    mcps = mcp_res.scalars().all()
+                                    executor = MCPToolExecutor(self.db, state.get("context_data", {}) or {})
+                                    for m in mcps:
+                                        mcp_tools = await executor.create_langchain_tools(m)
+                                        tools.extend(mcp_tools)
                             except Exception as e:
                                 logger.warning(f"[AgentGraphCompiler] Erro ao carregar ferramentas MCP: {e}")
 
-                        # 3. Build LLM
+                        # 3. Build LLM via AgentFactory
                         from app.orchestrator.agent_factory import AgentFactory
                         factory = AgentFactory(self.db)
-                        llm = await factory._build_llm(
-                            provider=provider_id,
-                            model_name=model_name,
-                            temperature=temperature,
-                            max_tokens=max_tokens
-                        )
-                        if tools:
-                            llm_callable = llm.bind_tools(tools)
-                        else:
-                            llm_callable = llm
+                        
+                        provider_obj = None
+                        if provider_id:
+                            if str(provider_id).lower() in ("openai", "google", "deepseek", "openrouter"):
+                                provider_obj = str(provider_id).lower()
+                            else:
+                                from app.models.ai_provider import AIProvider
+                                try:
+                                    prov_res = await self.db.execute(select(AIProvider).where(AIProvider.id == UUID(str(provider_id))))
+                                    provider_obj = prov_res.scalar_one_or_none()
+                                except Exception as prov_err:
+                                    logger.warning(f"[AgentGraphCompiler] Could not load provider {provider_id}: {prov_err}")
+
+                        agent_cfg = {
+                            "id": f"inline_{inline_name}",
+                            "name": inline_name,
+                            "model": model_name,
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                            "provider": provider_obj or provider_id,
+                            "config": inline_cfg.get("config", {}) or {},
+                        }
+                        llm = factory.create_llm(agent_cfg, session_id=session_id)
 
                         # 4. Prepare input messages
                         full_system_prompt = system_prompt + skills_prompt
@@ -238,8 +265,30 @@ class AgentGraphCompiler:
                             state["loop_feedbacks"].pop(current_node_id, None)
                             state["loop_feedbacks"].pop("last", None)
 
-                        resp = await llm_callable.ainvoke(input_msgs)
-                        resp_content = resp.content if isinstance(resp.content, str) else str(resp.content)
+                        # 5. Invoke LLM or ReAct Agent with tools
+                        if tools:
+                            from langgraph.prebuilt import create_react_agent
+                            react_agent = create_react_agent(
+                                model=llm,
+                                tools=tools,
+                                prompt=full_system_prompt,
+                            )
+                            result = await react_agent.ainvoke(
+                                {'messages': [HumanMessage(content=state.get("original_message", ""))]},
+                            )
+                            exec_messages = result.get('messages', [])
+                            resp_content = ''
+                            for msg in reversed(exec_messages):
+                                if isinstance(msg, AIMessage) and msg.content:
+                                    if not (hasattr(msg, 'tool_calls') and msg.tool_calls):
+                                        resp_content = msg.content
+                                        break
+                            if not resp_content and exec_messages:
+                                last_msg = exec_messages[-1]
+                                resp_content = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
+                        else:
+                            resp = await llm.ainvoke(input_msgs)
+                            resp_content = resp.content if isinstance(resp.content, str) else str(resp.content)
 
                         state["final_output"] = resp_content
                         state["messages"].append(AIMessage(content=resp_content))
@@ -646,8 +695,11 @@ class AgentGraphCompiler:
                 logger.error(f"[AgentGraphCompiler] Erro ao executar nó '{node_label}' ({current_node_id}): {e}", exc_info=True)
                 step_trace.status = "error"
                 step_trace.error = str(e)
+                step_trace.output_data = f"❌ Erro no nó '{node_label}': {str(e)}"
                 state["status"] = "error"
                 state["error"] = str(e)
+                if not state.get("final_output"):
+                    state["final_output"] = f"❌ Erro no nó '{node_label}': {str(e)}"
 
             step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
             steps_trace.append(step_trace)
@@ -680,7 +732,7 @@ class AgentGraphCompiler:
 
             if agent_mode == "inline" or (inline_agent and not node_config.get("agent_id")):
                 inline_cfg = inline_agent or node_config
-                system_prompt = inline_cfg.get("system_prompt", "Você é um assistente especialista.")
+                system_prompt = inline_cfg.get("system_prompt") or "Você é um assistente especialista."
                 provider_id = inline_cfg.get("provider_id", "openai")
                 model_name = inline_cfg.get("model", "gpt-4o-mini")
                 temperature = float(inline_cfg.get("temperature", 0.7))
@@ -688,12 +740,16 @@ class AgentGraphCompiler:
 
                 from app.orchestrator.agent_factory import AgentFactory
                 factory = AgentFactory(self.db)
-                llm = await factory._build_llm(
-                    provider=provider_id,
-                    model_name=model_name,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
+                agent_cfg = {
+                    "id": f"inline_sub_{node.get('id')}",
+                    "name": inline_cfg.get("name", "Agente Limpo"),
+                    "model": model_name,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "provider": provider_id,
+                    "config": inline_cfg.get("config", {}) or {},
+                }
+                llm = factory.create_llm(agent_cfg, session_id=state.get("session_id"))
                 msgs = [SystemMessage(content=system_prompt), HumanMessage(content=state["original_message"])]
                 resp = await llm.ainvoke(msgs)
                 return resp.content if isinstance(resp.content, str) else str(resp.content)

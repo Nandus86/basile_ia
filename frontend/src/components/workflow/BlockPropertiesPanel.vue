@@ -1751,11 +1751,13 @@ function onProviderChange(provId) {
 }
 
 function onInlineAgentChange() {
+  config.value.agent_mode = 'inline'
   config.value.inline_agent = { ...inlineAgent.value }
   emitUpdate()
 }
 
 watch(agentMode, (newMode) => {
+  config.value.agent_mode = newMode
   if (newMode === 'inline') {
     // Clear agent_id when switching to inline
     config.value.agent_id = null

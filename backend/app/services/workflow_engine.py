@@ -2178,18 +2178,17 @@ class WorkflowEngine:
         context_data['_workflow_execution'] = True
 
         # ── Inline Agent Mode ──────────────────────────────────────────
-        if inline_agent and not agent_id:
-            inline_name = inline_agent.get('name', 'Agente da Automação')
-            inline_system_prompt = inline_agent.get('system_prompt', '')
-            inline_model = inline_agent.get('model', 'gpt-4o-mini')
-            inline_temperature = float(inline_agent.get('temperature', 0.7))
-            inline_max_tokens = int(inline_agent.get('max_tokens', 2000))
-            provider_id = inline_agent.get('provider_id') or None
-            mcp_ids = inline_agent.get('mcp_ids', []) or []
-            skill_ids = inline_agent.get('skill_ids', []) or []
-
-            if not inline_system_prompt:
-                raise ValueError("Inline agent block: 'system_prompt' is required")
+        is_inline = config.get('agent_mode') == 'inline' or (bool(inline_agent) and not agent_id)
+        if is_inline:
+            inline_cfg = inline_agent if isinstance(inline_agent, dict) else config
+            inline_name = inline_cfg.get('name', 'Agente da Automação')
+            inline_system_prompt = inline_cfg.get('system_prompt') or 'Você é um assistente prestativo e inteligente encarregado de executar tarefas desta automação.'
+            inline_model = inline_cfg.get('model', 'gpt-4o-mini')
+            inline_temperature = float(inline_cfg.get('temperature', 0.7))
+            inline_max_tokens = int(inline_cfg.get('max_tokens', 2000))
+            provider_id = inline_cfg.get('provider_id') or None
+            mcp_ids = inline_cfg.get('mcp_ids', []) or []
+            skill_ids = inline_cfg.get('skill_ids', []) or []
 
             logger.info(f"[WorkflowEngine] 🤖 Invoking INLINE agent '{inline_name}' (model={inline_model}, provider={provider_id}, mcps={len(mcp_ids)}, skills={len(skill_ids)}) with message: {message[:100]}...")
 
