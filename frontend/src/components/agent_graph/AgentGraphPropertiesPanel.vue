@@ -137,18 +137,22 @@
               ></v-select>
             </v-col>
             <v-col cols="6">
-              <v-combobox
+              <v-autocomplete
                 v-model="inlineAgent.model"
                 :items="inlineModelOptions"
                 item-title="title"
                 item-value="value"
-                :return-object="false"
-                label="Modelo"
+                label="Modelo de IA"
                 variant="outlined"
                 density="compact"
                 hide-details
+                placeholder="Selecione ou busque..."
                 @update:model-value="onInlineAgentChange"
-              ></v-combobox>
+              >
+                <template v-slot:item="{ props, item }">
+                  <v-list-item v-bind="props" :subtitle="item.raw.subtitle || item.raw.value"></v-list-item>
+                </template>
+              </v-autocomplete>
             </v-col>
           </v-row>
 
@@ -703,7 +707,11 @@ const inlineModelOptions = computed(() => {
   const currentProv = inlineAgent.value.provider_id || 'openai'
   const filtered = (availableModels.value || [])
     .filter(m => m.provider === currentProv)
-    .map(m => ({ title: m.name || m.id, value: m.id }))
+    .map(m => ({
+      title: m.name || m.id,
+      value: m.id,
+      subtitle: m.context_length ? `${Math.round(m.context_length / 1000)}k ctx` : undefined
+    }))
 
   if (filtered.length > 0) return filtered
 
@@ -716,29 +724,29 @@ const inlineModelOptions = computed(() => {
 
   if (currentProv === 'google') {
     return [
-      { title: 'gemini-2.5-flash', value: 'gemini-2.5-flash' },
-      { title: 'gemini-2.5-pro', value: 'gemini-2.5-pro' },
-      { title: 'gemini-2.0-flash', value: 'gemini-2.0-flash' },
-      { title: 'gemini-1.5-flash', value: 'gemini-1.5-flash' }
+      { title: 'gemini-2.5-flash', value: 'gemini-2.5-flash', subtitle: '1000k ctx' },
+      { title: 'gemini-2.5-pro', value: 'gemini-2.5-pro', subtitle: '2000k ctx' },
+      { title: 'gemini-2.0-flash', value: 'gemini-2.0-flash', subtitle: '1000k ctx' },
+      { title: 'gemini-1.5-flash', value: 'gemini-1.5-flash', subtitle: '1000k ctx' }
     ]
   }
   if (currentProv === 'deepseek') {
     return [
-      { title: 'deepseek-chat', value: 'deepseek-chat' },
-      { title: 'deepseek-reasoner', value: 'deepseek-reasoner' }
+      { title: 'deepseek-chat', value: 'deepseek-chat', subtitle: '64k ctx' },
+      { title: 'deepseek-reasoner', value: 'deepseek-reasoner', subtitle: '64k ctx' }
     ]
   }
   if (currentProv === 'openrouter') {
     return [
-      { title: 'anthropic/claude-3.5-sonnet', value: 'anthropic/claude-3.5-sonnet' },
-      { title: 'meta-llama/llama-3.3-70b-instruct', value: 'meta-llama/llama-3.3-70b-instruct' },
-      { title: 'google/gemini-2.5-flash', value: 'google/gemini-2.5-flash' }
+      { title: 'anthropic/claude-3.5-sonnet', value: 'anthropic/claude-3.5-sonnet', subtitle: '200k ctx' },
+      { title: 'meta-llama/llama-3.3-70b-instruct', value: 'meta-llama/llama-3.3-70b-instruct', subtitle: '128k ctx' },
+      { title: 'google/gemini-2.5-flash', value: 'google/gemini-2.5-flash', subtitle: '1000k ctx' }
     ]
   }
   return [
-    { title: 'gpt-4o-mini', value: 'gpt-4o-mini' },
-    { title: 'gpt-4o', value: 'gpt-4o' },
-    { title: 'o3-mini', value: 'o3-mini' }
+    { title: 'gpt-4o-mini', value: 'gpt-4o-mini', subtitle: '128k ctx' },
+    { title: 'gpt-4o', value: 'gpt-4o', subtitle: '128k ctx' },
+    { title: 'o3-mini', value: 'o3-mini', subtitle: '200k ctx' }
   ]
 })
 
@@ -921,10 +929,15 @@ const fetchAiProviders = async () => {
 
 const fetchModels = async () => {
   try {
-    const res = await axios.get('/models')
+    const res = await axios.get('/models/available')
     availableModels.value = res.data.models || []
   } catch (e) {
-    console.error('Erro ao buscar Modelos:', e)
+    try {
+      const res2 = await axios.get('/models')
+      availableModels.value = res2.data.models || []
+    } catch (e2) {
+      console.error('Erro ao buscar Modelos:', e)
+    }
   }
 }
 

@@ -971,7 +971,11 @@ async function fetchAiProviders() {
   try { aiProvidersList.value = (await axios.get('/ai-providers', { params: { limit: 100 } })).data.providers || [] } catch {}
 }
 async function fetchModels() {
-  try { modelsList.value = (await axios.get('/models')).data.models || [] } catch {}
+  try {
+    modelsList.value = (await axios.get('/models/available')).data.models || []
+  } catch {
+    try { modelsList.value = (await axios.get('/models')).data.models || [] } catch {}
+  }
 }
 async function fetchInformationBases() {
   try { informationBasesList.value = (await axios.get('/information-bases')).data.information_bases || [] } catch {}

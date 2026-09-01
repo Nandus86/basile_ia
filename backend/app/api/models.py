@@ -373,6 +373,7 @@ async def get_all_models(db: Optional[AsyncSession] = None, force_refresh: bool 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
+@router.get("", response_model=ModelsResponse)
 @router.get("/available", response_model=ModelsResponse)
 async def list_available_models(refresh: bool = False, db: AsyncSession = Depends(get_db)):
     """
