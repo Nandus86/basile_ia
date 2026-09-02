@@ -350,6 +350,66 @@
           persistent-hint
           @update:model-value="onOutputSchemaChange"
         ></v-textarea>
+
+        <!-- Memória Conversacional (STM & MTM) for Agent -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="teal">mdi-history</v-icon>Memória Conversacional (STM & MTM)
+          </h4>
+        </div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Carregamento de histórico recente do Redis (STM) e Postgres (MTM), e controle de gravação da resposta.
+        </p>
+        <v-row dense class="mb-1">
+          <v-col cols="6">
+            <v-switch
+              :model-value="nodeConfig.load_stm !== false"
+              @update:model-value="val => { nodeConfig.load_stm = val; }"
+              label="Ler STM (Redis)"
+              color="teal"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+          <v-col cols="6">
+            <v-switch
+              :model-value="nodeConfig.load_mtm !== false"
+              @update:model-value="val => { nodeConfig.load_mtm = val; }"
+              label="Ler MTM (Postgres)"
+              color="indigo"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+        </v-row>
+        <v-row dense class="mb-2" v-if="nodeConfig.load_stm !== false || nodeConfig.load_mtm !== false">
+          <v-col cols="12">
+            <v-slider
+              v-model="nodeConfig.memory_limit"
+              label="Qtd. Mensagens de Histórico"
+              min="2"
+              max="30"
+              step="2"
+              thumb-label="always"
+              color="teal"
+              density="compact"
+              hide-details
+            ></v-slider>
+          </v-col>
+        </v-row>
+        <v-switch
+          :model-value="nodeConfig.save_to_memory !== false"
+          @update:model-value="val => { nodeConfig.save_to_memory = val; }"
+          label="Persistir Resposta na Memória (STM/MTM)"
+          color="success"
+          density="compact"
+          hide-details
+          class="mb-2"
+        ></v-switch>
+        <span class="text-caption text-medium-emphasis d-block mb-3">
+          Ative para gravar a fala deste agente no histórico do WhatsApp. Desative em agentes intermediários de pesquisa.
+        </span>
       </div>
 
       <!-- ── 2. ROUTER / SUPERVISOR NODE PROPERTIES ───────────────────── -->
@@ -558,6 +618,65 @@
             Esta saída será acionada caso a intenção do usuário não corresponda a nenhuma das rotas acima.
           </span>
         </div>
+
+        <!-- Memória Conversacional (STM & MTM) for Router -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="teal">mdi-history</v-icon>Contexto de Conversa (STM & MTM)
+          </h4>
+        </div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Permite ao Roteador ler mensagens anteriores para entender respostas curtas como "Sim", "Não" ou notificações prévias.
+        </p>
+        <v-row dense class="mb-1">
+          <v-col cols="6">
+            <v-switch
+              :model-value="nodeConfig.load_stm !== false"
+              @update:model-value="val => { nodeConfig.load_stm = val; }"
+              label="Ler STM (Redis)"
+              color="teal"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+          <v-col cols="6">
+            <v-switch
+              :model-value="nodeConfig.load_mtm !== false"
+              @update:model-value="val => { nodeConfig.load_mtm = val; }"
+              label="Ler MTM (Postgres)"
+              color="indigo"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+        </v-row>
+        <v-row dense class="mb-2" v-if="nodeConfig.load_stm !== false || nodeConfig.load_mtm !== false">
+          <v-col cols="12">
+            <v-slider
+              v-model="nodeConfig.memory_limit"
+              label="Qtd. Mensagens para Roteamento"
+              min="2"
+              max="20"
+              step="2"
+              thumb-label="always"
+              color="teal"
+              density="compact"
+              hide-details
+            ></v-slider>
+          </v-col>
+        </v-row>
+        <v-switch
+          v-model="nodeConfig.save_to_memory"
+          label="Gravar Decisão na Memória"
+          color="success"
+          density="compact"
+          hide-details
+          class="mb-2"
+        ></v-switch>
+        <span class="text-caption text-medium-emphasis d-block mb-3">
+          (Geralmente desativado para o Roteador para não poluir o chat com decisões internas).
+        </span>
       </div>
 
       <!-- ── 3. PARALLEL FAN-OUT NODE PROPERTIES ──────────────────────── -->
@@ -695,6 +814,46 @@
           hide-details
           class="mb-3"
         ></v-switch>
+
+        <!-- Memória Conversacional (STM & MTM) for Synthesizer -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="teal">mdi-history</v-icon>Memória Conversacional (STM & MTM)
+          </h4>
+        </div>
+        <v-row dense class="mb-1">
+          <v-col cols="6">
+            <v-switch
+              v-model="nodeConfig.load_stm"
+              label="Ler STM (Redis)"
+              color="teal"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+          <v-col cols="6">
+            <v-switch
+              v-model="nodeConfig.load_mtm"
+              label="Ler MTM (Postgres)"
+              color="indigo"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+        </v-row>
+        <v-switch
+          :model-value="nodeConfig.save_to_memory !== false"
+          @update:model-value="val => { nodeConfig.save_to_memory = val; }"
+          label="Persistir Resposta Sintetizada na Memória"
+          color="success"
+          density="compact"
+          hide-details
+          class="mb-2"
+        ></v-switch>
+        <span class="text-caption text-medium-emphasis d-block mb-3">
+          Ative se este sintetizador gerar a resposta final entregue ao membro no WhatsApp.
+        </span>
       </div>
 
       <!-- ── 5. CONDITION / DECISION NODE PROPERTIES ──────────────────── -->
@@ -1145,6 +1304,37 @@
           hide-details
           class="mb-3"
         ></v-switch>
+
+        <!-- Memória Conversacional (STM & MTM) for Judge -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="teal">mdi-history</v-icon>Contexto de Conversa para Avaliação
+          </h4>
+        </div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Permite ao Juiz conferir o histórico recente para avaliar se a resposta faz sentido com a conversa.
+        </p>
+        <v-row dense class="mb-1">
+          <v-col cols="6">
+            <v-switch
+              v-model="nodeConfig.load_stm"
+              label="Ler STM (Redis)"
+              color="teal"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+          <v-col cols="6">
+            <v-switch
+              v-model="nodeConfig.load_mtm"
+              label="Ler MTM (Postgres)"
+              color="indigo"
+              density="compact"
+              hide-details
+            ></v-switch>
+          </v-col>
+        </v-row>
       </div>
 
       <!-- ── 8. TOOL / ACTION NODE PROPERTIES ─────────────────────────── -->

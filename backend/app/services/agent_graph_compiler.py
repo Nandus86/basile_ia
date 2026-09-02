@@ -292,8 +292,25 @@ class AgentGraphCompiler:
                         }
                         llm = factory.create_llm(agent_cfg, session_id=session_id)
 
-                        # 4. Prepare input messages
+                        # 4. Prepare input messages with conversation history (STM / MTM)
+                        load_stm = inline_cfg.get("load_stm", True)
+                        load_mtm = inline_cfg.get("load_mtm", True)
+                        mem_limit = int(inline_cfg.get("memory_limit", 6))
+                        history_items = await self._load_stm_mtm_history(
+                            session_id=session_id,
+                            load_stm=load_stm,
+                            load_mtm=load_mtm,
+                            limit=mem_limit
+                        )
+                        history_msgs: List[BaseMessage] = []
+                        for h in history_items:
+                            if h.get("role") == "user":
+                                history_msgs.append(HumanMessage(content=h.get("content", "")))
+                            else:
+                                history_msgs.append(AIMessage(content=h.get("content", "")))
+
                         input_msgs: List[BaseMessage] = [SystemMessage(content=full_system_prompt)]
+                        input_msgs.extend(history_msgs)
                         for m in state["messages"]:
                             if isinstance(m, BaseMessage):
                                 input_msgs.append(m)
@@ -329,8 +346,10 @@ class AgentGraphCompiler:
                                 tools=tools,
                                 prompt=full_system_prompt,
                             )
+                            react_input_msgs = list(history_msgs)
+                            react_input_msgs.append(HumanMessage(content=state.get("original_message", "")))
                             result = await react_agent.ainvoke(
-                                {'messages': [HumanMessage(content=state.get("original_message", ""))]},
+                                {'messages': react_input_msgs},
                                 config=run_config
                             )
                             exec_messages = result.get('messages', [])
@@ -350,6 +369,15 @@ class AgentGraphCompiler:
                         state["final_output"] = resp_content
                         state["messages"].append(AIMessage(content=resp_content))
                         step_trace.output_data = resp_content
+
+                        # Persist response to STM/MTM if enabled
+                        await self._persist_node_output(
+                            session_id=session_id,
+                            content=resp_content,
+                            node_config=inline_cfg,
+                            node_label=node_label,
+                            context_data=state.get("context_data")
+                        )
 
                     else:
                         # ── SYSTEM AGENT ───────────────────────────────────────
@@ -378,7 +406,24 @@ class AgentGraphCompiler:
                                 if output_schema:
                                     agent_cfg["output_schema"] = output_schema
 
-                                input_msgs = list(state["messages"])
+                                # Load STM / MTM history for System Agent
+                                load_stm = node_config.get("load_stm", True)
+                                load_mtm = node_config.get("load_mtm", True)
+                                mem_limit = int(node_config.get("memory_limit", 6))
+                                history_items = await self._load_stm_mtm_history(
+                                    session_id=session_id,
+                                    load_stm=load_stm,
+                                    load_mtm=load_mtm,
+                                    limit=mem_limit
+                                )
+                                history_msgs: List[BaseMessage] = []
+                                for h in history_items:
+                                    if h.get("role") == "user":
+                                        history_msgs.append(HumanMessage(content=h.get("content", "")))
+                                    else:
+                                        history_msgs.append(AIMessage(content=h.get("content", "")))
+
+                                input_msgs = history_msgs + list(state["messages"])
 
                                 # Inject mapped context
                                 if context_mapping and isinstance(context_mapping, dict):
@@ -413,6 +458,15 @@ class AgentGraphCompiler:
                                 state["final_output"] = resp_content
                                 state["messages"].append(AIMessage(content=resp_content))
                                 step_trace.output_data = resp_content
+
+                                # Persist response to STM/MTM if enabled
+                                await self._persist_node_output(
+                                    session_id=session_id,
+                                    content=resp_content,
+                                    node_config=node_config,
+                                    node_label=node_label,
+                                    context_data=state.get("context_data")
+                                )
                             else:
                                 state["final_output"] = f"Agente '{agent_name}' não encontrado no banco."
                                 step_trace.status = "error"
@@ -488,6 +542,18 @@ class AgentGraphCompiler:
                         state=state
                     )
 
+                    # Load STM / MTM history for Router context
+                    load_stm = node_config.get("load_stm", True)
+                    load_mtm = node_config.get("load_mtm", True)
+                    mem_limit = int(node_config.get("memory_limit", 4))
+                    history_items = await self._load_stm_mtm_history(
+                        session_id=session_id,
+                        load_stm=load_stm,
+                        load_mtm=load_mtm,
+                        limit=mem_limit
+                    )
+                    history_str = self._format_history_for_prompt(history_items)
+
                     if routes:
                         route_descriptions = []
                         for idx, r in enumerate(routes):
@@ -505,8 +571,8 @@ class AgentGraphCompiler:
                         )
 
                         router_prompt = (
-                            f"{supervisor_instruction}{mapped_ctx}{full_ctx}\n\n"
-                            "Analise cuidadosamente a mensagem do usuário (e o estado do fluxo) e escolha exatamente o ID da rota mais apropriada.\n\n"
+                            f"{supervisor_instruction}{history_str}{mapped_ctx}{full_ctx}\n\n"
+                            "Analise cuidadosamente a mensagem do usuário (e o histórico de conversa acima, se houver) e escolha exatamente o ID da rota mais apropriada.\n\n"
                             f"ROTAS DISPONÍVEIS:\n{prompt_routes_str}\n\n"
                             "Responda SOMENTE em JSON com o formato estrito:\n"
                             "{\n"
@@ -543,6 +609,17 @@ class AgentGraphCompiler:
 
                         chosen_id = next_edge.get("target") if next_edge else None
                         step_trace.output_data = f"Roteado para Rota '{chosen_route_id}' -> Nó destino: {chosen_id} (Motivo: {reasoning})"
+                        
+                        # Persist router output if explicitly configured (defaults to False for router)
+                        if node_config.get("save_to_memory"):
+                            await self._persist_node_output(
+                                session_id=session_id,
+                                content=f"Roteado para {chosen_route_id}: {reasoning}",
+                                node_config=node_config,
+                                node_label=node_label,
+                                context_data=state.get("context_data")
+                            )
+
                         state["current_node_id"] = chosen_id
                         step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
                         steps_trace.append(step_trace)
@@ -563,7 +640,7 @@ class AgentGraphCompiler:
                             f"Opções disponíveis:\n" + "\n".join(choices) + "\n\n"
                             "Responda SOMENTE em JSON com o formato: {\"selected_node_id\": \"<ID>\", \"reasoning\": \"<motivo>\"}"
                         )
-                        custom_prompt = resolve_template(raw_prompt, eval_ctx) + mapped_ctx + full_ctx
+                        custom_prompt = resolve_template(raw_prompt, eval_ctx) + history_str + mapped_ctx + full_ctx
                         
                         llm_resp = await node_llm.ainvoke([
                             SystemMessage(content=custom_prompt),
@@ -629,17 +706,39 @@ class AgentGraphCompiler:
                         state=state
                     )
 
+                    # Load STM / MTM history for Synthesizer if configured
+                    load_stm = node_config.get("load_stm", False)
+                    load_mtm = node_config.get("load_mtm", False)
+                    mem_limit = int(node_config.get("memory_limit", 6))
+                    history_items = await self._load_stm_mtm_history(
+                        session_id=session_id,
+                        load_stm=load_stm,
+                        load_mtm=load_mtm,
+                        limit=mem_limit
+                    )
+                    history_str = self._format_history_for_prompt(history_items)
+
                     synth_prompt = resolve_template(node_config.get("prompt") or (
                         "Você é um Sintetizador Especialista. Sua função é consolidar as informações abaixo fornecidas por múltiplos agentes especialistas "
                         "em uma resposta única, coesa, natural e completa para o usuário final.\n\n"
                         f"Mensagem original do usuário: {state['original_message']}\n\n"
                         f"Contribuições dos especialistas:\n{combined_text}"
-                    ), eval_ctx) + mapped_ctx + full_ctx
+                    ), eval_ctx) + history_str + mapped_ctx + full_ctx
 
                     llm_resp = await node_llm.ainvoke([SystemMessage(content=synth_prompt)], config=node_run_config)
-                    state["final_output"] = llm_resp.content
-                    state["messages"].append(AIMessage(content=llm_resp.content))
-                    step_trace.output_data = llm_resp.content
+                    resp_text = llm_resp.content if isinstance(llm_resp.content, str) else str(llm_resp.content)
+                    state["final_output"] = resp_text
+                    state["messages"].append(AIMessage(content=resp_text))
+                    step_trace.output_data = resp_text
+
+                    # Persist synthesized output if save_to_memory is enabled (defaults to True)
+                    await self._persist_node_output(
+                        session_id=session_id,
+                        content=resp_text,
+                        node_config=node_config,
+                        node_label=node_label,
+                        context_data=state.get("context_data")
+                    )
 
                 # ── 7. CONDITION / DECISION NODE ───────────────────────────────
                 elif node_type in ("condition", "decision"):
@@ -668,47 +767,65 @@ class AgentGraphCompiler:
                         criteria_str = resolve_template(node_config.get("criteria") or "A resposta atende à solicitação?", eval_ctx)
                         custom_instructions = resolve_template(node_config.get("prompt") or "", eval_ctx)
                         if custom_instructions:
-                            custom_instructions = f"\nInstruções Adicionais: {custom_instructions}"
+                            custom_instructions = f"\nDiretrizes Adicionais:\n{custom_instructions}\n"
 
-                        eval_prompt = (
-                            f"Você é um Avaliador Lógico de Condições no Grafo de Agentes.\n"
-                            f"Resposta/Mensagem atual: '{state['final_output']}'\n"
-                            f"Critério: {criteria_str}{custom_instructions}{mapped_ctx}{full_ctx}\n\n"
-                            "Responda APENAS 'TRUE' ou 'FALSE'."
+                        cond_prompt = (
+                            "Você é um Avaliador Lógico de Condições. Analise o estado e a mensagem abaixo e responda estritamente com 'true' ou 'false'.\n\n"
+                            f"Mensagem do Usuário: {state['original_message']}\n"
+                            f"Última Resposta Gerada: {state['final_output']}\n"
+                            f"Critério a ser avaliado: {criteria_str}\n"
+                            f"{custom_instructions}"
+                            f"{mapped_ctx}{full_ctx}\n\n"
+                            "Responda EXCLUSIVAMENTE com a palavra 'true' ou 'false'."
                         )
-                        llm_resp = await node_llm.ainvoke([SystemMessage(content=eval_prompt)], config=node_run_config)
+                        llm_resp = await node_llm.ainvoke([SystemMessage(content=cond_prompt)], config=node_run_config)
                         condition_result = "true" in llm_resp.content.lower()
 
-                    step_trace.output_data = f"Resultado da condição: {condition_result}"
-                    
-                    handle_target = "true" if condition_result else "false"
-                    next_edge = next((e for e in adj_list.get(current_node_id, []) if e.get("sourceHandle") == handle_target or e.get("label", "").lower() == handle_target), None)
-                    if not next_edge and adj_list.get(current_node_id):
+                    step_trace.output_data = f"Condição avaliada como: {condition_result}"
+
+                    next_edge = next((
+                        e for e in adj_list.get(current_node_id, [])
+                        if (condition_result and (e.get("sourceHandle") in ("true", "sim", "yes", None) or "true" in e.get("label", "").lower() or "sim" in e.get("label", "").lower()))
+                        or (not condition_result and (e.get("sourceHandle") in ("false", "nao", "não", "no") or "false" in e.get("label", "").lower() or "não" in e.get("label", "").lower()))
+                    ), None)
+
+                    if not next_edge and adj_list.get(current_node_id, []):
                         next_edge = adj_list[current_node_id][0]
-                    
+
                     chosen_id = next_edge.get("target") if next_edge else None
+                    state["current_node_id"] = chosen_id
                     step_trace.duration_ms = round((time.monotonic() - node_start) * 1000, 2)
                     steps_trace.append(step_trace)
                     current_node_id = chosen_id
                     continue
 
-                # ── 8. JUDGE / CURATOR / VERIFIER (LOOP) NODE ───────────────────
-                elif node_type in ("judge", "curator", "verifier", "guardrail"):
-                    retries = state["retry_counts"].get(current_node_id, 0)
-                    max_retries = int(node_config.get("max_retries", 2))
-                    judge_mode = node_config.get("judge_mode", "llm")
+                # ── 8. JUDGE / CURATOR / VERIFIER NODE (Feedback Loops) ─────────
+                elif node_type in ("judge", "curator", "verifier"):
+                    judge_criteria = node_config.get("criteria", "A resposta está completa, precisa, acolhedora e atende à solicitação?")
+                    judge_mode = node_config.get("mode", "llm")
                     agent_judge_id = node_config.get("agent_id")
+                    max_retries = node_config.get("max_retries", 2)
+                    retries = state["retry_counts"].get(current_node_id, 0)
 
-                    node_llm = await self._build_node_llm(node_config, default_temperature=0.2, default_max_tokens=2000, session_id=session_id)
+                    node_llm = await self._build_node_llm(node_config, default_temperature=0.1, default_max_tokens=1000, session_id=session_id)
                     mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+                    judge_criteria = resolve_template(judge_criteria, eval_ctx)
+                    judge_instruction_custom = resolve_template(
+                        node_config.get("prompt") or "Você é o Juiz e Curador de Qualidade do Atendimento.",
+                        eval_ctx
+                    )
 
-                    judge_criteria = resolve_template(node_config.get("criteria") or (
-                        "Verifique se a resposta está precisa, de tom acolhedor e profissional, responde diretamente à pergunta do usuário, "
-                        "não contém erros ou alucinações e cumpre as regras de negócio."
-                    ), eval_ctx)
-                    judge_instruction_custom = resolve_template(node_config.get("prompt") or (
-                        "Você é um Juiz e Curador de Qualidade de Respostas de IA."
-                    ), eval_ctx)
+                    # Load STM / MTM history for Judge if configured
+                    load_stm = node_config.get("load_stm", False)
+                    load_mtm = node_config.get("load_mtm", False)
+                    mem_limit = int(node_config.get("memory_limit", 4))
+                    history_items = await self._load_stm_mtm_history(
+                        session_id=session_id,
+                        load_stm=load_stm,
+                        load_mtm=load_mtm,
+                        limit=mem_limit
+                    )
+                    history_str = self._format_history_for_prompt(history_items)
 
                     is_approved = True
                     feedback = ""
@@ -727,7 +844,7 @@ class AgentGraphCompiler:
                                     f"Critérios de Avaliação: {judge_criteria}\n\n"
                                     f"Pergunta do Usuário: {state['original_message']}\n"
                                     f"Resposta Gerada: {state['final_output']}\n"
-                                    f"{mapped_ctx}{full_ctx}\n\n"
+                                    f"{history_str}{mapped_ctx}{full_ctx}\n\n"
                                     "Avalie a resposta e responda EXCLUSIVAMENTE em formato JSON:\n"
                                     "{\n"
                                     '  "status": "APPROVED" ou "REJECTED",\n'
@@ -759,7 +876,7 @@ class AgentGraphCompiler:
                             f"Mensagem do Usuário: {state['original_message']}\n"
                             f"Resposta Gerada pelo Agente: {state['final_output']}\n\n"
                             f"Critérios de Curadoria / Qualidade:\n{judge_criteria}\n\n"
-                            f"{mapped_ctx}{full_ctx}\n\n"
+                            f"{history_str}{mapped_ctx}{full_ctx}\n\n"
                             "Avalie se a resposta cumpre os critérios e está aprovada para entrega final.\n"
                             "Responda SOMENTE em JSON no seguinte formato estrito:\n"
                             "{\n"
@@ -1077,6 +1194,152 @@ class AgentGraphCompiler:
         if callbacks:
             cfg["callbacks"] = callbacks
         return cfg
+
+    async def _load_stm_mtm_history(
+        self,
+        session_id: Optional[str],
+        load_stm: bool = True,
+        load_mtm: bool = True,
+        limit: int = 6
+    ) -> List[Dict[str, Any]]:
+        """
+        Loads recent conversation history from Redis (STM) and/or PostgreSQL (MTM).
+        Returns a list of dicts: [{"role": "user"|"assistant", "content": "..."}] in chronological order.
+        """
+        if not session_id or (not load_stm and not load_mtm):
+            return []
+
+        history: List[Dict[str, Any]] = []
+
+        # 1. Read from Redis (STM - Short Term Memory)
+        if load_stm:
+            try:
+                from app.redis_client import redis_client
+                stm_raw = await redis_client.get_conversation(str(session_id), limit=limit)
+                if stm_raw:
+                    for item in stm_raw:
+                        if isinstance(item, dict) and item.get("content"):
+                            history.append({
+                                "role": item.get("role", "user"),
+                                "content": item.get("content", ""),
+                                "source": "STM"
+                            })
+            except Exception as stm_err:
+                logger.warning(f"[AgentGraphCompiler] Erro ao carregar STM de {session_id}: {stm_err}")
+
+        # 2. Read from PostgreSQL (MTM - Medium Term Memory) if requested
+        if load_mtm:
+            try:
+                from app.models.conversation_message import ConversationMessage
+                stmt = (
+                    select(ConversationMessage)
+                    .where(ConversationMessage.session_id == str(session_id))
+                    .order_by(ConversationMessage.created_at.desc())
+                    .limit(limit)
+                )
+                res = await self.db.execute(stmt)
+                rows = res.scalars().all()
+                mtm_msgs = []
+                for r in reversed(rows):
+                    mtm_msgs.append({
+                        "role": "assistant" if r.role in ("assistant", "fromMe", "supportResponse") else "user",
+                        "content": r.content,
+                        "source": "MTM"
+                    })
+                
+                if not history:
+                    history = mtm_msgs
+                else:
+                    existing_contents = {m["content"] for m in history}
+                    for m in mtm_msgs:
+                        if m["content"] not in existing_contents:
+                            history.insert(0, m)
+                            existing_contents.add(m["content"])
+            except Exception as mtm_err:
+                logger.warning(f"[AgentGraphCompiler] Erro ao carregar MTM de {session_id}: {mtm_err}")
+
+        return history[-limit:] if limit > 0 else history
+
+    def _format_history_for_prompt(self, history: List[Dict[str, Any]]) -> str:
+        """Formats conversation history items as a markdown block for system/router prompts"""
+        if not history:
+            return ""
+        lines = []
+        for h in history:
+            role_label = "Membro" if h.get("role") == "user" else "Igreja / Assistente"
+            lines.append(f"- [{role_label}]: {h.get('content', '')}")
+        return (
+            f"\n\n## 📜 Histórico Recente da Conversa (STM / MTM):\n"
+            f"Use o histórico abaixo para entender referências a mensagens anteriores, respostas a perguntas feitas pela igreja ou continuidade do assunto:\n"
+            + "\n".join(lines) + "\n"
+        )
+
+    async def _persist_node_output(
+        self,
+        session_id: Optional[str],
+        content: str,
+        node_config: Dict[str, Any],
+        node_label: str,
+        context_data: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Persists the assistant response to Redis (STM) and PostgreSQL (MTM)
+        when save_to_memory is enabled for this node.
+        """
+        if not session_id or not content or not node_config.get("save_to_memory", True):
+            return
+
+        # 1. Save to Redis (STM)
+        try:
+            from app.redis_client import redis_client
+            ttl_seconds = int(node_config.get("stm_ttl_seconds", 86400))
+            await redis_client.add_message(
+                session_id=str(session_id),
+                role="assistant",
+                content=content,
+                ttl_seconds=ttl_seconds
+            )
+            logger.info(f"[AgentGraphCompiler] 💾 Saída de '{node_label}' salva no STM (Redis) para sessão {session_id}")
+        except Exception as redis_err:
+            logger.warning(f"[AgentGraphCompiler] Erro ao salvar STM em Redis: {redis_err}")
+
+        # 2. Save to PostgreSQL (MTM)
+        try:
+            from app.models.conversation_message import ConversationMessage
+            from app.models.agent import Agent
+            import uuid
+
+            target_agent_id = None
+            if node_config.get("agent_id"):
+                try:
+                    target_agent_id = uuid.UUID(str(node_config["agent_id"]))
+                except Exception:
+                    pass
+
+            if not target_agent_id and context_data and context_data.get("agent_id"):
+                try:
+                    target_agent_id = uuid.UUID(str(context_data["agent_id"]))
+                except Exception:
+                    pass
+
+            if not target_agent_id:
+                agent_res = await self.db.execute(select(Agent.id).limit(1))
+                target_agent_id = agent_res.scalar_one_or_none()
+
+            if target_agent_id:
+                msg = ConversationMessage(
+                    id=uuid.uuid4(),
+                    agent_id=target_agent_id,
+                    session_id=str(session_id),
+                    role="assistant",
+                    content=content,
+                    webhook_path=f"agent_graph/{node_label}"
+                )
+                self.db.add(msg)
+                await self.db.commit()
+                logger.info(f"[AgentGraphCompiler] 💾 Saída de '{node_label}' salva no MTM (Postgres) para sessão {session_id}")
+        except Exception as mtm_err:
+            logger.warning(f"[AgentGraphCompiler] Erro ao salvar MTM em Postgres: {mtm_err}")
 
     async def _get_agent_by_id(self, agent_id: str) -> Optional[Agent]:
         """Fetch agent model by ID with relationships"""

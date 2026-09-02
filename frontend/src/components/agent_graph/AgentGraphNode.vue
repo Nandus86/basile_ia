@@ -93,6 +93,36 @@
               >
                 <v-icon start size="10">mdi-code-brackets</v-icon>JSON
               </v-chip>
+              <v-chip
+                v-if="data.config?.load_stm !== false && data.config?.load_stm !== undefined"
+                size="x-small"
+                variant="tonal"
+                color="teal"
+                density="compact"
+                title="Lê Memória STM (Redis)"
+              >
+                STM
+              </v-chip>
+              <v-chip
+                v-if="data.config?.load_mtm !== false && data.config?.load_mtm !== undefined"
+                size="x-small"
+                variant="tonal"
+                color="indigo"
+                density="compact"
+                title="Lê Memória MTM (Postgres)"
+              >
+                MTM
+              </v-chip>
+              <v-chip
+                v-if="data.config?.save_to_memory !== false && data.config?.save_to_memory !== undefined"
+                size="x-small"
+                variant="tonal"
+                color="success"
+                density="compact"
+                title="Grava resposta na Memória (Chat)"
+              >
+                💾 Salva
+              </v-chip>
             </div>
           </div>
 
@@ -104,7 +134,7 @@
                 {{ data.config?.agent_name || 'Selecione um agente...' }}
               </span>
             </div>
-            <div v-if="data.config?.context_mapping || data.config?.use_structured_output" class="d-flex align-center ga-1 flex-wrap mt-1">
+            <div class="d-flex align-center ga-1 flex-wrap mt-1">
               <v-chip
                 v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
                 size="x-small"
@@ -124,6 +154,36 @@
                 title="Saída Estruturada (JSON)"
               >
                 <v-icon start size="10">mdi-code-brackets</v-icon>JSON
+              </v-chip>
+              <v-chip
+                v-if="data.config?.load_stm !== false && data.config?.load_stm !== undefined"
+                size="x-small"
+                variant="tonal"
+                color="teal"
+                density="compact"
+                title="Lê Memória STM (Redis)"
+              >
+                STM
+              </v-chip>
+              <v-chip
+                v-if="data.config?.load_mtm !== false && data.config?.load_mtm !== undefined"
+                size="x-small"
+                variant="tonal"
+                color="indigo"
+                density="compact"
+                title="Lê Memória MTM (Postgres)"
+              >
+                MTM
+              </v-chip>
+              <v-chip
+                v-if="data.config?.save_to_memory !== false && data.config?.save_to_memory !== undefined"
+                size="x-small"
+                variant="tonal"
+                color="success"
+                density="compact"
+                title="Grava resposta na Memória (Chat)"
+              >
+                💾 Salva
               </v-chip>
             </div>
           </div>
@@ -162,6 +222,26 @@
               title="Schema de Payload configurado"
             >
               <v-icon start size="10">mdi-code-json</v-icon>Schema
+            </v-chip>
+            <v-chip
+              v-if="data.config?.load_stm !== false && data.config?.load_stm !== undefined"
+              size="x-small"
+              variant="tonal"
+              color="teal"
+              density="compact"
+              title="Lê Memória STM (Redis)"
+            >
+              STM
+            </v-chip>
+            <v-chip
+              v-if="data.config?.load_mtm !== false && data.config?.load_mtm !== undefined"
+              size="x-small"
+              variant="tonal"
+              color="indigo"
+              density="compact"
+              title="Lê Memória MTM (Postgres)"
+            >
+              MTM
             </v-chip>
           </div>
           <div v-if="routesList.length > 0" class="router-routes-container mt-1">
@@ -217,6 +297,33 @@
               density="compact"
             >
               <v-icon start size="10">mdi-code-json</v-icon>Schema
+            </v-chip>
+            <v-chip
+              v-if="data.config?.load_stm"
+              size="x-small"
+              variant="tonal"
+              color="teal"
+              density="compact"
+            >
+              STM
+            </v-chip>
+            <v-chip
+              v-if="data.config?.load_mtm"
+              size="x-small"
+              variant="tonal"
+              color="indigo"
+              density="compact"
+            >
+              MTM
+            </v-chip>
+            <v-chip
+              v-if="data.config?.save_to_memory !== false && data.config?.save_to_memory !== undefined"
+              size="x-small"
+              variant="tonal"
+              color="success"
+              density="compact"
+            >
+              💾 Salva
             </v-chip>
           </div>
           <span>Consolida respostas paralelas</span>
