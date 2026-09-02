@@ -465,6 +465,9 @@ class AgentGraphCompiler:
                     outgoing_edges = adj_list.get(current_node_id, [])
                     routes = node_config.get("routes", [])
 
+                    node_llm = await self._build_node_llm(node_config, default_temperature=0.2, default_max_tokens=1500, session_id=session_id)
+                    mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+
                     if routes:
                         route_descriptions = []
                         for idx, r in enumerate(routes):
@@ -476,10 +479,13 @@ class AgentGraphCompiler:
                         route_descriptions.append('- ID: "default" | Nome: "Outro / Fallback" | Quando acionar: Nenhuma das rotas acima corresponde adequadamente à intenção da mensagem.')
 
                         prompt_routes_str = "\n".join(route_descriptions)
-                        supervisor_instruction = node_config.get("prompt") or "Você é o Supervisor e Roteador Inteligente do Grafo de Agentes."
+                        supervisor_instruction = resolve_template(
+                            node_config.get("prompt") or "Você é o Supervisor e Roteador Inteligente do Grafo de Agentes.",
+                            eval_ctx
+                        )
 
                         router_prompt = (
-                            f"{supervisor_instruction}\n\n"
+                            f"{supervisor_instruction}{mapped_ctx}{full_ctx}\n\n"
                             "Analise cuidadosamente a mensagem do usuário (e o estado do fluxo) e escolha exatamente o ID da rota mais apropriada.\n\n"
                             f"ROTAS DISPONÍVEIS:\n{prompt_routes_str}\n\n"
                             "Responda SOMENTE em JSON com o formato estrito:\n"
@@ -489,7 +495,7 @@ class AgentGraphCompiler:
                             "}"
                         )
 
-                        llm_resp = await self.llm_default.ainvoke([
+                        llm_resp = await node_llm.ainvoke([
                             SystemMessage(content=router_prompt),
                             HumanMessage(content=state["original_message"])
                         ])
@@ -532,13 +538,14 @@ class AgentGraphCompiler:
                             t_desc = target_node.get("data", {}).get("description", "")
                             choices.append(f"- ID '{target_id}': {t_label} ({t_desc})")
 
-                        custom_prompt = node_config.get("prompt") or (
+                        raw_prompt = node_config.get("prompt") or (
                             "Você é o Supervisor do Grafo de Agentes. Analise a mensagem do usuário e escolha exatamente o ID do nó de destino mais apropriado.\n"
                             f"Opções disponíveis:\n" + "\n".join(choices) + "\n\n"
                             "Responda SOMENTE em JSON com o formato: {\"selected_node_id\": \"<ID>\", \"reasoning\": \"<motivo>\"}"
                         )
+                        custom_prompt = resolve_template(raw_prompt, eval_ctx) + mapped_ctx + full_ctx
                         
-                        llm_resp = await self.llm_default.ainvoke([
+                        llm_resp = await node_llm.ainvoke([
                             SystemMessage(content=custom_prompt),
                             HumanMessage(content=state["original_message"])
                         ])
@@ -590,13 +597,17 @@ class AgentGraphCompiler:
                     if not combined_text:
                         combined_text = state.get("final_output", "")
 
-                    synth_prompt = node_config.get("prompt") or (
+                    node_llm = await self._build_node_llm(node_config, default_temperature=0.6, default_max_tokens=2500, session_id=session_id)
+                    mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+
+                    synth_prompt = resolve_template(node_config.get("prompt") or (
                         "Você é um Sintetizador Especialista. Sua função é consolidar as informações abaixo fornecidas por múltiplos agentes especialistas "
                         "em uma resposta única, coesa, natural e completa para o usuário final.\n\n"
                         f"Mensagem original do usuário: {state['original_message']}\n\n"
                         f"Contribuições dos especialistas:\n{combined_text}"
-                    )
-                    llm_resp = await self.llm_default.ainvoke([SystemMessage(content=synth_prompt)])
+                    ), eval_ctx) + mapped_ctx + full_ctx
+
+                    llm_resp = await node_llm.ainvoke([SystemMessage(content=synth_prompt)])
                     state["final_output"] = llm_resp.content
                     state["messages"].append(AIMessage(content=llm_resp.content))
                     step_trace.output_data = llm_resp.content
@@ -613,12 +624,21 @@ class AgentGraphCompiler:
                         pattern = node_config.get("regex", "")
                         condition_result = bool(re.search(pattern, state["final_output"])) if pattern else True
                     else:
-                        eval_prompt = node_config.get("prompt") or (
-                            f"Avalie a resposta atual: '{state['final_output']}'. "
-                            f"Critério: {node_config.get('criteria', 'A resposta atende à solicitação?')}. "
+                        node_llm = await self._build_node_llm(node_config, default_temperature=0.1, default_max_tokens=500, session_id=session_id)
+                        mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+
+                        criteria_str = resolve_template(node_config.get("criteria") or "A resposta atende à solicitação?", eval_ctx)
+                        custom_instructions = resolve_template(node_config.get("prompt") or "", eval_ctx)
+                        if custom_instructions:
+                            custom_instructions = f"\nInstruções Adicionais: {custom_instructions}"
+
+                        eval_prompt = (
+                            f"Você é um Avaliador Lógico de Condições no Grafo de Agentes.\n"
+                            f"Resposta/Mensagem atual: '{state['final_output']}'\n"
+                            f"Critério: {criteria_str}{custom_instructions}{mapped_ctx}{full_ctx}\n\n"
                             "Responda APENAS 'TRUE' ou 'FALSE'."
                         )
-                        llm_resp = await self.llm_default.ainvoke([SystemMessage(content=eval_prompt)])
+                        llm_resp = await node_llm.ainvoke([SystemMessage(content=eval_prompt)])
                         condition_result = "true" in llm_resp.content.lower()
 
                     step_trace.output_data = f"Resultado da condição: {condition_result}"
@@ -638,12 +658,19 @@ class AgentGraphCompiler:
                 elif node_type in ("judge", "curator", "verifier", "guardrail"):
                     retries = state["retry_counts"].get(current_node_id, 0)
                     max_retries = int(node_config.get("max_retries", 2))
-                    judge_criteria = node_config.get("criteria") or (
-                        "Verifique se a resposta está precisa, de tom acolhedor e profissional, responde diretamente à pergunta do usuário, "
-                        "não contém erros ou alucinações e cumpre as regras de negócio."
-                    )
                     judge_mode = node_config.get("judge_mode", "llm")
                     agent_judge_id = node_config.get("agent_id")
+
+                    node_llm = await self._build_node_llm(node_config, default_temperature=0.2, default_max_tokens=2000, session_id=session_id)
+                    mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+
+                    judge_criteria = resolve_template(node_config.get("criteria") or (
+                        "Verifique se a resposta está precisa, de tom acolhedor e profissional, responde diretamente à pergunta do usuário, "
+                        "não contém erros ou alucinações e cumpre as regras de negócio."
+                    ), eval_ctx)
+                    judge_instruction_custom = resolve_template(node_config.get("prompt") or (
+                        "Você é um Juiz e Curador de Qualidade de Respostas de IA."
+                    ), eval_ctx)
 
                     is_approved = True
                     feedback = ""
@@ -661,7 +688,8 @@ class AgentGraphCompiler:
                                     f"Você é o Juiz e Curador de Qualidade ({agent_obj.name}).\n"
                                     f"Critérios de Avaliação: {judge_criteria}\n\n"
                                     f"Pergunta do Usuário: {state['original_message']}\n"
-                                    f"Resposta Gerada: {state['final_output']}\n\n"
+                                    f"Resposta Gerada: {state['final_output']}\n"
+                                    f"{mapped_ctx}{full_ctx}\n\n"
                                     "Avalie a resposta e responda EXCLUSIVAMENTE em formato JSON:\n"
                                     "{\n"
                                     '  "status": "APPROVED" ou "REJECTED",\n'
@@ -689,10 +717,11 @@ class AgentGraphCompiler:
                             is_approved = True
                     else:
                         v_prompt = (
-                            f"Você é um Juiz e Curador de Qualidade de Respostas de IA.\n\n"
+                            f"{judge_instruction_custom}\n\n"
                             f"Mensagem do Usuário: {state['original_message']}\n"
                             f"Resposta Gerada pelo Agente: {state['final_output']}\n\n"
                             f"Critérios de Curadoria / Qualidade:\n{judge_criteria}\n\n"
+                            f"{mapped_ctx}{full_ctx}\n\n"
                             "Avalie se a resposta cumpre os critérios e está aprovada para entrega final.\n"
                             "Responda SOMENTE em JSON no seguinte formato estrito:\n"
                             "{\n"
@@ -701,7 +730,7 @@ class AgentGraphCompiler:
                             '  "feedback": "<instruções cirúrgicas e específicas do que o agente deve corrigir caso rejeitado, ou breve resumo de aprovação>"\n'
                             "}"
                         )
-                        llm_resp = await self.llm_default.ainvoke([SystemMessage(content=v_prompt)])
+                        llm_resp = await node_llm.ainvoke([SystemMessage(content=v_prompt)])
                         try:
                             clean_json = re.search(r'\{.*\}', llm_resp.content, re.DOTALL)
                             if clean_json:
@@ -842,6 +871,94 @@ class AgentGraphCompiler:
                             context_data=state["context_data"]
                         )
         return f"Sub-nó {node.get('id')} executado"
+
+    async def _build_node_llm(
+        self,
+        node_config: Dict[str, Any],
+        default_temperature: float = 0.5,
+        default_max_tokens: int = 2000,
+        session_id: Optional[str] = None
+    ):
+        """
+        Builds an LLM dynamically for ANY agentic node (router, judge, synthesizer, condition, etc.)
+        using the node's configured provider, model, temperature, and max_tokens.
+        Falls back to self.llm_default if no custom model is configured.
+        """
+        provider_id = node_config.get("provider_id")
+        model_name = node_config.get("model")
+
+        if not provider_id and not model_name:
+            return self.llm_default
+
+        from app.orchestrator.agent_factory import AgentFactory
+        factory = AgentFactory(self.db)
+
+        provider_obj = None
+        if provider_id:
+            if str(provider_id).lower() in ("openai", "google", "deepseek", "openrouter"):
+                provider_obj = str(provider_id).lower()
+            else:
+                from app.models.ai_provider import AIProvider
+                try:
+                    prov_res = await self.db.execute(select(AIProvider).where(AIProvider.id == UUID(str(provider_id))))
+                    provider_obj = prov_res.scalar_one_or_none()
+                except Exception:
+                    provider_obj = provider_id
+
+        agent_cfg = {
+            "id": f"node_llm_{node_config.get('id', 'custom')}",
+            "name": node_config.get("name", "NodeLLM"),
+            "model": model_name or "gpt-4o-mini",
+            "temperature": float(node_config.get("temperature", default_temperature)),
+            "max_tokens": int(node_config.get("max_tokens", default_max_tokens)),
+            "provider": provider_obj or provider_id or "openai",
+            "config": node_config.get("config", {}) or {},
+        }
+        if node_config.get("output_schema"):
+            agent_cfg["output_schema"] = node_config["output_schema"]
+
+        return factory.create_llm(agent_cfg, session_id=session_id)
+
+    def _resolve_context_and_schema(
+        self,
+        node_config: Dict[str, Any],
+        state: AgentGraphState
+    ) -> tuple[str, str, Dict[str, Any]]:
+        """
+        Resolves context mapping, full context injection, and returns (mapped_context_str, full_context_str, eval_ctx)
+        """
+        from app.services.workflow_engine import resolve_template
+
+        context_mapping = node_config.get("context_mapping")
+        inject_full_context = node_config.get("inject_full_context", True)
+
+        eval_ctx = {
+            "$trigger": {"payload": state.get("context_data", {}) or {}},
+            "$request": state.get("context_data", {}) or {},
+            **(state.get("context_data", {}) or {}),
+            **{k: v for k, v in state.items() if k not in ("messages", "loop_feedbacks")}
+        }
+
+        mapped_context_str = ""
+        if context_mapping and isinstance(context_mapping, dict):
+            resolved_mapping = {}
+            for k, v in context_mapping.items():
+                resolved_mapping[k] = resolve_template(v, eval_ctx)
+            mapped_context_str = (
+                f"\n\n## 📋 Dados Mapeados do Payload (Schema):\n"
+                f"```json\n{json.dumps(resolved_mapping, ensure_ascii=False, indent=2)}\n```\n"
+            )
+
+        full_context_str = ""
+        if inject_full_context and state.get("context_data"):
+            safe_ctx = {k: v for k, v in state["context_data"].items() if not str(k).startswith("_")}
+            if safe_ctx:
+                full_context_str = (
+                    f"\n\n## 🌐 Contexto Global / Igreja:\n"
+                    f"<context_data>\n{json.dumps(safe_ctx, ensure_ascii=False, default=str)}\n</context_data>\n"
+                )
+
+        return mapped_context_str, full_context_str, eval_ctx
 
     async def _get_agent_by_id(self, agent_id: str) -> Optional[Agent]:
         """Fetch agent model by ID with relationships"""

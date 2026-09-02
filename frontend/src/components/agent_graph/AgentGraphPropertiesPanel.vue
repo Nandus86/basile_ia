@@ -356,7 +356,7 @@
       <div v-else-if="nodeType === 'router' || nodeType === 'supervisor'">
         <div class="d-flex align-center justify-space-between mb-2">
           <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
-            <v-icon size="16" color="purple">mdi-source-branch</v-icon>Rotas do Supervisor
+            <v-icon size="16" color="purple">mdi-source-branch</v-icon>Supervisor & Roteador
           </h4>
           <v-btn size="x-small" variant="tonal" color="purple" prepend-icon="mdi-plus" @click="addRoute">
             Adicionar Rota
@@ -365,8 +365,133 @@
 
         <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
           <v-icon start size="14">mdi-information</v-icon>
-          O supervisor analisará a mensagem e escolherá dinamicamente a rota ideal com base no <strong>Nome</strong> e na <strong>Descrição de quando chamar</strong> de cada rota.
+          O supervisor analisará a mensagem e escolherá dinamicamente a rota ideal com base nas instruções e rotas semânticas.
         </v-alert>
+
+        <!-- LLM Model & Provider Selection -->
+        <h5 class="text-caption font-weight-bold text-medium-emphasis mb-1">Modelo de IA do Roteador:</h5>
+        <v-row dense class="mb-2">
+          <v-col cols="6">
+            <v-select
+              v-model="nodeConfig.provider_id"
+              :items="providerOptions"
+              label="Provedor LLM"
+              variant="outlined"
+              density="compact"
+              hide-details
+            ></v-select>
+          </v-col>
+          <v-col cols="6">
+            <v-autocomplete
+              v-model="nodeConfig.model"
+              :items="getNodeModelOptions(nodeConfig.provider_id)"
+              label="Modelo"
+              variant="outlined"
+              density="compact"
+              hide-details
+              clearable
+              no-data-text="Nenhum modelo encontrado"
+            >
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props" :subtitle="item.raw.subtitle || item.raw.value"></v-list-item>
+              </template>
+            </v-autocomplete>
+          </v-col>
+        </v-row>
+
+        <v-row dense class="mb-2">
+          <v-col cols="6">
+            <v-text-field
+              v-model.number="nodeConfig.temperature"
+              label="Temperatura"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              variant="outlined"
+              density="compact"
+              hide-details
+              placeholder="0.2"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="6">
+            <v-text-field
+              v-model.number="nodeConfig.max_tokens"
+              label="Max Tokens"
+              type="number"
+              min="100"
+              max="128000"
+              step="100"
+              variant="outlined"
+              density="compact"
+              hide-details
+              placeholder="1500"
+            ></v-text-field>
+          </v-col>
+        </v-row>
+
+        <v-textarea
+          v-model="nodeConfig.prompt"
+          label="Instruções Principais do Supervisor (Prompt)"
+          variant="outlined"
+          density="compact"
+          rows="4"
+          class="mb-3 monospace-field"
+          placeholder="Você é o Supervisor e Roteador da Igreja. Analise a mensagem do usuário e escolha a rota..."
+          hint="Prompt com regras e diretrizes que o roteador usará para decidir a rota"
+          persistent-hint
+        ></v-textarea>
+
+        <!-- Context & Payload Schema for Router -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="cyan">mdi-code-json</v-icon>Schema do Payload / Contexto
+          </h4>
+          <v-btn size="x-small" variant="tonal" color="cyan" prepend-icon="mdi-magic-staff" @click="insertDefaultPayloadSchema">
+            Exemplo Igreja
+          </v-btn>
+        </div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Defina quais dados do payload o supervisor deve receber para tomar a decisão correta.
+        </p>
+        <div class="mb-2 d-flex flex-wrap ga-1">
+          <v-chip
+            v-for="chip in quickTemplateChips"
+            :key="chip.token"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+            class="cursor-pointer"
+            @click="insertTemplateToken(chip.token)"
+          >
+            + {{ chip.label }}
+          </v-chip>
+        </div>
+        <v-textarea
+          v-model="contextMappingJson"
+          label="Mapeamento de Contexto (JSON)"
+          placeholder='{\n  "user_name": "{{ member.name }}",\n  "user_role": "{{ member_fin.role_profile }}"\n}'
+          variant="outlined"
+          density="compact"
+          rows="3"
+          class="mb-3 monospace-field"
+          @update:model-value="onContextMappingChange"
+        ></v-textarea>
+        <v-switch
+          :model-value="nodeConfig.inject_full_context !== false"
+          @update:model-value="val => { nodeConfig.inject_full_context = val; }"
+          label="Injetar Payload Completo (<context_data>)"
+          color="cyan"
+          density="compact"
+          hide-details
+          class="mb-3"
+        ></v-switch>
+
+        <v-divider class="my-3"></v-divider>
+        <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
+          <v-icon size="16" color="purple">mdi-call-split</v-icon>Rotas Semânticas de Saída
+        </h4>
 
         <!-- Dynamic Routes List -->
         <div
@@ -433,17 +558,6 @@
             Esta saída será acionada caso a intenção do usuário não corresponda a nenhuma das rotas acima.
           </span>
         </div>
-
-        <v-textarea
-          v-model="nodeConfig.prompt"
-          label="Instruções Adicionais do Supervisor (Opcional)"
-          variant="outlined"
-          density="compact"
-          rows="3"
-          placeholder="Ex: Dê preferência ao especialista financeiro se houver qualquer dúvida sobre valores..."
-          hint="Será incorporado ao prompt de decisão do roteador"
-          persistent-hint
-        ></v-textarea>
       </div>
 
       <!-- ── 3. PARALLEL FAN-OUT NODE PROPERTIES ──────────────────────── -->
@@ -461,16 +575,126 @@
         <h4 class="text-subtitle-2 font-weight-bold mb-2 d-flex align-center ga-1">
           <v-icon size="16" color="pink">mdi-call-merge</v-icon>Sintetizador de Respostas
         </h4>
+
+        <!-- LLM Model & Provider Selection -->
+        <h5 class="text-caption font-weight-bold text-medium-emphasis mb-1">Modelo de IA do Sintetizador:</h5>
+        <v-row dense class="mb-2">
+          <v-col cols="6">
+            <v-select
+              v-model="nodeConfig.provider_id"
+              :items="providerOptions"
+              label="Provedor LLM"
+              variant="outlined"
+              density="compact"
+              hide-details
+            ></v-select>
+          </v-col>
+          <v-col cols="6">
+            <v-autocomplete
+              v-model="nodeConfig.model"
+              :items="getNodeModelOptions(nodeConfig.provider_id)"
+              label="Modelo"
+              variant="outlined"
+              density="compact"
+              hide-details
+              clearable
+              no-data-text="Nenhum modelo encontrado"
+            >
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props" :subtitle="item.raw.subtitle || item.raw.value"></v-list-item>
+              </template>
+            </v-autocomplete>
+          </v-col>
+        </v-row>
+
+        <v-row dense class="mb-2">
+          <v-col cols="6">
+            <v-text-field
+              v-model.number="nodeConfig.temperature"
+              label="Temperatura"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              variant="outlined"
+              density="compact"
+              hide-details
+              placeholder="0.6"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="6">
+            <v-text-field
+              v-model.number="nodeConfig.max_tokens"
+              label="Max Tokens"
+              type="number"
+              min="100"
+              max="128000"
+              step="100"
+              variant="outlined"
+              density="compact"
+              hide-details
+              placeholder="2500"
+            ></v-text-field>
+          </v-col>
+        </v-row>
+
         <v-textarea
           v-model="nodeConfig.prompt"
-          label="Prompt de Consolidação"
+          label="Prompt de Consolidação (Instrução)"
           variant="outlined"
           density="compact"
           rows="4"
-          placeholder="Você é o Sintetizador. Consolide as respostas dos especialistas em uma única mensagem clara..."
+          class="mb-3 monospace-field"
+          placeholder="Você é o Sintetizador Especialista. Consolide as respostas dos especialistas em uma única mensagem clara, coesa e acolhedora..."
           hint="Unifica as saídas paralelas em uma resposta coesa"
           persistent-hint
         ></v-textarea>
+
+        <!-- Context & Payload Schema for Synthesizer -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="cyan">mdi-code-json</v-icon>Schema do Payload / Contexto
+          </h4>
+          <v-btn size="x-small" variant="tonal" color="cyan" prepend-icon="mdi-magic-staff" @click="insertDefaultPayloadSchema">
+            Exemplo Igreja
+          </v-btn>
+        </div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Campos de contexto fornecidos para enriquecer a síntese final.
+        </p>
+        <div class="mb-2 d-flex flex-wrap ga-1">
+          <v-chip
+            v-for="chip in quickTemplateChips"
+            :key="chip.token"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+            class="cursor-pointer"
+            @click="insertTemplateToken(chip.token)"
+          >
+            + {{ chip.label }}
+          </v-chip>
+        </div>
+        <v-textarea
+          v-model="contextMappingJson"
+          label="Mapeamento de Contexto (JSON)"
+          placeholder='{\n  "user_name": "{{ member.name }}",\n  "church_name": "{{ church.church_name }}"\n}'
+          variant="outlined"
+          density="compact"
+          rows="3"
+          class="mb-3 monospace-field"
+          @update:model-value="onContextMappingChange"
+        ></v-textarea>
+        <v-switch
+          :model-value="nodeConfig.inject_full_context !== false"
+          @update:model-value="val => { nodeConfig.inject_full_context = val; }"
+          label="Injetar Payload Completo (<context_data>)"
+          color="cyan"
+          density="compact"
+          hide-details
+          class="mb-3"
+        ></v-switch>
       </div>
 
       <!-- ── 5. CONDITION / DECISION NODE PROPERTIES ──────────────────── -->
@@ -492,15 +716,134 @@
           class="mb-3"
         ></v-select>
 
-        <v-textarea
-          v-if="nodeConfig.mode === 'llm' || !nodeConfig.mode"
-          v-model="nodeConfig.criteria"
-          label="Critério de Avaliação (Pergunta Sim/Não)"
-          variant="outlined"
-          density="compact"
-          rows="3"
-          placeholder="Ex: O usuário solicitou informações financeiras ou relatórios?"
-        ></v-textarea>
+        <template v-if="nodeConfig.mode === 'llm' || !nodeConfig.mode">
+          <!-- LLM Model & Provider Selection -->
+          <h5 class="text-caption font-weight-bold text-medium-emphasis mb-1">Modelo de IA de Decisão:</h5>
+          <v-row dense class="mb-2">
+            <v-col cols="6">
+              <v-select
+                v-model="nodeConfig.provider_id"
+                :items="providerOptions"
+                label="Provedor"
+                variant="outlined"
+                density="compact"
+                hide-details
+              ></v-select>
+            </v-col>
+            <v-col cols="6">
+              <v-autocomplete
+                v-model="nodeConfig.model"
+                :items="getNodeModelOptions(nodeConfig.provider_id)"
+                label="Modelo"
+                variant="outlined"
+                density="compact"
+                hide-details
+                clearable
+                no-data-text="Nenhum modelo encontrado"
+              >
+                <template v-slot:item="{ props, item }">
+                  <v-list-item v-bind="props" :subtitle="item.raw.subtitle || item.raw.value"></v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+          </v-row>
+
+          <v-row dense class="mb-2">
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="nodeConfig.temperature"
+                label="Temperatura"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                variant="outlined"
+                density="compact"
+                hide-details
+                placeholder="0.1"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="nodeConfig.max_tokens"
+                label="Max Tokens"
+                type="number"
+                min="50"
+                max="128000"
+                step="50"
+                variant="outlined"
+                density="compact"
+                hide-details
+                placeholder="500"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+
+          <v-textarea
+            v-model="nodeConfig.criteria"
+            label="Critério de Avaliação (Pergunta Sim/Não) *"
+            variant="outlined"
+            density="compact"
+            rows="3"
+            class="mb-2 monospace-field"
+            placeholder="Ex: O usuário solicitou informações financeiras ou relatórios?"
+            hint="A IA avaliará a mensagem/resposta com base nesta pergunta e responderá Verdadeiro ou Falso"
+            persistent-hint
+          ></v-textarea>
+
+          <v-textarea
+            v-model="nodeConfig.prompt"
+            label="Instruções Adicionais de Decisão (Opcional)"
+            variant="outlined"
+            density="compact"
+            rows="2"
+            class="mb-3 monospace-field"
+            placeholder="Ex: Leve em consideração também as permissões do usuário..."
+          ></v-textarea>
+
+          <!-- Context & Payload Schema for Decision -->
+          <v-divider class="my-3"></v-divider>
+          <div class="d-flex align-center justify-space-between mb-1">
+            <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+              <v-icon size="16" color="cyan">mdi-code-json</v-icon>Schema do Payload / Contexto
+            </h4>
+            <v-btn size="x-small" variant="tonal" color="cyan" prepend-icon="mdi-magic-staff" @click="insertDefaultPayloadSchema">
+              Exemplo Igreja
+            </v-btn>
+          </div>
+          <div class="mb-2 d-flex flex-wrap ga-1">
+            <v-chip
+              v-for="chip in quickTemplateChips"
+              :key="chip.token"
+              size="x-small"
+              variant="tonal"
+              color="primary"
+              class="cursor-pointer"
+              @click="insertTemplateToken(chip.token)"
+            >
+              + {{ chip.label }}
+            </v-chip>
+          </div>
+          <v-textarea
+            v-model="contextMappingJson"
+            label="Mapeamento de Contexto (JSON)"
+            placeholder='{\n  "permissions": "{{ member_fin.permissions }}"\n}'
+            variant="outlined"
+            density="compact"
+            rows="3"
+            class="mb-3 monospace-field"
+            @update:model-value="onContextMappingChange"
+          ></v-textarea>
+          <v-switch
+            :model-value="nodeConfig.inject_full_context !== false"
+            @update:model-value="val => { nodeConfig.inject_full_context = val; }"
+            label="Injetar Payload Completo (<context_data>)"
+            color="cyan"
+            density="compact"
+            hide-details
+            class="mb-3"
+          ></v-switch>
+        </template>
 
         <v-combobox
           v-else-if="nodeConfig.mode === 'keyword'"
@@ -589,7 +932,7 @@
         <v-select
           v-model="nodeConfig.judge_mode"
           :items="[
-            { title: '⚡ LLM Rápido (Prompt Inline)', value: 'llm' },
+            { title: '⚡ LLM Customizado (Prompt Inline)', value: 'llm' },
             { title: '🤖 Agente Especialista do Sistema', value: 'agent' }
           ]"
           label="Modo de Julgamento"
@@ -609,6 +952,82 @@
           density="compact"
           class="mb-3"
         ></v-autocomplete>
+
+        <template v-else>
+          <!-- LLM Model & Provider Selection -->
+          <h5 class="text-caption font-weight-bold text-medium-emphasis mb-1">Modelo de IA do Juiz:</h5>
+          <v-row dense class="mb-2">
+            <v-col cols="6">
+              <v-select
+                v-model="nodeConfig.provider_id"
+                :items="providerOptions"
+                label="Provedor LLM"
+                variant="outlined"
+                density="compact"
+                hide-details
+              ></v-select>
+            </v-col>
+            <v-col cols="6">
+              <v-autocomplete
+                v-model="nodeConfig.model"
+                :items="getNodeModelOptions(nodeConfig.provider_id)"
+                label="Modelo"
+                variant="outlined"
+                density="compact"
+                hide-details
+                clearable
+                no-data-text="Nenhum modelo encontrado"
+              >
+                <template v-slot:item="{ props, item }">
+                  <v-list-item v-bind="props" :subtitle="item.raw.subtitle || item.raw.value"></v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+          </v-row>
+
+          <v-row dense class="mb-2">
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="nodeConfig.temperature"
+                label="Temperatura"
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                variant="outlined"
+                density="compact"
+                hide-details
+                placeholder="0.2"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-model.number="nodeConfig.max_tokens"
+                label="Max Tokens"
+                type="number"
+                min="100"
+                max="128000"
+                step="100"
+                variant="outlined"
+                density="compact"
+                hide-details
+                placeholder="2000"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+
+          <v-textarea
+            v-model="nodeConfig.prompt"
+            label="Instruções Gerais do Juiz (Prompt)"
+            placeholder="Você é o Juiz e Curador de Qualidade. Avalie rigorosamente a resposta gerada de acordo com os critérios definidos..."
+            variant="outlined"
+            density="compact"
+            rows="3"
+            class="mb-3 monospace-field"
+            hint="Papel e diretrizes gerais da curadoria"
+            persistent-hint
+          ></v-textarea>
+        </template>
 
         <!-- Presets de Curadoria -->
         <div class="mb-2">
@@ -660,9 +1079,9 @@
           label="Critérios de Avaliação do Juiz *"
           variant="outlined"
           density="compact"
-          rows="3"
+          rows="4"
           placeholder="Ex: Verifique se a resposta está precisa, de tom acolhedor, respondeu a todas as dúvidas e não alucinou dados."
-          class="mb-3"
+          class="mb-3 monospace-field"
           hint="O Juiz analisará a resposta do agente com base nestes critérios"
           persistent-hint
         ></v-textarea>
@@ -677,9 +1096,55 @@
           color="amber-darken-1"
           class="mt-4"
         ></v-slider>
-        <span class="text-caption text-medium-emphasis">
+        <span class="text-caption text-medium-emphasis d-block mb-3">
           Após atingir o limite de tentativas, a resposta segue com aviso para evitar loops infinitos.
         </span>
+
+        <!-- Context & Payload Schema for Judge -->
+        <v-divider class="my-3"></v-divider>
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="cyan">mdi-code-json</v-icon>Schema do Payload / Contexto
+          </h4>
+          <v-btn size="x-small" variant="tonal" color="cyan" prepend-icon="mdi-magic-staff" @click="insertDefaultPayloadSchema">
+            Exemplo Igreja
+          </v-btn>
+        </div>
+        <p class="text-caption text-medium-emphasis mb-2">
+          Defina quais dados do payload o Juiz deve analisar para verificar conformidade.
+        </p>
+        <div class="mb-2 d-flex flex-wrap ga-1">
+          <v-chip
+            v-for="chip in quickTemplateChips"
+            :key="chip.token"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+            class="cursor-pointer"
+            @click="insertTemplateToken(chip.token)"
+          >
+            + {{ chip.label }}
+          </v-chip>
+        </div>
+        <v-textarea
+          v-model="contextMappingJson"
+          label="Mapeamento de Contexto (JSON)"
+          placeholder='{\n  "user_name": "{{ member.name }}",\n  "permissions": "{{ member_fin.permissions }}"\n}'
+          variant="outlined"
+          density="compact"
+          rows="3"
+          class="mb-3 monospace-field"
+          @update:model-value="onContextMappingChange"
+        ></v-textarea>
+        <v-switch
+          :model-value="nodeConfig.inject_full_context !== false"
+          @update:model-value="val => { nodeConfig.inject_full_context = val; }"
+          label="Injetar Payload Completo (<context_data>)"
+          color="cyan"
+          density="compact"
+          hide-details
+          class="mb-3"
+        ></v-switch>
       </div>
 
       <!-- ── 8. TOOL / ACTION NODE PROPERTIES ─────────────────────────── -->
@@ -790,8 +1255,8 @@ const providerOptions = computed(() => {
   return options
 })
 
-const inlineModelOptions = computed(() => {
-  const currentProv = inlineAgent.value.provider_id || 'openai'
+function getNodeModelOptions(providerId) {
+  const currentProv = providerId || 'openai'
   const filtered = (availableModels.value || [])
     .filter(m => m.provider === currentProv)
     .map(m => ({
@@ -802,8 +1267,8 @@ const inlineModelOptions = computed(() => {
 
   if (filtered.length > 0) return filtered
 
-  if (inlineAgent.value.provider_id) {
-    const prov = (availableAiProviders.value || []).find(p => p.id === inlineAgent.value.provider_id)
+  if (providerId) {
+    const prov = (availableAiProviders.value || []).find(p => p.id === providerId)
     if (prov && prov.default_model) {
       return [{ title: prov.default_model, value: prov.default_model }]
     }
@@ -835,7 +1300,9 @@ const inlineModelOptions = computed(() => {
     { title: 'gpt-4o', value: 'gpt-4o', subtitle: '128k ctx' },
     { title: 'o3-mini', value: 'o3-mini', subtitle: '200k ctx' }
   ]
-})
+}
+
+const inlineModelOptions = computed(() => getNodeModelOptions(inlineAgent.value.provider_id))
 
 function onProviderChange(provId) {
   if (!provId) {

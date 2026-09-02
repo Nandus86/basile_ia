@@ -149,6 +149,21 @@
 
         <!-- Router / Supervisor with dynamic routes list -->
         <div v-else-if="data.type === 'router' || data.type === 'supervisor'">
+          <div class="d-flex align-center ga-1 flex-wrap mb-1">
+            <v-chip v-if="data.config?.model" size="x-small" variant="outlined" color="purple" density="compact">
+              {{ data.config.model }}
+            </v-chip>
+            <v-chip
+              v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
+              size="x-small"
+              variant="tonal"
+              color="cyan"
+              density="compact"
+              title="Schema de Payload configurado"
+            >
+              <v-icon start size="10">mdi-code-json</v-icon>Schema
+            </v-chip>
+          </div>
           <div v-if="routesList.length > 0" class="router-routes-container mt-1">
             <div class="text-caption text-medium-emphasis font-weight-bold mb-1" style="font-size: 10px !important;">
               ROTAS DE SAÍDA (LLM):
@@ -188,25 +203,66 @@
 
         <!-- Synthesizer Fan-In -->
         <div v-else-if="data.type === 'synthesizer'" class="text-caption text-medium-emphasis">
-          <v-icon size="14" color="purple" class="mr-1">mdi-call-merge</v-icon>
-          <span>Consolida respostas</span>
+          <div class="d-flex align-center ga-1 flex-wrap mb-1">
+            <v-icon size="14" color="pink">mdi-call-merge</v-icon>
+            <span class="font-weight-medium text-pink">Sintetizador</span>
+            <v-chip v-if="data.config?.model" size="x-small" variant="outlined" color="pink" density="compact">
+              {{ data.config.model }}
+            </v-chip>
+            <v-chip
+              v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
+              size="x-small"
+              variant="tonal"
+              color="cyan"
+              density="compact"
+            >
+              <v-icon start size="10">mdi-code-json</v-icon>Schema
+            </v-chip>
+          </div>
+          <span>Consolida respostas paralelas</span>
         </div>
 
         <!-- Condition / Decision -->
         <div v-else-if="data.type === 'condition' || data.type === 'decision'" class="text-caption text-medium-emphasis">
-          <span>Modo: {{ data.config?.mode || 'LLM' }}</span>
+          <div class="d-flex align-center ga-1 flex-wrap mb-1">
+            <span>Modo: <strong>{{ data.config?.mode || 'LLM' }}</strong></span>
+            <v-chip v-if="data.config?.model && (!data.config?.mode || data.config?.mode === 'llm')" size="x-small" variant="outlined" color="amber" density="compact">
+              {{ data.config.model }}
+            </v-chip>
+            <v-chip
+              v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
+              size="x-small"
+              variant="tonal"
+              color="cyan"
+              density="compact"
+            >
+              <v-icon start size="10">mdi-code-json</v-icon>Schema
+            </v-chip>
+          </div>
         </div>
 
         <!-- Judge / Curator / Verifier (Loop) -->
         <div v-else-if="data.type === 'judge' || data.type === 'curator' || data.type === 'verifier' || data.type === 'guardrail'" class="text-caption text-medium-emphasis">
-          <div class="d-flex align-center ga-1 mb-1">
+          <div class="d-flex align-center ga-1 mb-1 flex-wrap">
             <v-icon size="14" color="amber-darken-1">mdi-scale-balance</v-icon>
             <span class="font-weight-medium text-amber-lighten-1">Juiz de Qualidade</span>
+            <v-chip v-if="data.config?.model && data.config?.judge_mode !== 'agent'" size="x-small" variant="outlined" color="amber-darken-2" density="compact">
+              {{ data.config.model }}
+            </v-chip>
+            <v-chip
+              v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
+              size="x-small"
+              variant="tonal"
+              color="cyan"
+              density="compact"
+            >
+              <v-icon start size="10">mdi-code-json</v-icon>Schema
+            </v-chip>
           </div>
           <div class="d-flex align-center justify-space-between">
             <span>Max Loops: {{ data.config?.max_retries || 2 }}</span>
             <v-chip size="x-small" color="amber" variant="outlined" density="compact">
-              {{ data.config?.judge_mode === 'agent' ? 'Agente Auditor' : 'LLM Inline' }}
+              {{ data.config?.judge_mode === 'agent' ? 'Agente Auditor' : 'LLM Custom' }}
             </v-chip>
           </div>
         </div>
