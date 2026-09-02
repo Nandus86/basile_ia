@@ -311,6 +311,16 @@ class AgentGraphCompiler:
                             state["loop_feedbacks"].pop(current_node_id, None)
                             state["loop_feedbacks"].pop("last", None)
 
+                        run_config = self._get_node_run_config(
+                            node_label=node_label,
+                            node_type=node_type,
+                            graph_name=graph.name,
+                            graph_id=graph.id,
+                            node_id=current_node_id,
+                            model_name=model_name,
+                            state=state
+                        )
+
                         # 5. Invoke LLM or ReAct Agent with tools
                         if tools:
                             from langgraph.prebuilt import create_react_agent
@@ -321,6 +331,7 @@ class AgentGraphCompiler:
                             )
                             result = await react_agent.ainvoke(
                                 {'messages': [HumanMessage(content=state.get("original_message", ""))]},
+                                config=run_config
                             )
                             exec_messages = result.get('messages', [])
                             resp_content = ''
@@ -333,7 +344,7 @@ class AgentGraphCompiler:
                                 last_msg = exec_messages[-1]
                                 resp_content = last_msg.content if hasattr(last_msg, 'content') else str(last_msg)
                         else:
-                            resp = await llm.ainvoke(input_msgs)
+                            resp = await llm.ainvoke(input_msgs, config=run_config)
                             resp_content = resp.content if isinstance(resp.content, str) else str(resp.content)
 
                         state["final_output"] = resp_content
@@ -467,6 +478,15 @@ class AgentGraphCompiler:
 
                     node_llm = await self._build_node_llm(node_config, default_temperature=0.2, default_max_tokens=1500, session_id=session_id)
                     mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+                    node_run_config = self._get_node_run_config(
+                        node_label=node_label,
+                        node_type=node_type,
+                        graph_name=graph.name,
+                        graph_id=graph.id,
+                        node_id=current_node_id,
+                        model_name=node_config.get("model", "default"),
+                        state=state
+                    )
 
                     if routes:
                         route_descriptions = []
@@ -498,7 +518,7 @@ class AgentGraphCompiler:
                         llm_resp = await node_llm.ainvoke([
                             SystemMessage(content=router_prompt),
                             HumanMessage(content=state["original_message"])
-                        ])
+                        ], config=node_run_config)
                         content_str = llm_resp.content.strip()
 
                         chosen_route_id = None
@@ -548,7 +568,7 @@ class AgentGraphCompiler:
                         llm_resp = await node_llm.ainvoke([
                             SystemMessage(content=custom_prompt),
                             HumanMessage(content=state["original_message"])
-                        ])
+                        ], config=node_run_config)
                         content_str = llm_resp.content.strip()
                         
                         chosen_id = None
@@ -599,6 +619,15 @@ class AgentGraphCompiler:
 
                     node_llm = await self._build_node_llm(node_config, default_temperature=0.6, default_max_tokens=2500, session_id=session_id)
                     mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+                    node_run_config = self._get_node_run_config(
+                        node_label=node_label,
+                        node_type=node_type,
+                        graph_name=graph.name,
+                        graph_id=graph.id,
+                        node_id=current_node_id,
+                        model_name=node_config.get("model", "default"),
+                        state=state
+                    )
 
                     synth_prompt = resolve_template(node_config.get("prompt") or (
                         "Você é um Sintetizador Especialista. Sua função é consolidar as informações abaixo fornecidas por múltiplos agentes especialistas "
@@ -607,7 +636,7 @@ class AgentGraphCompiler:
                         f"Contribuições dos especialistas:\n{combined_text}"
                     ), eval_ctx) + mapped_ctx + full_ctx
 
-                    llm_resp = await node_llm.ainvoke([SystemMessage(content=synth_prompt)])
+                    llm_resp = await node_llm.ainvoke([SystemMessage(content=synth_prompt)], config=node_run_config)
                     state["final_output"] = llm_resp.content
                     state["messages"].append(AIMessage(content=llm_resp.content))
                     step_trace.output_data = llm_resp.content
@@ -626,6 +655,15 @@ class AgentGraphCompiler:
                     else:
                         node_llm = await self._build_node_llm(node_config, default_temperature=0.1, default_max_tokens=500, session_id=session_id)
                         mapped_ctx, full_ctx, eval_ctx = self._resolve_context_and_schema(node_config, state)
+                        node_run_config = self._get_node_run_config(
+                            node_label=node_label,
+                            node_type=node_type,
+                            graph_name=graph.name,
+                            graph_id=graph.id,
+                            node_id=current_node_id,
+                            model_name=node_config.get("model", "default"),
+                            state=state
+                        )
 
                         criteria_str = resolve_template(node_config.get("criteria") or "A resposta atende à solicitação?", eval_ctx)
                         custom_instructions = resolve_template(node_config.get("prompt") or "", eval_ctx)
@@ -638,7 +676,7 @@ class AgentGraphCompiler:
                             f"Critério: {criteria_str}{custom_instructions}{mapped_ctx}{full_ctx}\n\n"
                             "Responda APENAS 'TRUE' ou 'FALSE'."
                         )
-                        llm_resp = await node_llm.ainvoke([SystemMessage(content=eval_prompt)])
+                        llm_resp = await node_llm.ainvoke([SystemMessage(content=eval_prompt)], config=node_run_config)
                         condition_result = "true" in llm_resp.content.lower()
 
                     step_trace.output_data = f"Resultado da condição: {condition_result}"
@@ -730,7 +768,16 @@ class AgentGraphCompiler:
                             '  "feedback": "<instruções cirúrgicas e específicas do que o agente deve corrigir caso rejeitado, ou breve resumo de aprovação>"\n'
                             "}"
                         )
-                        llm_resp = await node_llm.ainvoke([SystemMessage(content=v_prompt)])
+                        node_run_config = self._get_node_run_config(
+                            node_label=node_label,
+                            node_type=node_type,
+                            graph_name=graph.name,
+                            graph_id=graph.id,
+                            node_id=current_node_id,
+                            model_name=node_config.get("model", "default"),
+                            state=state
+                        )
+                        llm_resp = await node_llm.ainvoke([SystemMessage(content=v_prompt)], config=node_run_config)
                         try:
                             clean_json = re.search(r'\{.*\}', llm_resp.content, re.DOTALL)
                             if clean_json:
@@ -854,7 +901,16 @@ class AgentGraphCompiler:
                 }
                 llm = factory.create_llm(agent_cfg, session_id=state.get("session_id"))
                 msgs = [SystemMessage(content=system_prompt), HumanMessage(content=state["original_message"])]
-                resp = await llm.ainvoke(msgs)
+                sub_run_config = self._get_node_run_config(
+                    node_label=node.get("data", {}).get("label", "Sub-nó"),
+                    node_type=node_type,
+                    graph_name="Parallel Branch",
+                    graph_id="parallel",
+                    node_id=node.get("id"),
+                    model_name=model_name,
+                    state=state
+                )
+                resp = await llm.ainvoke(msgs, config=sub_run_config)
                 return resp.content if isinstance(resp.content, str) else str(resp.content)
 
             else:
@@ -959,6 +1015,68 @@ class AgentGraphCompiler:
                 )
 
         return mapped_context_str, full_context_str, eval_ctx
+
+    def _get_node_run_config(
+        self,
+        node_label: str,
+        node_type: str,
+        graph_name: str,
+        graph_id: Any,
+        node_id: str,
+        model_name: Optional[str] = None,
+        state: Optional[AgentGraphState] = None
+    ) -> Dict[str, Any]:
+        """Creates a RunnableConfig with Langfuse and LangSmith tracing for any graph node execution"""
+        from app.config import get_langfuse_callback
+
+        ctx = (state.get("context_data", {}) if state else {}) or {}
+        user_phone = ctx.get("member", {}).get("phone") or ctx.get("user_phone")
+        sess_id = (state.get("session_id") if state else None) or ctx.get("session_id")
+        instancia_id = ctx.get("global", {}).get("instancia")
+        church_id = ctx.get("church", {}).get("_id") or ctx.get("church", {}).get("id")
+
+        callbacks = []
+        try:
+            langfuse_cb = get_langfuse_callback()
+            if langfuse_cb:
+                callbacks.append(langfuse_cb)
+        except Exception as lf_err:
+            logger.debug(f"[AgentGraphCompiler] Langfuse callback error: {lf_err}")
+
+        metadata = {
+            "graph_id": str(graph_id),
+            "graph_name": graph_name,
+            "node_id": str(node_id),
+            "node_type": node_type,
+            "node_label": node_label,
+            "model": model_name or "default",
+        }
+        if user_phone:
+            metadata["langfuse_user_id"] = str(user_phone)
+        if sess_id:
+            metadata["langfuse_session_id"] = str(sess_id)
+        if church_id:
+            metadata["church_id"] = str(church_id)
+
+        tags = [
+            "agent_graph",
+            f"graph:{graph_name}",
+            f"node_type:{node_type}",
+            f"node:{node_label}"
+        ]
+        if instancia_id:
+            tags.append(f"instancia:{instancia_id}")
+        if church_id:
+            tags.append(f"church:{church_id}")
+
+        cfg = {
+            "run_name": f"Graph [{graph_name}] -> {node_label} ({node_type})",
+            "metadata": metadata,
+            "tags": tags,
+        }
+        if callbacks:
+            cfg["callbacks"] = callbacks
+        return cfg
 
     async def _get_agent_by_id(self, agent_id: str) -> Optional[Agent]:
         """Fetch agent model by ID with relationships"""
