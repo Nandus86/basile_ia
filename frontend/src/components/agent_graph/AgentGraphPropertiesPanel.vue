@@ -263,6 +263,93 @@
             @update:model-value="onInlineAgentChange"
           ></v-textarea>
         </template>
+
+        <!-- ═══ CONTEXT & PAYLOAD SCHEMA (FOR BOTH EXISTING & INLINE AGENTS) ═══ -->
+        <v-divider class="my-3"></v-divider>
+
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="cyan">mdi-code-json</v-icon>Schema do Payload / Contexto
+          </h4>
+          <v-btn size="x-small" variant="tonal" color="cyan" prepend-icon="mdi-magic-staff" @click="insertDefaultPayloadSchema">
+            Exemplo Igreja
+          </v-btn>
+        </div>
+
+        <p class="text-caption text-medium-emphasis mb-2">
+          Defina quais campos do payload devem ser extraídos e mapeados para o contexto deste agente.
+        </p>
+
+        <!-- Quick Template Variable Chips -->
+        <div class="mb-2 d-flex flex-wrap ga-1">
+          <v-chip
+            v-for="chip in quickTemplateChips"
+            :key="chip.token"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+            class="cursor-pointer"
+            @click="insertTemplateToken(chip.token)"
+            :title="`Clique para adicionar ${chip.token}`"
+          >
+            + {{ chip.label }}
+          </v-chip>
+        </div>
+
+        <v-textarea
+          v-model="contextMappingJson"
+          label="Mapeamento de Contexto (JSON)"
+          placeholder='{\n  "user_name": "{{ member.name }}",\n  "user_role": "{{ member_fin.role_profile }}",\n  "permissions": "{{ member_fin.permissions }}",\n  "church_name": "{{ church.church_name }}"\n}'
+          variant="outlined"
+          density="compact"
+          rows="4"
+          class="mb-3 monospace-field"
+          hint="Tags dinâmicas: {{ member.name }}, {{ member_fin.permissions }}, {{ church.preferredLanguage }}, {{ $now(...) }}"
+          persistent-hint
+          @update:model-value="onContextMappingChange"
+        ></v-textarea>
+
+        <v-switch
+          :model-value="nodeConfig.inject_full_context !== false"
+          @update:model-value="val => { nodeConfig.inject_full_context = val; }"
+          label="Injetar Payload Completo (<context_data>)"
+          color="cyan"
+          density="compact"
+          hide-details
+          class="mb-3"
+        ></v-switch>
+
+        <v-divider class="my-3"></v-divider>
+
+        <!-- Structured Output Schema Section -->
+        <div class="d-flex align-center justify-space-between mb-1">
+          <h4 class="text-subtitle-2 font-weight-bold d-flex align-center ga-1">
+            <v-icon size="16" color="amber-darken-2">mdi-code-brackets</v-icon>Saída Estruturada (JSON Schema)
+          </h4>
+        </div>
+
+        <v-switch
+          v-model="nodeConfig.use_structured_output"
+          label="Forçar Resposta em JSON Estruturado"
+          color="amber-darken-2"
+          density="compact"
+          hide-details
+          class="mb-2"
+        ></v-switch>
+
+        <v-textarea
+          v-if="nodeConfig.use_structured_output"
+          v-model="outputSchemaJson"
+          label="Output Schema (JSON Schema)"
+          placeholder='{\n  "type": "object",\n  "properties": {\n    "resposta": { "type": "string" },\n    "intencao": { "type": "string" }\n  },\n  "required": ["resposta"]\n}'
+          variant="outlined"
+          density="compact"
+          rows="4"
+          class="mb-3 monospace-field"
+          hint="Esquema JSON que o modelo deverá obedecer estritamente na resposta"
+          persistent-hint
+          @update:model-value="onOutputSchemaChange"
+        ></v-textarea>
       </div>
 
       <!-- ── 2. ROUTER / SUPERVISOR NODE PROPERTIES ───────────────────── -->
@@ -841,6 +928,74 @@ function applyCriteriaPreset(presetKey) {
   }
 }
 
+// ── CONTEXT MAPPING & SCHEMAS STATE ───────────────────────────────────────
+const contextMappingJson = ref(
+  nodeConfig.value.context_mapping ? JSON.stringify(nodeConfig.value.context_mapping, null, 2) : ''
+)
+const outputSchemaJson = ref(
+  nodeConfig.value.output_schema ? JSON.stringify(nodeConfig.value.output_schema, null, 2) : ''
+)
+
+const quickTemplateChips = [
+  { label: 'Nome Usuário', token: '{{ member.name }}' },
+  { label: 'Perfil/Role', token: '{{ member_fin.role_profile }}' },
+  { label: 'Permissões', token: '{{ member_fin.permissions }}' },
+  { label: 'Nome Igreja', token: '{{ church.church_name }}' },
+  { label: 'Rótulo Célula', token: '{{ ai_params.label_cell }}' },
+  { label: 'Data/Hora Atual', token: '{{ $now(%A, %d/%m/%Y %H:%M) }}' },
+  { label: 'Idioma', token: '{{ church.preferredLanguage }}' },
+  { label: 'Telefone', token: '{{ member.phone }}' }
+]
+
+function onContextMappingChange(val) {
+  try {
+    if (!val || !val.trim()) {
+      delete nodeConfig.value.context_mapping
+    } else {
+      nodeConfig.value.context_mapping = JSON.parse(val)
+    }
+  } catch (e) {
+    // typing JSON
+  }
+}
+
+function onOutputSchemaChange(val) {
+  try {
+    if (!val || !val.trim()) {
+      delete nodeConfig.value.output_schema
+    } else {
+      nodeConfig.value.output_schema = JSON.parse(val)
+    }
+  } catch (e) {
+    // typing JSON
+  }
+}
+
+function insertDefaultPayloadSchema() {
+  const defaultSchema = {
+    "user_name": "{{ member.name }}",
+    "user_role": "{{ member_fin.role_profile }}",
+    "permissions": "{{ member_fin.permissions }}",
+    "church_name": "{{ church.church_name }}",
+    "label_cell": "{{ ai_params.label_cell }}"
+  }
+  nodeConfig.value.context_mapping = defaultSchema
+  contextMappingJson.value = JSON.stringify(defaultSchema, null, 2)
+}
+
+function insertTemplateToken(token) {
+  let current = {}
+  try {
+    if (contextMappingJson.value && contextMappingJson.value.trim()) {
+      current = JSON.parse(contextMappingJson.value)
+    }
+  } catch {}
+  const cleanKey = token.replace(/[{}$\s%]/g, '').split('.').pop().replace(/[^a-zA-Z0-9_]/g, '_') || 'campo'
+  current[cleanKey] = token
+  nodeConfig.value.context_mapping = current
+  contextMappingJson.value = JSON.stringify(current, null, 2)
+}
+
 // ── SYNC ON NODE CHANGE ─────────────────────────────────────────────────────
 watch(() => props.selectedNode.id, () => {
   agentMode.value = nodeConfig.value.agent_mode || (nodeConfig.value.inline_agent ? 'inline' : 'existing')
@@ -855,6 +1010,8 @@ watch(() => props.selectedNode.id, () => {
     skill_ids: nodeConfig.value.inline_agent?.skill_ids || [],
   }
   routerRoutes.value = nodeConfig.value.routes || []
+  contextMappingJson.value = nodeConfig.value.context_mapping ? JSON.stringify(nodeConfig.value.context_mapping, null, 2) : ''
+  outputSchemaJson.value = nodeConfig.value.output_schema ? JSON.stringify(nodeConfig.value.output_schema, null, 2) : ''
 })
 
 const NODE_META = {

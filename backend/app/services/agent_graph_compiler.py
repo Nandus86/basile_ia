@@ -220,6 +220,7 @@ class AgentGraphCompiler:
 
                         # 3. Build LLM via AgentFactory
                         from app.orchestrator.agent_factory import AgentFactory
+                        from app.services.workflow_engine import resolve_template
                         factory = AgentFactory(self.db)
                         
                         provider_obj = None
@@ -234,6 +235,51 @@ class AgentGraphCompiler:
                                 except Exception as prov_err:
                                     logger.warning(f"[AgentGraphCompiler] Could not load provider {provider_id}: {prov_err}")
 
+                        context_mapping = node_config.get("context_mapping") or inline_cfg.get("context_mapping")
+                        output_schema = node_config.get("output_schema") or inline_cfg.get("output_schema")
+                        inject_full_context = node_config.get("inject_full_context", True)
+
+                        eval_ctx = {
+                            "$trigger": {"payload": state.get("context_data", {}) or {}},
+                            "$request": state.get("context_data", {}) or {},
+                            **(state.get("context_data", {}) or {}),
+                            **{k: v for k, v in state.items() if k not in ("messages", "loop_feedbacks")}
+                        }
+
+                        # 1. Resolve Context Mapping (Payload Schema)
+                        mapped_context_str = ""
+                        if context_mapping and isinstance(context_mapping, dict):
+                            resolved_mapping = {}
+                            for k, v in context_mapping.items():
+                                resolved_mapping[k] = resolve_template(v, eval_ctx)
+                            mapped_context_str = (
+                                f"\n\n## 📋 Dados Mapeados do Payload (Schema):\n"
+                                f"```json\n{json.dumps(resolved_mapping, ensure_ascii=False, indent=2)}\n```\n"
+                            )
+
+                        # 2. Inject Full Context if requested
+                        full_context_str = ""
+                        if inject_full_context and state.get("context_data"):
+                            safe_ctx = {k: v for k, v in state["context_data"].items() if not str(k).startswith("_")}
+                            if safe_ctx:
+                                full_context_str = (
+                                    f"\n\n## 🌐 Contexto Global / Igreja:\n"
+                                    f"<context_data>\n{json.dumps(safe_ctx, ensure_ascii=False, default=str)}\n</context_data>\n"
+                                )
+
+                        # 3. Output Schema Prompting
+                        output_schema_str = ""
+                        if output_schema:
+                            schema_desc = json.dumps(output_schema, ensure_ascii=False, indent=2) if isinstance(output_schema, (dict, list)) else str(output_schema)
+                            output_schema_str = (
+                                f"\n\n## 📤 Esquema de Saída Obrigatório (JSON Output Schema):\n"
+                                f"Você DEVE responder ESTRITAMENTE em formato JSON válido obedecendo ao seguinte schema:\n"
+                                f"```json\n{schema_desc}\n```\n"
+                            )
+
+                        resolved_system_prompt = resolve_template(system_prompt, eval_ctx)
+                        full_system_prompt = resolved_system_prompt + skills_prompt + mapped_context_str + full_context_str + output_schema_str
+
                         agent_cfg = {
                             "id": f"inline_{inline_name}",
                             "name": inline_name,
@@ -241,12 +287,12 @@ class AgentGraphCompiler:
                             "temperature": temperature,
                             "max_tokens": max_tokens,
                             "provider": provider_obj or provider_id,
+                            "output_schema": output_schema,
                             "config": inline_cfg.get("config", {}) or {},
                         }
                         llm = factory.create_llm(agent_cfg, session_id=session_id)
 
                         # 4. Prepare input messages
-                        full_system_prompt = system_prompt + skills_prompt
                         input_msgs: List[BaseMessage] = [SystemMessage(content=full_system_prompt)]
                         for m in state["messages"]:
                             if isinstance(m, BaseMessage):
@@ -301,14 +347,42 @@ class AgentGraphCompiler:
                         step_trace.agent_id = str(agent_id) if agent_id else None
                         step_trace.agent_name = agent_name
 
+                        context_mapping = node_config.get("context_mapping")
+                        output_schema = node_config.get("output_schema")
+
+                        eval_ctx = {
+                            "$trigger": {"payload": state.get("context_data", {}) or {}},
+                            "$request": state.get("context_data", {}) or {},
+                            **(state.get("context_data", {}) or {}),
+                            **{k: v for k, v in state.items() if k not in ("messages", "loop_feedbacks")}
+                        }
+
                         if agent_id:
                             agent_obj = await self._get_agent_by_id(str(agent_id))
                             if agent_obj:
                                 from app.orchestrator.agent_factory import AgentFactory
+                                from app.services.workflow_engine import resolve_template
                                 factory = AgentFactory(self.db)
                                 agent_cfg = await factory.get_agent_config(agent_obj, context_data=state["context_data"])
-                                
+                                if output_schema:
+                                    agent_cfg["output_schema"] = output_schema
+
                                 input_msgs = list(state["messages"])
+
+                                # Inject mapped context
+                                if context_mapping and isinstance(context_mapping, dict):
+                                    resolved_mapping = {}
+                                    for k, v in context_mapping.items():
+                                        resolved_mapping[k] = resolve_template(v, eval_ctx)
+                                    input_msgs.insert(0, SystemMessage(content=(
+                                        f"## 📋 Dados Mapeados do Payload (Schema):\n"
+                                        f"```json\n{json.dumps(resolved_mapping, ensure_ascii=False, indent=2)}\n```"
+                                    )))
+
+                                if node_config.get("prompt_override"):
+                                    resolved_override = resolve_template(node_config["prompt_override"], eval_ctx)
+                                    input_msgs.append(SystemMessage(content=f"Instruções Adicionais do Grafo:\n{resolved_override}"))
+
                                 feedback = state["loop_feedbacks"].get(current_node_id) or state["loop_feedbacks"].get("last")
                                 if feedback:
                                     input_msgs.append(SystemMessage(content=(

@@ -73,15 +73,59 @@
               >
                 {{ data.config?.inline_agent?.skill_ids?.length }} Skills
               </v-chip>
+              <v-chip
+                v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
+                size="x-small"
+                variant="tonal"
+                color="cyan"
+                density="compact"
+                title="Payload Schema / Context Mapping"
+              >
+                <v-icon start size="10">mdi-code-json</v-icon>Schema
+              </v-chip>
+              <v-chip
+                v-if="data.config?.use_structured_output"
+                size="x-small"
+                variant="tonal"
+                color="amber-darken-2"
+                density="compact"
+                title="Saída Estruturada (JSON)"
+              >
+                <v-icon start size="10">mdi-code-brackets</v-icon>JSON
+              </v-chip>
             </div>
           </div>
 
           <!-- Existing System Agent -->
-          <div v-else class="d-flex align-center ga-1 text-caption text-medium-emphasis">
-            <v-icon size="14" color="grey">mdi-account-tie</v-icon>
-            <span class="text-truncate" style="max-width: 160px;">
-              {{ data.config?.agent_name || 'Selecione um agente...' }}
-            </span>
+          <div v-else class="d-flex flex-column ga-1">
+            <div class="d-flex align-center ga-1 text-caption text-medium-emphasis">
+              <v-icon size="14" color="grey">mdi-account-tie</v-icon>
+              <span class="text-truncate" style="max-width: 160px;">
+                {{ data.config?.agent_name || 'Selecione um agente...' }}
+              </span>
+            </div>
+            <div v-if="data.config?.context_mapping || data.config?.use_structured_output" class="d-flex align-center ga-1 flex-wrap mt-1">
+              <v-chip
+                v-if="data.config?.context_mapping && Object.keys(data.config.context_mapping).length"
+                size="x-small"
+                variant="tonal"
+                color="cyan"
+                density="compact"
+                title="Payload Schema / Context Mapping"
+              >
+                <v-icon start size="10">mdi-code-json</v-icon>Schema
+              </v-chip>
+              <v-chip
+                v-if="data.config?.use_structured_output"
+                size="x-small"
+                variant="tonal"
+                color="amber-darken-2"
+                density="compact"
+                title="Saída Estruturada (JSON)"
+              >
+                <v-icon start size="10">mdi-code-brackets</v-icon>JSON
+              </v-chip>
+            </div>
           </div>
         </div>
 
