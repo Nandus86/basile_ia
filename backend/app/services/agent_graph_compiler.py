@@ -88,11 +88,20 @@ class AgentGraphCompiler:
                 initial_messages.append(SystemMessage(content=c))
         initial_messages.append(HumanMessage(content=message))
 
+        # Synchronize session_id and context_data bidirectionally
+        safe_context = dict(context_data or {})
+        if session_id and "session_id" not in safe_context:
+            safe_context["session_id"] = str(session_id)
+        if "session_id" in safe_context and not session_id:
+            session_id = str(safe_context["session_id"])
+
+        self._active_callbacks = []
+
         steps_trace: List[AgentGraphStepTrace] = []
         state: AgentGraphState = {
             "messages": initial_messages,
             "original_message": message,
-            "context_data": context_data or {},
+            "context_data": safe_context,
             "session_id": session_id,
             "current_node_id": "",
             "step_history": [],
@@ -449,12 +458,23 @@ class AgentGraphCompiler:
                                     state["loop_feedbacks"].pop(current_node_id, None)
                                     state["loop_feedbacks"].pop("last", None)
 
-                                # Execute agent
-                                resp_content = await factory.invoke_agent(
-                                    agent_config=agent_cfg,
-                                    messages=input_msgs,
-                                    context_data=state["context_data"]
-                                )
+                                # Execute agent (structured or standard)
+                                if output_schema:
+                                    structured_res = await factory.invoke_agent_structured(
+                                        agent_config=agent_cfg,
+                                        messages=input_msgs,
+                                        context_data=state["context_data"]
+                                    )
+                                    if isinstance(structured_res, dict):
+                                        resp_content = structured_res.get("output", json.dumps(structured_res, ensure_ascii=False))
+                                    else:
+                                        resp_content = str(structured_res)
+                                else:
+                                    resp_content = await factory.invoke_agent(
+                                        agent_config=agent_cfg,
+                                        messages=input_msgs,
+                                        context_data=state["context_data"]
+                                    )
                                 state["final_output"] = resp_content
                                 state["messages"].append(AIMessage(content=resp_content))
                                 step_trace.output_data = resp_content
@@ -976,7 +996,7 @@ class AgentGraphCompiler:
             current_node_id = outgoing[0].get("target") if outgoing else None
 
         total_duration = round((time.monotonic() - start_time) * 1000, 2)
-        return AgentGraphExecuteResponse(
+        response = AgentGraphExecuteResponse(
             graph_id=graph.id,
             graph_name=graph.name,
             final_output=state.get("final_output") or state.get("original_message", ""),
@@ -987,6 +1007,30 @@ class AgentGraphCompiler:
             context_data=state.get("context_data"),
             session_id=session_id
         )
+
+        # Flush Langfuse traces so they appear immediately on dashboard
+        self._flush_langfuse_traces()
+
+        return response
+
+    def _flush_langfuse_traces(self):
+        """Flushes all Langfuse callbacks and global client to ensure all spans reach the dashboard"""
+        if hasattr(self, "_active_callbacks") and self._active_callbacks:
+            for cb in self._active_callbacks:
+                try:
+                    if hasattr(cb, "flush"):
+                        cb.flush()
+                    elif hasattr(cb, "client") and hasattr(cb.client, "flush"):
+                        cb.client.flush()
+                except Exception as flush_err:
+                    logger.debug(f"[AgentGraphCompiler] Langfuse callback flush: {flush_err}")
+            self._active_callbacks.clear()
+
+        try:
+            from langfuse import Langfuse
+            Langfuse().flush()
+        except Exception:
+            pass
 
     async def _execute_single_sub_node(self, node: Dict[str, Any], state: AgentGraphState) -> str:
         """Helper to execute an isolated node in parallel (supports system & inline agents)"""
@@ -1142,12 +1186,13 @@ class AgentGraphCompiler:
         node_id: str,
         model_name: Optional[str] = None,
         state: Optional[AgentGraphState] = None
-    ) -> Dict[str, Any]:
+    ) -> Any:
         """Creates a RunnableConfig with Langfuse and LangSmith tracing for any graph node execution"""
         from app.config import get_langfuse_callback
+        from langchain_core.runnables import RunnableConfig
 
         ctx = (state.get("context_data", {}) if state else {}) or {}
-        user_phone = ctx.get("member", {}).get("phone") or ctx.get("user_phone")
+        user_phone = ctx.get("member", {}).get("phone") or ctx.get("user_phone") or ctx.get("phone")
         sess_id = (state.get("session_id") if state else None) or ctx.get("session_id")
         instancia_id = ctx.get("global", {}).get("instancia")
         church_id = ctx.get("church", {}).get("_id") or ctx.get("church", {}).get("id")
@@ -1157,8 +1202,22 @@ class AgentGraphCompiler:
             langfuse_cb = get_langfuse_callback()
             if langfuse_cb:
                 callbacks.append(langfuse_cb)
+                if not hasattr(self, "_active_callbacks") or self._active_callbacks is None:
+                    self._active_callbacks = []
+                self._active_callbacks.append(langfuse_cb)
         except Exception as lf_err:
             logger.debug(f"[AgentGraphCompiler] Langfuse callback error: {lf_err}")
+
+        tags = [
+            "agent_graph",
+            f"graph:{graph_name}",
+            f"node_type:{node_type}",
+            f"node:{node_label}"
+        ]
+        if instancia_id:
+            tags.append(f"instancia:{instancia_id}")
+        if church_id:
+            tags.append(f"church:{church_id}")
 
         metadata = {
             "graph_id": str(graph_id),
@@ -1174,26 +1233,15 @@ class AgentGraphCompiler:
             metadata["langfuse_session_id"] = str(sess_id)
         if church_id:
             metadata["church_id"] = str(church_id)
+        if tags:
+            metadata["langfuse_tags"] = tags
 
-        tags = [
-            "agent_graph",
-            f"graph:{graph_name}",
-            f"node_type:{node_type}",
-            f"node:{node_label}"
-        ]
-        if instancia_id:
-            tags.append(f"instancia:{instancia_id}")
-        if church_id:
-            tags.append(f"church:{church_id}")
-
-        cfg = {
-            "run_name": f"Graph [{graph_name}] -> {node_label} ({node_type})",
-            "metadata": metadata,
-            "tags": tags,
-        }
-        if callbacks:
-            cfg["callbacks"] = callbacks
-        return cfg
+        return RunnableConfig(
+            run_name=f"Graph [{graph_name}] -> {node_label} ({node_type})",
+            metadata=metadata,
+            tags=tags,
+            callbacks=callbacks if callbacks else None,
+        )
 
     async def _load_stm_mtm_history(
         self,

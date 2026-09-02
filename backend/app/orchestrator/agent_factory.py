@@ -1170,16 +1170,13 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             "name": agent_config["name"]
         }
 
-    async def invoke_agent(
+    async def _execute_via_graph_if_configured(
         self,
         agent_config: Dict[str, Any],
         messages: List[Any],
-        rag_context: Optional[str] = None,
-        context_data: Optional[Dict[str, Any]] = None,
-        execution_mode_override: Optional[str] = None,
-    ) -> str:
-        """Invoke an agent with messages and return response."""
-        # ── Graph Execution Mode (Orchestrated Agent Graph) ───────────────────
+        context_data: Optional[Dict[str, Any]] = None
+    ) -> Optional[Any]:
+        """If agent is configured with execution_type == 'graph' and a valid graph_id, execute it via AgentGraphCompiler."""
         if agent_config.get("execution_type") == "graph" and agent_config.get("graph_id"):
             try:
                 from app.services.agent_graph_compiler import AgentGraphCompiler
@@ -1204,9 +1201,24 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                         session_id=session_id
                     )
                     logger.info(f"[AgentFactory] 🕸️ Agente '{agent_config['name']}' executado via Grafo '{graph_obj.name}' (status: {exec_res.status})")
-                    return exec_res.final_output
+                    return exec_res
             except Exception as e:
                 logger.error(f"[AgentFactory] ❌ Erro ao executar agente '{agent_config.get('name')}' em modo grafo: {e}", exc_info=True)
+        return None
+
+    async def invoke_agent(
+        self,
+        agent_config: Dict[str, Any],
+        messages: List[Any],
+        rag_context: Optional[str] = None,
+        context_data: Optional[Dict[str, Any]] = None,
+        execution_mode_override: Optional[str] = None,
+    ) -> str:
+        """Invoke an agent with messages and return response."""
+        # ── Graph Execution Mode (Orchestrated Agent Graph) ───────────────────
+        graph_res = await self._execute_via_graph_if_configured(agent_config, messages, context_data)
+        if graph_res is not None:
+            return graph_res.final_output
 
         prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
         
@@ -1349,6 +1361,11 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         """Invoke an agent and return (response_text, tool_trace_dict).
         tool_trace_dict may be None if no tools were used.
         """
+        # ── Graph Execution Mode (Orchestrated Agent Graph) ───────────────────
+        graph_res = await self._execute_via_graph_if_configured(agent_config, messages, context_data)
+        if graph_res is not None:
+            return graph_res.final_output, None
+
         prep = await self._prepare_agent_run(agent_config, messages, rag_context, context_data, execution_mode_override)
         
         if not prep["is_react"]:
@@ -1485,6 +1502,18 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         Invoke an agent with structured JSON output.
         Uses the agent's output_schema if defined, otherwise uses default.
         """
+        # ── Graph Execution Mode (Orchestrated Agent Graph) ───────────────────
+        graph_res = await self._execute_via_graph_if_configured(agent_config, messages, context_data)
+        if graph_res is not None:
+            try:
+                import json
+                parsed = json.loads(graph_res.final_output)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+            return {"output": graph_res.final_output}
+
         from app.schemas.structured_output import get_output_schema_for_agent, format_context_data_for_prompt
         
         llm = self.create_llm(agent_config)

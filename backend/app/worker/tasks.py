@@ -3625,8 +3625,8 @@ async def process_message_task(
             global_memory_enabled = agent_config.get("config", {}).get("memory_enabled", True)
             vector_memory_enabled = getattr(agent_config.get("agent_model"), "vector_memory_enabled", False) and global_memory_enabled
 
-            # ── Fast Path Greeting Check ──
-            if agent_config and not (context_data or {}).get("formulation_only", False) and (context_data or {}).get("outbound_mode") != "ai_formulated":
+            # ── Fast Path Greeting Check (bypassed if agent is orchestrated via Graph) ──
+            if agent_config and agent_config.get("execution_type") != "graph" and not (context_data or {}).get("formulation_only", False) and (context_data or {}).get("outbound_mode") != "ai_formulated":
                 import re
                 normalized_msg = re.sub(r'[^\w\s]', '', message.lower()).strip()
                 normalized_msg = re.sub(r'\s+', ' ', normalized_msg)
