@@ -1548,6 +1548,7 @@ class WorkflowEngine:
                 f"({len(blocks_log)} blocks, {execution.duration_ms}ms)"
             )
             return {
+                'execution_id': execution.id,
                 'result': final_result,
                 'context': clean_context,
                 'status': 'completed',

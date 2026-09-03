@@ -237,7 +237,17 @@ async def execute_workflow(
                     completed_at=execution.completed_at
                 )
 
-        # Fetch the execution record
+        # Fetch the execution record by its exact ID to avoid race conditions with concurrent runs
+        exec_id = result_context.get("execution_id") if isinstance(result_context, dict) else None
+        if exec_id:
+            exec_result = await db.execute(
+                select(WorkflowExecution).where(WorkflowExecution.id == exec_id)
+            )
+            execution = exec_result.scalar_one_or_none()
+            if execution:
+                return execution
+
+        # Fallback to latest execution only if exec_id was not provided
         exec_result = await db.execute(
             select(WorkflowExecution)
             .where(WorkflowExecution.workflow_id == workflow_id)
@@ -248,12 +258,13 @@ async def execute_workflow(
         if execution:
             return execution
 
-        # Fallback
+        # Fallback response
         return WorkflowExecutionResponse(
             id=workflow_id,
             workflow_id=workflow_id,
             status="completed",
-            context=result_context,
+            result=result_context.get("result") if isinstance(result_context, dict) else None,
+            context=result_context if isinstance(result_context, dict) else {},
         )
 
     except Exception as e:
