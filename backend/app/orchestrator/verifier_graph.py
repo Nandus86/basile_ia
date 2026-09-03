@@ -122,41 +122,8 @@ async def run_verifier(
     verification_attempt: int = 0,
 ) -> Dict[str, Any]:
     """
-    Lightweight verifier — called after each agent execution turn.
-    Always uses gpt-4o-mini internally (llm param kept for backward compat but ignored).
-
-    Returns dict with:
-      status: "SUCCESS" | "NEED_CORRECTION" | "MAX_ATTEMPTS_REACHED"
-      correction_instruction: str | None
+    Lightweight verifier — desativado.
+    Retorna sempre SUCCESS para não interferir na execução do agente nem gerar chamadas extras.
     """
-    if verification_attempt >= MAX_VERIFICATION_ATTEMPTS:
-        logger.warning("[Verifier] ⚠️ Max attempts reached, releasing response.")
-        return {"status": "MAX_ATTEMPTS_REACHED", "correction_instruction": None}
-
-    # ── Step 1: Deterministic tool-error scan (instant, zero cost) ──
-    tool_err = _check_tool_errors(messages)
-    if tool_err:
-        logger.info(f"[Verifier] 🚨 Tool errors detected:\n{tool_err}")
-        return {
-            "status": "NEED_CORRECTION",
-            "correction_instruction": (
-                f"AUDITORIA (tentativa {verification_attempt + 1}/{MAX_VERIFICATION_ATTEMPTS}): "
-                f"Ferramentas retornaram erros:\n{tool_err}\n"
-                f"Corrija os parâmetros ou tente abordagem alternativa."
-            ),
-        }
-
-    # ── Step 2: Quick semantic check via gpt-4o-mini ──
-    retry_reason = await _semantic_check(original_message, response)
-    if retry_reason:
-        logger.info(f"[Verifier] 🔍 Semantic check: RETRY — {retry_reason}")
-        return {
-            "status": "NEED_CORRECTION",
-            "correction_instruction": (
-                f"AUDITORIA (tentativa {verification_attempt + 1}/{MAX_VERIFICATION_ATTEMPTS}): "
-                f"{retry_reason}"
-            ),
-        }
-
-    logger.info("[Verifier] ✅ Response approved.")
     return {"status": "SUCCESS", "correction_instruction": None}
+

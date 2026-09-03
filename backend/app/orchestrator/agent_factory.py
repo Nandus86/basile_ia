@@ -1227,90 +1227,54 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             return response.content
 
         from langgraph.errors import GraphRecursionError
-        from app.orchestrator.verifier_graph import run_verifier, MAX_VERIFICATION_ATTEMPTS
 
-        # Extract user message for semantic verification
-        original_user_msg = ""
-        for m in reversed(messages):
-            if isinstance(m, HumanMessage) or (isinstance(m, dict) and m.get("role") == "user"):
-                original_user_msg = m.content if isinstance(m, HumanMessage) else m.get("content", "")
-                if original_user_msg:
-                    break
-
-        verification_attempt = 0
+        recursion_limit = max(150, prep["max_retries"] * 10 + 50)
         current_agent_messages = list(prep["agent_messages"])
         response_text = "Ocorreu um erro ao processar a resposta final."
 
-        while verification_attempt < MAX_VERIFICATION_ATTEMPTS:
-            recursion_limit = max(150, prep["max_retries"] * 10 + 50)
-
-            try:
-                result = await prep["graph"].ainvoke(
-                    {"messages": current_agent_messages},
-                    config={**prep["run_config"], "recursion_limit": recursion_limit},
-                )
-            except GraphRecursionError as recursion_err:
-                logger.warning(f"[AgentFactory] ⚠️ Recursion limit reached: {recursion_err}")
-                if hasattr(recursion_err, 'args') and len(recursion_err.args) > 1 and 'state' in recursion_err.args[1]:
-                    result = recursion_err.args[1]['state']
-                else:
-                    try:
-                        response = await prep["llm"].ainvoke([SystemMessage(content=prep["full_prompt"])] + messages, config=prep["run_config"])
-                        return response.content
-                    except Exception:
-                        return "Desculpe, ocorreu um erro."
-
-            final_messages = result.get("messages", [])
-            
-            for msg in final_messages:
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        logger.info("[AgentFactory] 🛠️ TOOL_CALL agent='%s' tool=%r", prep["name"], tc.get("name"))
-                if isinstance(msg, ToolMessage):
-                    logger.info("[AgentFactory] 📨 TOOL_RESULT tool_call_id=%r", msg.tool_call_id)
-
-            logger.info(
-                "[AgentFactory] 📊 execution mode=%s actions=%s stop_reason=%s",
-                prep["resolved_execution_mode"],
-                prep["budget"].actions_used,
-                prep["budget"].stop_reason(),
+        try:
+            result = await prep["graph"].ainvoke(
+                {"messages": current_agent_messages},
+                config={**prep["run_config"], "recursion_limit": recursion_limit},
             )
+        except GraphRecursionError as recursion_err:
+            logger.warning(f"[AgentFactory] ⚠️ Recursion limit reached: {recursion_err}")
+            if hasattr(recursion_err, 'args') and len(recursion_err.args) > 1 and 'state' in recursion_err.args[1]:
+                result = recursion_err.args[1]['state']
+            else:
+                try:
+                    response = await prep["llm"].ainvoke([SystemMessage(content=prep["full_prompt"])] + messages, config=prep["run_config"])
+                    return response.content
+                except Exception:
+                    return "Desculpe, ocorreu um erro."
 
+        final_messages = result.get("messages", [])
+        
+        for msg in final_messages:
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    logger.info("[AgentFactory] 🛠️ TOOL_CALL agent='%s' tool=%r", prep["name"], tc.get("name"))
+            if isinstance(msg, ToolMessage):
+                logger.info("[AgentFactory] 📨 TOOL_RESULT tool_call_id=%r", msg.tool_call_id)
+
+        logger.info(
+            "[AgentFactory] 📊 execution mode=%s actions=%s stop_reason=%s",
+            prep["resolved_execution_mode"],
+            prep["budget"].actions_used,
+            prep["budget"].stop_reason(),
+        )
+
+        for msg in reversed(final_messages):
+            if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
+                if not (hasattr(msg, "tool_calls") and msg.tool_calls):
+                    response_text = msg.content
+                    break
+
+        if not response_text or response_text == "Ocorreu um erro ao processar a resposta final.":
             for msg in reversed(final_messages):
                 if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
-                    if not (hasattr(msg, "tool_calls") and msg.tool_calls):
-                        response_text = msg.content
-                        break
-
-            if not response_text or response_text == "Ocorreu um erro ao processar a resposta final.":
-                for msg in reversed(final_messages):
-                    if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
-                        response_text = msg.content
-                        break
-
-            # Executa o Verifier Graph
-            try:
-                verifier_out = await run_verifier(
-                    original_message=original_user_msg,
-                    response=response_text,
-                    messages=final_messages,
-                    agent_config=agent_config,
-                    llm=prep["llm"],
-                    verification_attempt=verification_attempt
-                )
-                
-                if verifier_out.get("status") == "NEED_CORRECTION":
-                    correction_instruction = verifier_out.get("correction_instruction")
-                    verification_attempt += 1
-                    logger.info(f"[AgentFactory] 🔄 Verificador solicitou correção (tentativa {verification_attempt}/{MAX_VERIFICATION_ATTEMPTS}): {correction_instruction[:150] if correction_instruction else ''}")
-                    
-                    if correction_instruction:
-                        current_agent_messages.append(SystemMessage(content=correction_instruction))
-                        continue
-            except Exception as v_err:
-                logger.warning(f"[AgentFactory] ⚠️ Falha ao executar VerifierGraph (liberando resposta por resiliência): {v_err}")
-
-            return response_text
+                    response_text = msg.content
+                    break
 
         return response_text
 
