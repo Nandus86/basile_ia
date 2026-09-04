@@ -131,10 +131,23 @@ const router = createRouter({
   routes
 })
 
+const SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000 // 2 horas
+
 router.beforeEach((to, from, next) => {
   const publicPages = ['/login']
   const authRequired = !publicPages.includes(to.path)
   const loggedIn = localStorage.getItem('accessToken')
+  const loginTimestamp = localStorage.getItem('loginTimestamp')
+
+  // Checa se a sessão ultrapassou 2 horas
+  if (loggedIn && loginTimestamp) {
+    const elapsed = Date.now() - parseInt(loginTimestamp, 10)
+    if (elapsed > SESSION_MAX_AGE_MS) {
+      localStorage.removeItem('accessToken')
+      localStorage.removeItem('loginTimestamp')
+      return next({ path: '/login', query: { expired: '1' } })
+    }
+  }
 
   if (authRequired && !loggedIn) {
     return next('/login')

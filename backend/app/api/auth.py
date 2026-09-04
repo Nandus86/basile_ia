@@ -6,9 +6,10 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models.user import User
-from app.schemas.user import Token, UserCreate, UserResponse
+from app.schemas.user import Token, UserCreate, UserResponse, ChangePasswordRequest
 from app.utils.security import verify_password, get_password_hash, create_access_token
 from app.config import settings
+from app.api.deps import require_admin_auth
 
 router = APIRouter()
 
@@ -64,3 +65,41 @@ async def register_user(
     await db.commit()
     await db.refresh(user)
     return user
+
+@router.put("/change-password")
+async def change_password(
+    data: ChangePasswordRequest,
+    auth=Depends(require_admin_auth),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Alteração segura de senha de administrador/usuário.
+    Exige autenticação de administrador (Token JWT ou Master API Key).
+    """
+    if isinstance(auth, User):
+        user = auth
+        if not data.current_password or not verify_password(data.current_password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Senha atual incorreta."
+            )
+        user.hashed_password = get_password_hash(data.new_password)
+        await db.commit()
+        return {"message": "Senha alterada com sucesso!"}
+        
+    # Se autenticado via Master API Key
+    target_email = getattr(data, "email", None)
+    if not target_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ao utilizar API Key mestre, informe o campo 'email' do usuário."
+        )
+    query = select(User).where(User.email == target_email)
+    result = await db.execute(query)
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Usuário '{target_email}' não encontrado.")
+        
+    user.hashed_password = get_password_hash(data.new_password)
+    await db.commit()
+    return {"message": f"Senha do usuário '{target_email}' alterada com sucesso!"}

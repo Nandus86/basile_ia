@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120  # 2 hours mandatory expiration
+    ADMIN_API_KEY: str = "basile_admin_secret_key_change_in_production"
     
     # OpenAI
     OPENAI_API_KEY: str = ""

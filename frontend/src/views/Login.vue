@@ -54,6 +54,18 @@
               <p class="text-body-2 text-medium-emphasis mb-0">Entre com suas credenciais para continuar</p>
             </div>
 
+            <v-alert
+              v-if="isExpired"
+              type="warning"
+              variant="tonal"
+              class="mb-6"
+              rounded="lg"
+              density="compact"
+              icon="mdi-clock-alert-outline"
+            >
+              Sua sessão expirou após 2 horas por motivos de segurança. Por favor, entre novamente.
+            </v-alert>
+
             <v-form @submit.prevent="login">
               <v-text-field
                 v-model="email"
@@ -129,11 +141,14 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
+const isExpired = computed(() => route.query.expired === '1')
+
 const email = ref('')
 const password = ref('')
 const showPassword = ref(false)

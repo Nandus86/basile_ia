@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://basile-redis:6379"
     RABBITMQ_URL: str = "amqp://basile:basile_secret@basile-rabbitmq:5672/"
     BASILE_API_URL: str = "http://basile-backend:8000"
+    ADMIN_API_KEY: str = "basile_admin_secret_key_change_in_production"
 
     class Config:
         env_file = ".env"

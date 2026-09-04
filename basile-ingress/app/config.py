@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Backend API (for workflow execution)
     BACKEND_API_URL: str = "http://basile-backend:8000"
     WORKFLOW_TIMEOUT: int = 120  # seconds — timeout for workflow execution calls
+    ADMIN_API_KEY: str = "basile_admin_secret_key_change_in_production"
 
     class Config:
         env_file = ".env"

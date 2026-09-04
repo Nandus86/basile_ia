@@ -21,6 +21,13 @@ class WorkflowCaller:
         self.base_url = settings.BACKEND_API_URL
         self.timeout = settings.WORKFLOW_TIMEOUT
 
+    def _get_headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if getattr(settings, "ADMIN_API_KEY", None):
+            headers["X-API-Key"] = settings.ADMIN_API_KEY
+            headers["Authorization"] = f"Bearer {settings.ADMIN_API_KEY}"
+        return headers
+
     async def execute(
         self,
         workflow_id: str,
@@ -49,7 +56,7 @@ class WorkflowCaller:
                 response = await client.post(
                     url,
                     json=body,
-                    headers={"Content-Type": "application/json"},
+                    headers=self._get_headers(),
                 )
 
                 if response.status_code < 400:
@@ -114,7 +121,7 @@ class WorkflowCaller:
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
-                response = await client.get(url)
+                response = await client.get(url, headers=self._get_headers())
                 if response.status_code < 400:
                     data = response.json()
                     workflows = data.get("workflows", [])

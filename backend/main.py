@@ -8,7 +8,7 @@ load_dotenv()  # Load .env into os.environ BEFORE anything else
 
 import logging
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
@@ -124,43 +124,49 @@ app.add_middleware(
 )
 
 # Register routers
+from app.api.deps import require_admin_auth
+admin_security = [Depends(require_admin_auth)]
+
+# Public routers
 app.include_router(health.router, tags=["Health"])
-app.include_router(webhook.router, prefix="/webhook", tags=["Webhook"])
-app.include_router(agents.router, prefix="/agents", tags=["Agents"])
-app.include_router(mcp.router, prefix="/mcp", tags=["MCP"])
-app.include_router(mcp_groups.router, prefix="/mcp-groups", tags=["MCP Groups"])
-app.include_router(documents.router, prefix="/documents", tags=["Documents"])
-app.include_router(emotional_profiles.router, prefix="/emotional-profiles", tags=["Emotional Profiles"])
-app.include_router(skills.router, prefix="/skills", tags=["Skills"])
-app.include_router(information_bases.router, prefix="/information-bases", tags=["Information Bases"])
-app.include_router(database.router, prefix="/database", tags=["Database"])
-app.include_router(models.router, tags=["Models"])
-app.include_router(ai_providers.router, prefix="/ai-providers", tags=["AI Providers"])
-app.include_router(webhooks_config.router, prefix="/webhooks-config", tags=["Webhook Configs"])
-app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"])
-app.include_router(dispatcher_config.router, prefix="/disparador-configs", tags=["Dispatcher Configs"])
-app.include_router(dispatcher_proxy.router, prefix="/disparador", tags=["Dispatcher Proxy"])
-app.include_router(workflows.router, prefix="/workflows", tags=["Workflows"])
-app.include_router(workflows.router, prefix="/api/workflows", tags=["Workflows"])
-app.include_router(agent_graphs.router, prefix="/agent-graphs", tags=["Agent Graphs"])
-app.include_router(agent_graphs.router, prefix="/api/agent-graphs", tags=["Agent Graphs"])
-app.include_router(vfs.router, prefix="/vfs-knowledge-bases", tags=["VFS Knowledge Bases"])
-app.include_router(memory.router, prefix="/memory", tags=["Memory Management"])
-app.include_router(skill_groups.router, prefix="/skill-groups", tags=["Skill Groups"])
-app.include_router(agent_groups.router, prefix="/agent-groups", tags=["Agent Groups"])
-app.include_router(agent_control.router, prefix="/agent-control", tags=["Agent Control"])
-app.include_router(backup.router, prefix="/backup", tags=["Backup"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
-app.include_router(qa_eval.router, prefix="/qa-eval", tags=["Q&A Eval"])
+
+# Protected routers (require Admin JWT or Master API Key)
+app.include_router(webhook.router, prefix="/webhook", tags=["Webhook"], dependencies=admin_security)
+app.include_router(agents.router, prefix="/agents", tags=["Agents"], dependencies=admin_security)
+app.include_router(mcp.router, prefix="/mcp", tags=["MCP"], dependencies=admin_security)
+app.include_router(mcp_groups.router, prefix="/mcp-groups", tags=["MCP Groups"], dependencies=admin_security)
+app.include_router(documents.router, prefix="/documents", tags=["Documents"], dependencies=admin_security)
+app.include_router(emotional_profiles.router, prefix="/emotional-profiles", tags=["Emotional Profiles"], dependencies=admin_security)
+app.include_router(skills.router, prefix="/skills", tags=["Skills"], dependencies=admin_security)
+app.include_router(information_bases.router, prefix="/information-bases", tags=["Information Bases"], dependencies=admin_security)
+app.include_router(database.router, prefix="/database", tags=["Database"], dependencies=admin_security)
+app.include_router(models.router, tags=["Models"], dependencies=admin_security)
+app.include_router(ai_providers.router, prefix="/ai-providers", tags=["AI Providers"], dependencies=admin_security)
+app.include_router(webhooks_config.router, prefix="/webhooks-config", tags=["Webhook Configs"], dependencies=admin_security)
+app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"], dependencies=admin_security)
+app.include_router(dispatcher_config.router, prefix="/disparador-configs", tags=["Dispatcher Configs"], dependencies=admin_security)
+app.include_router(dispatcher_proxy.router, prefix="/disparador", tags=["Dispatcher Proxy"], dependencies=admin_security)
+app.include_router(workflows.router, prefix="/workflows", tags=["Workflows"], dependencies=admin_security)
+app.include_router(workflows.router, prefix="/api/workflows", tags=["Workflows"], dependencies=admin_security)
+app.include_router(agent_graphs.router, prefix="/agent-graphs", tags=["Agent Graphs"], dependencies=admin_security)
+app.include_router(agent_graphs.router, prefix="/api/agent-graphs", tags=["Agent Graphs"], dependencies=admin_security)
+app.include_router(vfs.router, prefix="/vfs-knowledge-bases", tags=["VFS Knowledge Bases"], dependencies=admin_security)
+app.include_router(memory.router, prefix="/memory", tags=["Memory Management"], dependencies=admin_security)
+app.include_router(skill_groups.router, prefix="/skill-groups", tags=["Skill Groups"], dependencies=admin_security)
+app.include_router(agent_groups.router, prefix="/agent-groups", tags=["Agent Groups"], dependencies=admin_security)
+app.include_router(agent_control.router, prefix="/agent-control", tags=["Agent Control"], dependencies=admin_security)
+app.include_router(backup.router, prefix="/backup", tags=["Backup"], dependencies=admin_security)
+app.include_router(qa_eval.router, prefix="/qa-eval", tags=["Q&A Eval"], dependencies=admin_security)
 
 # Reports & System Admin
 from app.api import reports
-app.include_router(reports.admin_router)
-app.include_router(reports.church_router)
+app.include_router(reports.admin_router, dependencies=admin_security)
+app.include_router(reports.church_router, dependencies=admin_security)
 
 # Analytics
 from app.api.endpoints import analytics
-app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"], dependencies=admin_security)
 
 @app.get("/")
 async def root():

@@ -67,8 +67,8 @@
             </v-avatar>
             <span class="text-body-2 text-white font-weight-medium" style="opacity: 0.8">Fernando</span>
             <v-spacer />
-            <v-btn icon variant="text" size="x-small" color="white" style="opacity: 0.4">
-              <v-icon size="18">mdi-cog-outline</v-icon>
+            <v-btn icon variant="text" size="x-small" color="white" style="opacity: 0.6" title="Sair do sistema" @click="handleLogout">
+              <v-icon size="18">mdi-logout</v-icon>
             </v-btn>
           </div>
         </div>
@@ -142,7 +142,7 @@
                 </template>
                 <v-list bg-color="#111625" class="border-thin" rounded="lg">
                   <v-list-item prepend-icon="mdi-white-balance-sunny" @click="toggleTheme" title="Alternar Tema" density="compact"></v-list-item>
-                  <v-list-item prepend-icon="mdi-logout" title="Sair" color="error" density="compact"></v-list-item>
+                  <v-list-item prepend-icon="mdi-logout" @click="handleLogout" title="Sair" color="error" density="compact"></v-list-item>
                 </v-list>
               </v-menu>
             </div>
@@ -163,12 +163,41 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useTheme, useDisplay } from 'vuetify'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
 const theme = useTheme()
+const authStore = useAuthStore()
+
+const handleLogout = () => {
+  authStore.logout()
+  router.push('/login')
+}
+
+// Timer watchdog obrigatório de 2 horas
+let watchdogTimer = null
+onMounted(() => {
+  watchdogTimer = setInterval(() => {
+    const ts = localStorage.getItem('loginTimestamp')
+    if (ts) {
+      const elapsed = Date.now() - parseInt(ts, 10)
+      if (elapsed > 2 * 60 * 60 * 1000) {
+        clearInterval(watchdogTimer)
+        authStore.logout()
+        router.push({ path: '/login', query: { expired: '1' } })
+      }
+    }
+  }, 30000)
+})
+
+onUnmounted(() => {
+  if (watchdogTimer) clearInterval(watchdogTimer)
+})
+
 const isWorkflowEditor = computed(() => route.path.startsWith('/workflows/') || route.path.startsWith('/agent-graphs/'))
 const { mobile } = useDisplay()
 const drawer = ref(true)
