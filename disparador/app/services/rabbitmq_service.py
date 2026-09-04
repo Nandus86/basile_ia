@@ -23,8 +23,8 @@ class DisparadorRabbitMQ:
                     client_properties={"connection_name": "Disparador Webhook API"}
                 )
                 self.channel = await self.connection.channel()
-                await self.channel.set_qos(prefetch_count=100)
-                logger.info("Connected to RabbitMQ for Disparador reliably.")
+                await self.channel.set_qos(prefetch_count=settings.MAX_CONCURRENT_CHURCHES)
+                logger.info(f"Connected to RabbitMQ for Disparador reliably (qos={settings.MAX_CONCURRENT_CHURCHES}).")
             except Exception as e:
                 logger.error(f"Failed to connect to RabbitMQ for Disparador: {e}")
                 self.connection = None

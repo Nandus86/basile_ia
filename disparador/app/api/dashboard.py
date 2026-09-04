@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import uuid
 import logging
+import aio_pika
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,35 @@ async def resume_campaign(service_id: str):
     if campaign:
         campaign_key = campaign.get("campaign_key")
         if campaign_key:
+            # Check if there are pending contacts in Redis and no active run
+            last_run = await disparador_redis.get_last_run(campaign_key)
+            run_status = await disparador_redis.get_run_status(last_run) if last_run else None
+
+            pending_count = await disparador_redis.get_campaign_pending_count(service_id)
+            if pending_count > 0 and run_status not in ("waiting", "sending"):
+                meta = await disparador_redis.get_campaign_pending_meta(service_id)
+                if meta:
+                    batch_size = meta.get("batch_size", 10)
+                    next_batch_contacts = await disparador_redis.pop_campaign_pending_batch(service_id, batch_size)
+                    if next_batch_contacts:
+                        next_run_id = uuid.uuid4().hex
+                        next_payload = meta.copy()
+                        next_payload["contacts"] = next_batch_contacts
+                        next_payload["run_id"] = next_run_id
+                        next_payload["campaign_key"] = campaign_key
+                        next_payload["dispatch_flags"] = {"lock_bypass": True}
+
+                        await disparador_rmq.connect()
+                        queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+                        next_msg = aio_pika.Message(
+                            body=json.dumps(next_payload).encode(),
+                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                        )
+                        await disparador_rmq.channel.default_exchange.publish(next_msg, routing_key="disp_jobs")
+                        await disparador_redis.set_last_run(campaign_key, next_run_id)
+                        await disparador_redis.lock_campaign(campaign_key)
+                        return {"message": "Resumed successfully and next batch enqueued"}
+
             await disparador_redis.unlock_campaign(campaign_key)
 
     return {"message": "Resumed successfully"}
@@ -395,30 +425,41 @@ async def recreate_campaign(service_id: str, db: AsyncSession = Depends(get_db))
     # Extract contacts for batching
     payload_dict = dict(recreate_payload)
     contacts_list = payload_dict.pop("contacts")
-    
+
+    # Demand-based batching: Enqueue ONLY first batch, store remaining in Redis
+    first_batch = contacts_list[:batch_size]
+    remaining_contacts = contacts_list[batch_size:]
+
+    if remaining_contacts:
+        await disparador_redis.set_campaign_pending_contacts(service_id, remaining_contacts)
+    else:
+        await disparador_redis.clear_campaign_pending(service_id)
+
+    meta_payload = payload_dict.copy()
+    meta_payload["batch_size"] = batch_size
+    await disparador_redis.set_campaign_pending_meta(service_id, meta_payload)
+
+    first_batch_payload = payload_dict.copy()
+    first_batch_payload["contacts"] = first_batch
+
     await disparador_rmq.connect()
-    for i in range(0, total_contacts, batch_size):
-        batch_contacts = contacts_list[i:i+batch_size]
-        batch_payload = payload_dict.copy()
-        batch_payload["contacts"] = batch_contacts
-        
-        try:
-            queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
-            message = __import__('aio_pika').Message(
-                body=json.dumps(batch_payload).encode(),
-                delivery_mode=__import__('aio_pika').DeliveryMode.PERSISTENT
-            )
-            await disparador_rmq.channel.default_exchange.publish(
-                message,
-                routing_key="disp_jobs"
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Erro ao enfileirar na recriação: {e}")
-            
+    try:
+        queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+        message = aio_pika.Message(
+            body=json.dumps(first_batch_payload).encode(),
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+        )
+        await disparador_rmq.channel.default_exchange.publish(
+            message,
+            routing_key="disp_jobs"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao enfileirar na recriação: {e}")
+
     # Set lock and run status
     await disparador_redis.lock_campaign(campaign_key)
     await disparador_redis.set_last_run(campaign_key, run_id)
-    
+
     return {"message": "Campanha recriada e disparada com sucesso", "new_run_id": run_id}
 
 @router.post("/campaigns/{service_id}/delete")
@@ -435,13 +476,14 @@ async def delete_campaign(service_id: str):
             if last_run:
                 await disparador_redis.signal_cancel(last_run)
                 await disparador_redis.set_run_status(last_run, "cancelled")
-                
+
     # 2. Wipe Redis keys for the campaign
     await disparador_redis.client.delete(f"disp:campaign:{service_id}")
     await disparador_redis.client.delete(f"disp:campaign:contacts:{service_id}")
     await disparador_redis.client.delete(f"disp:campaign:payloads:{service_id}")
     await disparador_redis.client.delete(f"disp:dlq:{service_id}")
     await disparador_redis.client.delete(f"disp:paused:{service_id}")
+    await disparador_redis.clear_campaign_pending(service_id)
     
     # Mark as deleted so worker drops pending messages
     await disparador_redis.mark_deleted(service_id)

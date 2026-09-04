@@ -199,24 +199,48 @@ async def receive_dispatch(
 
         contacts = payload_dict.pop("contacts")
 
-        await disparador_rmq.connect()
-        for i in range(0, total_contacts, batch_size):
-            batch_contacts = contacts[i:i+batch_size]
-            batch_payload = payload_dict.copy()
-            batch_payload["contacts"] = batch_contacts
+        # Initialize campaign and all contacts in Redis for tracking
+        await disparador_redis.init_campaign(
+            payload.service_id,
+            total_contacts,
+            str(config.id),
+            path,
+            campaign_key=campaign_key
+        )
+        await disparador_redis.set_campaign_contacts(payload.service_id, contacts)
+        await disparador_redis.set_campaign_payloads(payload.service_id, input_payload=payload.model_dump())
 
-            try:
-                queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
-                message = __import__('aio_pika').Message(
-                    body=json.dumps(batch_payload).encode(),
-                    delivery_mode=__import__('aio_pika').DeliveryMode.PERSISTENT
-                )
-                await disparador_rmq.channel.default_exchange.publish(
-                    message,
-                    routing_key="disp_jobs"
-                )
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Erro ao enfileirar: {e}")
+        # Demand-based batching: Enqueue ONLY the first batch to RabbitMQ.
+        # Remaining contacts are kept safely in Redis pending queue to prevent RabbitMQ consumer_timeout.
+        first_batch = contacts[:batch_size]
+        remaining_contacts = contacts[batch_size:]
+
+        if remaining_contacts:
+            await disparador_redis.set_campaign_pending_contacts(payload.service_id, remaining_contacts)
+        else:
+            await disparador_redis.clear_campaign_pending(payload.service_id)
+
+        meta_payload = payload_dict.copy()
+        meta_payload["batch_size"] = batch_size
+        await disparador_redis.set_campaign_pending_meta(payload.service_id, meta_payload)
+
+        first_batch_payload = payload_dict.copy()
+        first_batch_payload["contacts"] = first_batch
+
+        await disparador_rmq.connect()
+        try:
+            queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+            import aio_pika
+            message = aio_pika.Message(
+                body=json.dumps(first_batch_payload).encode(),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+            )
+            await disparador_rmq.channel.default_exchange.publish(
+                message,
+                routing_key="disp_jobs"
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao enfileirar: {e}")
 
         if not lock_bypass:
             await disparador_redis.lock_campaign(campaign_key)

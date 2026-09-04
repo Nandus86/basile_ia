@@ -340,5 +340,61 @@ class DisparadorRedis:
         channel = f"disp:cancel-chan:{run_id}"
         await self.client.publish(channel, "cancel")
 
+    # -- Campaign Pending Contacts Queue (Demand-based batch dispatch) --
+    async def set_campaign_pending_contacts(self, service_id: str, contacts: List[dict]):
+        """Store pending contacts queue in Redis list for demand-based batch dispatch."""
+        await self.ensure_connected()
+        key = f"disp:campaign:pending:{service_id}"
+        await self.client.delete(key)
+        if contacts:
+            serialized = [json.dumps(c) for c in contacts]
+            await self.client.rpush(key, *serialized)
+            await self.client.expire(key, 604800)  # 7 days
+
+    async def pop_campaign_pending_batch(self, service_id: str, batch_size: int) -> List[dict]:
+        """Pop up to batch_size contacts from the pending queue."""
+        await self.ensure_connected()
+        key = f"disp:campaign:pending:{service_id}"
+        items = []
+        try:
+            res = await self.client.lpop(key, count=batch_size)
+            if res:
+                items = [json.loads(x) for x in res]
+                return items
+        except Exception:
+            for _ in range(batch_size):
+                raw = await self.client.lpop(key)
+                if not raw:
+                    break
+                items.append(json.loads(raw))
+            return items
+        return items
+
+    async def get_campaign_pending_count(self, service_id: str) -> int:
+        """Get number of pending contacts remaining in Redis queue."""
+        await self.ensure_connected()
+        key = f"disp:campaign:pending:{service_id}"
+        return await self.client.llen(key)
+
+    async def set_campaign_pending_meta(self, service_id: str, meta: dict):
+        """Save base payload metadata for subsequent batches."""
+        await self.ensure_connected()
+        key = f"disp:campaign:meta:{service_id}"
+        await self.client.set(key, json.dumps(meta), ex=604800)
+
+    async def get_campaign_pending_meta(self, service_id: str) -> Optional[dict]:
+        """Retrieve base payload metadata for subsequent batches."""
+        await self.ensure_connected()
+        key = f"disp:campaign:meta:{service_id}"
+        raw = await self.client.get(key)
+        return json.loads(raw) if raw else None
+
+    async def clear_campaign_pending(self, service_id: str):
+        """Clean pending queue and metadata for a campaign."""
+        await self.ensure_connected()
+        await self.client.delete(f"disp:campaign:pending:{service_id}")
+        await self.client.delete(f"disp:campaign:meta:{service_id}")
+
 disparador_redis = DisparadorRedis()
+
 

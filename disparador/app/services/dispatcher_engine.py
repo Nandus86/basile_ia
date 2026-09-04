@@ -315,6 +315,7 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
 
     await disparador_redis.set_run_status(run_id, "sending")
 
+    next_batch_enqueued = False
     try:
         for i, contact in enumerate(contacts):
             # 3. Check for cancellation/interruption mid-batch (optional but good)
@@ -398,13 +399,66 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
 
         await disparador_redis.set_run_status(run_id, "completed")
         await disparador_redis.set_last_run(campaign_key, run_id)
+
+        # Check if campaign was deleted
+        if await disparador_redis.is_deleted(service_id):
+            logger.warning(f"Campaign {service_id} was deleted. Cleaning pending contacts.")
+            await disparador_redis.clear_campaign_pending(service_id)
+            return
+
+        # Check for more pending contacts in Redis (demand-based dispatching)
+        pending_count = await disparador_redis.get_campaign_pending_count(service_id)
+        if pending_count > 0:
+            if await disparador_redis.is_paused(service_id):
+                logger.info(f"Campaign {service_id} is paused with {pending_count} contacts remaining in Redis.")
+                return
+
+            meta = await disparador_redis.get_campaign_pending_meta(service_id)
+            if meta:
+                batch_size = meta.get("batch_size", 10)
+                next_batch_contacts = await disparador_redis.pop_campaign_pending_batch(service_id, batch_size)
+                if next_batch_contacts:
+                    import aio_pika
+                    next_run_id = uuid.uuid4().hex
+                    next_payload = meta.copy()
+                    next_payload["contacts"] = next_batch_contacts
+                    next_payload["run_id"] = next_run_id
+                    next_payload["campaign_key"] = campaign_key
+                    next_payload["dispatch_flags"] = {"lock_bypass": True}
+
+                    logger.info(f"[DispatcherEngine] Enqueuing next batch of {len(next_batch_contacts)} contacts for {service_id} ({pending_count - len(next_batch_contacts)} remaining in Redis)")
+
+                    try:
+                        await disparador_rmq.connect()
+                        queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+                        next_msg = aio_pika.Message(
+                            body=json.dumps(next_payload).encode(),
+                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                        )
+                        await disparador_rmq.channel.default_exchange.publish(next_msg, routing_key="disp_jobs")
+                        await disparador_redis.set_last_run(campaign_key, next_run_id)
+                        next_batch_enqueued = True
+                        return
+                    except Exception as q_err:
+                        logger.error(f"[DispatcherEngine] Error enqueuing next batch for {service_id}: {q_err}")
+
+        # If no more contacts remain or campaign fully finished
         campaign = await disparador_redis.get_campaign(service_id)
         if campaign:
-            if campaign.get("sent", 0) + campaign.get("failed", 0) >= campaign.get("total", 0):
-                await disparador_redis.complete_campaign(service_id)
-                if config.progress_callback_url:
-                    await send_progress(config.progress_callback_url, service_id, campaign["total"], campaign["sent"], campaign["failed"], status="completed")
+            await disparador_redis.complete_campaign(service_id)
+            await disparador_redis.clear_campaign_pending(service_id)
+            if config.progress_callback_url:
+                await send_progress(
+                    config.progress_callback_url,
+                    service_id,
+                    campaign.get("total", actual_total),
+                    campaign.get("sent", 0),
+                    campaign.get("failed", 0),
+                    status="completed"
+                )
     finally:
-        # Ensure lock is released even on errors/cancellations.
-        await disparador_redis.unlock_campaign(campaign_key)
+        # Only release lock if no next batch was enqueued
+        if not next_batch_enqueued:
+            await disparador_redis.unlock_campaign(campaign_key)
+
 

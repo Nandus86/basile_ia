@@ -2,8 +2,10 @@ import json
 import logging
 import asyncio
 import aio_pika
+import aiormq
 from sqlalchemy.future import select
 
+from app.config import settings
 from app.database import async_session_maker
 from app.models.dispatcher_config import DispatcherConfig
 from app.services.rabbitmq_service import disparador_rmq
@@ -13,9 +15,28 @@ from app.services.dispatcher_engine import dispatch_batch, dispatch_contact
 logger = logging.getLogger(__name__)
 
 active_tasks = {}
+dispatch_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_CHURCHES)
+
+async def _safe_ack(message: aio_pika.IncomingMessage, run_id: str = None):
+    try:
+        if not message.processed and message._channel and not message._channel.is_closed:
+            await message.ack()
+    except (aiormq.exceptions.ChannelInvalidStateError, aiormq.exceptions.ChannelClosed, Exception) as ack_err:
+        logger.warning(f"[Worker] Could not ACK message (run_id={run_id}): {ack_err}")
+
+async def _safe_reject(message: aio_pika.IncomingMessage, requeue: bool = False, run_id: str = None):
+    try:
+        if not message.processed and message._channel and not message._channel.is_closed:
+            await message.reject(requeue=requeue)
+    except (aiormq.exceptions.ChannelInvalidStateError, aiormq.exceptions.ChannelClosed, Exception) as rej_err:
+        logger.warning(f"[Worker] Could not reject message (run_id={run_id}): {rej_err}")
 
 async def process_dispatch_message(message: aio_pika.IncomingMessage):
-    async with message.process():
+    async with dispatch_semaphore:
+        run_id = None
+        service_id = None
+        current_task = asyncio.current_task()
+
         try:
             body_str = message.body.decode()
             payload = json.loads(body_str)
@@ -33,7 +54,6 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
             if not run_id:
                 run_id = f"legacy_{type_id}_{queue_id}_{service_id}_{int(asyncio.get_running_loop().time() * 1000)}"
 
-            current_task = asyncio.current_task()
             active_tasks[run_id] = current_task
             
             # This handles both a batch or a single contact republication inside "contact" vs "contacts"
@@ -52,7 +72,8 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     logger.warning(f"[Worker] Contact {i} (name='{c.get('name')}') arrived with empty number/phone/user_id. Payload data: {c}")
 
             if not config_path:
-                logger.error(f"Missing config_path in payload")
+                logger.error("Missing config_path in payload")
+                await _safe_reject(message, requeue=False, run_id=run_id)
                 active_tasks.pop(run_id, None)
                 return
 
@@ -64,17 +85,20 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                 
                 if not config:
                     logger.error(f"Dispatcher config for path {config_path} not found")
+                    await _safe_reject(message, requeue=False, run_id=run_id)
                     active_tasks.pop(run_id, None)
                     return
 
                 if not config.is_active:
                     logger.info(f"Dispatcher config for {config_path} is inactive. Skipping.")
+                    await _safe_ack(message, run_id=run_id)
                     active_tasks.pop(run_id, None)
                     return
 
             # Check if campaign was explicitly deleted
             if await disparador_redis.is_deleted(service_id):
                 logger.warning(f"Campaign {service_id} was deleted. Dropping pending message.")
+                await _safe_ack(message, run_id=run_id)
                 active_tasks.pop(run_id, None)
                 return
 
@@ -105,22 +129,24 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     timestamp_create=timestamp_create,
                     campaign_total=campaign_total,
                 )
-            except asyncio.CancelledError:
-                logger.info(f"Task for run {run_id} gracefully cancelled.")
-                raise
             finally:
-                active_campaigns_lock.remove(campaign_key)
+                active_campaigns_lock.discard(campaign_key)
                 if active_tasks.get(run_id) == current_task:
                     active_tasks.pop(run_id, None)
 
+            # Safely acknowledge message on successful batch completion
+            await _safe_ack(message, run_id=run_id)
+
         except asyncio.CancelledError:
-            # Re-raise to let 'async with message.process()' handle it if needed
-            # but usually we want to return from the callback
-            return
+            logger.info(f"Task for run {run_id} gracefully cancelled.")
+            if run_id and active_tasks.get(run_id) == current_task:
+                active_tasks.pop(run_id, None)
+            raise  # Re-raise so asyncio handles cancellation properly
         except Exception as e:
             logger.error(f"Error processing dispatch message for {service_id}: {e}")
-            if 'run_id' in locals() and active_tasks.get(run_id) == asyncio.current_task():
+            if run_id and active_tasks.get(run_id) == current_task:
                 active_tasks.pop(run_id, None)
+            await _safe_reject(message, requeue=False, run_id=run_id)
 
 async def start_consumer():
 
@@ -170,7 +196,7 @@ async def start_consumer():
                 logger.warning("RabbitMQ closed. Reconnecting...")
                 
                 # Cancel active tasks to prevent duplicate processing on requeue
-                for t in active_tasks.values():
+                for t in list(active_tasks.values()):
                     t.cancel()
                 active_tasks.clear()
                 
