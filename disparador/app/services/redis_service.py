@@ -74,7 +74,7 @@ class DisparadorRedis:
         return chosen
 
     # -- Campaign Tracking --
-    async def init_campaign(self, service_id: str, total: int, config_id: str, config_path: str, campaign_key: str = None):
+    async def init_campaign(self, service_id: str, total: int, config_id: str, config_path: str, campaign_key: str = None, church_name: str = None):
         await self.ensure_connected()
         key = f"disp:campaign:{service_id}"
         # Only init if not exists to support resuming
@@ -89,10 +89,21 @@ class DisparadorRedis:
                 "config_id": config_id,
                 "config_path": config_path,
                 "campaign_key": campaign_key,
+                "church_name": church_name,
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "completed_at": None
             }
             await self.client.set(key, json.dumps(data))
+        elif church_name:
+            data_raw = await self.client.get(key)
+            if data_raw:
+                try:
+                    c_data = json.loads(data_raw)
+                    if not c_data.get("church_name"):
+                        c_data["church_name"] = church_name
+                        await self.client.set(key, json.dumps(c_data))
+                except Exception:
+                    pass
 
     async def set_campaign_contacts(self, service_id: str, contacts: List[dict]):
         await self.ensure_connected()
@@ -224,6 +235,28 @@ class DisparadorRedis:
                 if len(parts) >= 2:
                     c["type_id"] = parts[0]
                     c["queue_id"] = parts[1]
+
+            # If church_name is not present, attempt to extract from payload
+            if not c.get("church_name"):
+                try:
+                    payload_data = await self.client.get(f"disp:campaign:payloads:{key_parts[-1]}")
+                    if payload_data:
+                        p = json.loads(payload_data)
+                        inp = p.get("input", {})
+                        if isinstance(inp, dict):
+                            ch = inp.get("church")
+                            if isinstance(ch, dict) and ch.get("church_name"):
+                                c["church_name"] = ch.get("church_name")
+                            elif inp.get("church_name"):
+                                c["church_name"] = inp.get("church_name")
+                            elif isinstance(inp.get("context_data"), dict):
+                                cd = inp["context_data"]
+                                if isinstance(cd.get("church"), dict):
+                                    c["church_name"] = cd["church"].get("church_name")
+                                elif cd.get("church_name"):
+                                    c["church_name"] = cd.get("church_name")
+                except Exception:
+                    pass
 
             if not status or c.get("status") == status:
                 campaigns.append(c)

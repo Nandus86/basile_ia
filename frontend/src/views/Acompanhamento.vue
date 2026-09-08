@@ -696,14 +696,38 @@
           </v-col>
         </v-row>
         
+        <v-card class="glass-card mb-6 pa-4">
+          <v-row dense align="center">
+            <v-col cols="12" sm="6" md="5">
+              <v-text-field
+                v-model="dispSearch"
+                prepend-inner-icon="mdi-church"
+                placeholder="Pesquisar por igreja ou queue ID..."
+                variant="outlined"
+                density="compact"
+                hide-details
+                clearable
+              ></v-text-field>
+            </v-col>
+            <v-col cols="12" sm="6" md="7" class="d-flex align-center justify-end ga-2">
+              <span class="text-caption text-medium-emphasis">
+                {{ (filteredDispStaged ? filteredDispStaged.length : 0) }} fila(s) em espera • {{ dispCampaigns ? dispCampaigns.length : 0 }} campanha(s)
+              </span>
+              <v-btn color="primary" variant="tonal" prepend-icon="mdi-refresh" size="small" @click="fetchDisparadorData" :loading="dispLoading">
+                Atualizar
+              </v-btn>
+            </v-col>
+          </v-row>
+        </v-card>
+
         <div class="mb-6">
             <h3 class="text-subtitle-1 font-weight-bold mb-4 d-flex align-center">
                <v-icon color="warning" class="mr-2">mdi-clock-fast</v-icon>
                Fila de Espera (Smart Routing)
             </h3>
-            <v-expansion-panels v-if="dispStaged && dispStaged.length > 0" variant="accordion" class="glass-panels">
+            <v-expansion-panels v-if="filteredDispStaged && filteredDispStaged.length > 0" variant="accordion" class="glass-panels">
               <v-expansion-panel
-                v-for="staged in dispStaged"
+                v-for="staged in filteredDispStaged"
                 :key="staged.queue_id"
                 class="glass-card mb-2"
                 style="border: 1px solid rgba(255, 152, 0, 0.2);"
@@ -711,7 +735,8 @@
                 <v-expansion-panel-title>
                   <div class="d-flex align-center w-100 pr-4">
                     <v-icon class="mr-2" color="warning">mdi-church</v-icon>
-                    <span class="font-weight-bold mr-4">Queue: {{ staged.queue_id }}</span>
+                    <span v-if="staged.church_name" class="font-weight-bold text-warning text-subtitle-2 mr-3">{{ staged.church_name }}</span>
+                    <span class="font-weight-bold mr-4 text-caption text-medium-emphasis">Queue: {{ staged.queue_id }}</span>
                     <v-chip size="small" color="info" variant="flat" class="mr-4">{{ staged.total_contacts }} contatos</v-chip>
                     <v-spacer></v-spacer>
                     <div class="text-caption d-flex align-center">
@@ -770,7 +795,7 @@
             </v-expansion-panels>
             <div v-else class="text-medium-emphasis text-body-2 px-2 d-flex align-center ga-2 py-4 border rounded border-dashed border-opacity-20">
                <v-icon size="18">mdi-information-outline</v-icon>
-               Nenhuma fila de contato aguardando no momento.
+               {{ dispSearch ? 'Nenhuma fila encontrada para esta busca.' : 'Nenhuma fila de contato aguardando no momento.' }}
             </div>
         </div>
 
@@ -781,7 +806,13 @@
         </div>
 
         <v-card class="glass-card">
-          <v-data-table :headers="dispHeaders" :items="dispCampaigns" :loading="dispLoading" hover>
+          <v-data-table :headers="dispHeaders" :items="dispCampaigns" :search="dispSearch" :loading="dispLoading" hover>
+            <template #item.church_name="{ item }">
+              <div class="d-flex align-center font-weight-medium text-body-2">
+                <v-icon size="16" color="warning" class="mr-1">mdi-church</v-icon>
+                <span>{{ item.church_name || '—' }}</span>
+              </div>
+            </template>
             <template #item.queue_id="{ item }"><v-chip size="x-small" color="info" variant="tonal" class="font-weight-bold">{{ item.queue_id || '—' }}</v-chip></template>
             <template #item.type_id="{ item }"><v-chip size="x-small" color="primary" variant="outlined">{{ item.type_id || '—' }}</v-chip></template>
             <template #item.service_id="{ item }"><v-chip size="small" variant="flat" color="rgba(255,255,255,0.05)">{{ item.service_id }}</v-chip></template>
@@ -802,14 +833,25 @@
             <template #item.actions="{ item }">
                <v-btn size="small" variant="text" icon="mdi-magnify" color="primary" @click="openDispDetails(item)"></v-btn>
             </template>
-      </v-data-table>
+          </v-data-table>
         </v-card>
         
         <v-dialog v-model="dispDialog" max-width="700">
           <v-card v-if="dispSelected" class="glass-card">
              <v-card-title class="pa-6 border-b">
-                Campanha: {{ dispSelected.service_id }}
-                <v-chip size="small" class="ml-2" :color="dispSelected.status === 'running' ? 'success' : dispSelected.status === 'paused' ? 'warning' : 'info'">{{ dispSelected.status.toUpperCase() }}</v-chip>
+                <div class="d-flex align-center justify-space-between w-100 flex-wrap ga-2">
+                  <div>
+                    <div v-if="dispSelected.church_name" class="text-subtitle-1 font-weight-bold text-warning d-flex align-center mb-1">
+                      <v-icon size="20" class="mr-1">mdi-church</v-icon>
+                      {{ dispSelected.church_name }}
+                    </div>
+                    <div class="text-body-2">
+                      Campanha: <span class="font-weight-medium">{{ dispSelected.service_id }}</span>
+                      <span v-if="dispSelected.queue_id" class="text-caption text-medium-emphasis ml-2">(Queue: {{ dispSelected.queue_id }})</span>
+                    </div>
+                  </div>
+                  <v-chip size="small" :color="dispSelected.status === 'running' ? 'success' : dispSelected.status === 'paused' ? 'warning' : 'info'">{{ dispSelected.status.toUpperCase() }}</v-chip>
+                </div>
              </v-card-title>
              <v-card-text class="pa-6" style="max-height: 60vh; overflow-y:auto;">
                 <v-row>
@@ -2002,8 +2044,20 @@ const dispSelected = ref(null)
 const dispReport = ref(null)
 const dispActionLoading = ref(false)
 const redispatchingContact = ref(null)
+const dispSearch = ref('')
+
+const filteredDispStaged = computed(() => {
+  if (!dispSearch.value) return dispStaged.value || []
+  const q = dispSearch.value.toLowerCase().trim()
+  return (dispStaged.value || []).filter(staged => {
+    const church = (staged.church_name || '').toLowerCase()
+    const queue = (staged.queue_id || '').toLowerCase()
+    return church.includes(q) || queue.includes(q)
+  })
+})
 
 const dispHeaders = [
+  { title: 'IGREJA', key: 'church_name' },
   { title: 'QUEUE ID', key: 'queue_id' },
   { title: 'TIPO', key: 'type_id' },
   { title: 'SERVICE ID', key: 'service_id' },

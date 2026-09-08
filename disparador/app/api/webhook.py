@@ -148,6 +148,9 @@ async def receive_dispatch(
                 payload_dict = payload.model_dump()
                 contacts = payload_dict.pop("contacts")
                 payload_dict.pop("system", None)  # remove system from meta
+                payload_dict["church_name"] = church_name
+                if isinstance(body_json, dict) and "church" in body_json:
+                    payload_dict["church"] = body_json["church"]
                 
                 campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
 
@@ -208,6 +211,9 @@ async def receive_dispatch(
         payload_dict["campaign_key"] = campaign_key
         payload_dict["run_id"] = run_id
         payload_dict["campaign_total"] = total_contacts
+        payload_dict["church_name"] = church_name
+        if isinstance(body_json, dict) and "church" in body_json:
+            payload_dict["church"] = body_json["church"]
 
         contacts = payload_dict.pop("contacts")
 

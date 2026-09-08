@@ -60,6 +60,26 @@ async def get_campaign_details(service_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
     data["service_id"] = service_id
     data["is_paused"] = await disparador_redis.is_paused(service_id)
+    if not data.get("church_name"):
+        try:
+            payload_data = await disparador_redis.client.get(f"disp:campaign:payloads:{service_id}")
+            if payload_data:
+                p = json.loads(payload_data)
+                inp = p.get("input", {})
+                if isinstance(inp, dict):
+                    ch = inp.get("church")
+                    if isinstance(ch, dict) and ch.get("church_name"):
+                        data["church_name"] = ch.get("church_name")
+                    elif inp.get("church_name"):
+                        data["church_name"] = inp.get("church_name")
+                    elif isinstance(inp.get("context_data"), dict):
+                        cd = inp["context_data"]
+                        if isinstance(cd.get("church"), dict):
+                            data["church_name"] = cd["church"].get("church_name")
+                        elif cd.get("church_name"):
+                            data["church_name"] = cd.get("church_name")
+        except Exception:
+            pass
     return data
 
 @router.post("/campaigns/{service_id}/pause")
@@ -221,6 +241,7 @@ async def get_staged_queues():
         # Group contacts by type_id
         type_id_map = {}
         total_contacts = 0
+        church_name = None
 
         for entry in entries:
             entry_str = entry.decode("utf-8") if isinstance(entry, bytes) else str(entry)
@@ -228,6 +249,25 @@ async def get_staged_queues():
                 config_path, type_id, service_id = entry_str.split(":", 2)
             except ValueError:
                 continue
+
+            if not church_name:
+                meta_raw = await disparador_redis.client.get(f"disp:staged:meta:global:{queue_id}:{config_path}:{type_id}:{service_id}")
+                if meta_raw:
+                    try:
+                        m = json.loads(meta_raw)
+                        ch = m.get("church")
+                        if isinstance(ch, dict) and ch.get("church_name"):
+                            church_name = ch.get("church_name")
+                        elif m.get("church_name"):
+                            church_name = m.get("church_name")
+                        elif isinstance(m.get("context_data"), dict):
+                            cd = m.get("context_data")
+                            if isinstance(cd.get("church"), dict):
+                                church_name = cd["church"].get("church_name")
+                            elif cd.get("church_name"):
+                                church_name = cd.get("church_name")
+                    except Exception:
+                        pass
 
             contacts_key = f"disp:staged:global:{queue_id}:{config_path}:{type_id}:{service_id}"
             raw_contacts = await disparador_redis.client.lrange(contacts_key, 0, -1)
@@ -253,9 +293,25 @@ async def get_staged_queues():
 
             type_id_map[type_id]["contacts"].extend(contacts)
             type_id_map[type_id]["contact_count"] += len(contacts)
+
+        if not church_name:
+            try:
+                from app.database import async_session_maker
+                from app.models.dispatcher_webhook_log import DispatcherWebhookLog
+                from sqlalchemy import text
+                async with async_session_maker() as db:
+                    q = select(DispatcherWebhookLog.church_name).where(
+                        DispatcherWebhookLog.church_name.isnot(None),
+                        text("(request_payload#>>'{}')::jsonb->>'queue_id' = :qid")
+                    ).order_by(DispatcherWebhookLog.created_at.desc()).limit(1)
+                    res = await db.execute(q, {"qid": queue_id})
+                    church_name = res.scalar_one_or_none()
+            except Exception:
+                pass
             
         result.append({
             "queue_id": queue_id,
+            "church_name": church_name,
             "deadline": deadline,
             "time_remaining": time_remaining,
             "time_remaining_minutes": time_remaining // 60,

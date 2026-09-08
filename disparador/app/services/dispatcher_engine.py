@@ -284,8 +284,23 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
     if total == 0:
         return
         
+    church_name = None
+    if isinstance(source_payload, dict):
+        church = source_payload.get("church")
+        if isinstance(church, dict):
+            church_name = church.get("church_name")
+        if not church_name:
+            church_name = source_payload.get("church_name")
+        if not church_name:
+            cd = source_payload.get("context_data") or context_data
+            if isinstance(cd, dict):
+                if isinstance(cd.get("church"), dict):
+                    church_name = cd.get("church", {}).get("church_name")
+                elif cd.get("church_name"):
+                    church_name = cd.get("church_name")
+
     actual_total = campaign_total if campaign_total is not None else total
-    await disparador_redis.init_campaign(service_id, actual_total, str(config.id), config.path, campaign_key=campaign_key)
+    await disparador_redis.init_campaign(service_id, actual_total, str(config.id), config.path, campaign_key=campaign_key, church_name=church_name)
     await disparador_redis.set_campaign_contacts(service_id, contacts)
     
     # Save input payload sample
