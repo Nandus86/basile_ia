@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://basile-redis:6379"
     SECRET_KEY: str = "egress-secret-key-change-in-production"
     BASILE_API_URL: str = "http://basile-backend:8000"
+    ADMIN_API_KEY: Optional[str] = "basile_admin_secret_key_change_in_production"
     
     DEFAULT_WEBHOOK_TIMEOUT: int = 30
     DEFAULT_RETRY_MAX: int = 3

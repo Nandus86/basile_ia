@@ -136,14 +136,21 @@ async def receive_result(
             logger.info(f"[Workflow Trigger] Request URL: {wf_url}")
             logger.info(f"[Workflow Trigger] Request Payload: {wf_payload}")
             
+            headers = {"Content-Type": "application/json"}
+            admin_key = getattr(settings, "ADMIN_API_KEY", None)
+            if admin_key:
+                headers["X-API-Key"] = admin_key
+                headers["X-Admin-Key"] = admin_key
+                headers["Authorization"] = f"Bearer {admin_key}"
+
             async with httpx.AsyncClient(timeout=60.0) as client:
-                wf_res = await client.post(wf_url, json=wf_payload)
+                wf_res = await client.post(wf_url, json=wf_payload, headers=headers)
                 
                 # If 404 on /api/workflows/, attempt fallback to /workflows/
                 if wf_res.status_code == 404 and "/api/workflows/" in wf_url:
                     fallback_url = wf_url.replace("/api/workflows/", "/workflows/")
                     logger.warning(f"[Workflow Trigger] Received 404 on {wf_url}. Trying fallback URL: {fallback_url}")
-                    wf_res = await client.post(fallback_url, json=wf_payload)
+                    wf_res = await client.post(fallback_url, json=wf_payload, headers=headers)
                     wf_url = fallback_url
                 
                 logger.info(f"[Workflow Trigger] Response Status: {wf_res.status_code}")

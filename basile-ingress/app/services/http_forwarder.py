@@ -28,6 +28,7 @@ class HttpForwarder:
         }
         if getattr(settings, "ADMIN_API_KEY", None):
             default_headers["X-API-Key"] = settings.ADMIN_API_KEY
+            default_headers["X-Admin-Key"] = settings.ADMIN_API_KEY
             default_headers["Authorization"] = f"Bearer {settings.ADMIN_API_KEY}"
         if headers:
             default_headers.update(headers)

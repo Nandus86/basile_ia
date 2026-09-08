@@ -1,6 +1,6 @@
 import secrets
 from typing import Optional, Union
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import Depends, HTTPException, Header, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,18 +47,22 @@ async def get_current_active_superuser(current_user: User = Depends(get_current_
 
 async def require_admin_auth(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+    admin_key: Optional[str] = Query(None),
+    api_key: Optional[str] = Query(None),
     authorization: Optional[str] = Header(None, alias="Authorization"),
     db: AsyncSession = Depends(get_db)
 ) -> Union[User, dict]:
     """
     Dependência unificada de autenticação de administrador:
-    1. Valida Master API Key via header X-API-Key ou Authorization Bearer.
+    1. Valida Master API Key via header (X-API-Key, X-Admin-Key), query param (?admin_key=, ?api_key=) ou Authorization Bearer.
     2. Valida Token JWT Bearer verificando se o usuário existe, está ativo e possui is_superuser=True.
     """
     master_key = getattr(settings, "ADMIN_API_KEY", None)
 
-    # 1. Validação via X-API-Key
-    if x_api_key and master_key and secrets.compare_digest(x_api_key, master_key):
+    # 1. Validação via Master API Key (Header ou Query Param)
+    provided_key = x_api_key or x_admin_key or admin_key or api_key
+    if provided_key and master_key and secrets.compare_digest(provided_key, master_key):
         return {"auth_type": "api_key", "role": "admin"}
 
     # 2. Validação via Authorization header

@@ -13,7 +13,8 @@ class BasileClient:
         if getattr(settings, "ADMIN_API_KEY", None):
             headers = {
                 "Authorization": f"Bearer {settings.ADMIN_API_KEY}",
-                "X-API-Key": settings.ADMIN_API_KEY
+                "X-API-Key": settings.ADMIN_API_KEY,
+                "X-Admin-Key": settings.ADMIN_API_KEY
             }
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
@@ -29,7 +30,8 @@ class BasileClient:
         if getattr(settings, "ADMIN_API_KEY", None):
             headers = {
                 "Authorization": f"Bearer {settings.ADMIN_API_KEY}",
-                "X-API-Key": settings.ADMIN_API_KEY
+                "X-API-Key": settings.ADMIN_API_KEY,
+                "X-Admin-Key": settings.ADMIN_API_KEY
             }
         return headers
 
