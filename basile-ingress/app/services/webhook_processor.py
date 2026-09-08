@@ -124,7 +124,10 @@ def validate_pipeline_auth(
     if pipeline_auth_type == "none":
         return True
     
-    if pipeline_auth_type == "api_key":
+    if pipeline_auth_type in ("api_key", "bearer"):
+        from app.config import settings
+        if getattr(settings, "ADMIN_API_KEY", None) and api_key == settings.ADMIN_API_KEY:
+            return True
         return api_key == pipeline_auth_token
     
     return False

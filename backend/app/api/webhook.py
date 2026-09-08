@@ -1,7 +1,7 @@
 """
 Webhook Endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 import time
@@ -71,13 +71,22 @@ async def proxy_disparador_trigger(path: str, request: Request):
     disparador_url = f"{settings.DISPARADOR_SERVICE_URL}/webhook/trigger/personalizado/{path}"
     
     x_api_key = request.headers.get("X-API-Key")
+    if not x_api_key and request.headers.get("Authorization"):
+        auth_header = request.headers.get("Authorization")
+        if auth_header.startswith("Bearer "):
+            x_api_key = auth_header.replace("Bearer ", "").strip()
+        else:
+            x_api_key = auth_header.strip()
+    if not x_api_key and request.query_params.get("api_key"):
+        x_api_key = request.query_params.get("api_key")
+
     forward_headers = {}
     if x_api_key:
         forward_headers["X-API-Key"] = x_api_key
         
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(disparador_url, json=body, headers=forward_headers)
+            resp = await client.post(disparador_url, json=body, headers=forward_headers, params=request.query_params)
             try:
                 content = resp.json()
             except ValueError:
@@ -911,6 +920,8 @@ async def process_dynamic_webhook(
     path: str,
     request: ProcessRequest,
     authorization: str = Header(None),
+    x_api_key: str = Header(None, alias="X-API-Key"),
+    api_key: str = Query(None),
     db: AsyncSession = Depends(get_db),
     redis: RedisClient = Depends(get_redis)
 ):
@@ -928,10 +939,21 @@ async def process_dynamic_webhook(
         
     # Check Auth
     if config.require_token:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-        token = authorization.replace("Bearer ", "")
-        if token != config.access_token:
+        provided_token = None
+        if authorization and authorization.startswith("Bearer "):
+            provided_token = authorization.replace("Bearer ", "").strip()
+        elif authorization:
+            provided_token = authorization.strip()
+        elif x_api_key:
+            provided_token = x_api_key.strip()
+        elif api_key:
+            provided_token = api_key.strip()
+
+        if not provided_token:
+            raise HTTPException(status_code=401, detail="Missing or invalid Authorization header or API Key")
+
+        master_key = getattr(settings, "ADMIN_API_KEY", None)
+        if provided_token != config.access_token and (not master_key or provided_token != master_key):
             raise HTTPException(status_code=403, detail="Invalid token")
             
     # Resolve target agent

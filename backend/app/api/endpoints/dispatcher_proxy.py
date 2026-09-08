@@ -10,7 +10,12 @@ from app.config import settings
 from app.database import get_db
 from app.models.dispatcher_webhook_log import DispatcherWebhookLog
 
+webhook_router = APIRouter()
+dashboard_router = APIRouter()
+
 router = APIRouter()
+router.include_router(webhook_router)
+router.include_router(dashboard_router)
 
 async def _proxy(method: str, path: str, request: Request, body_json: dict = None):
     """Generic HTTP Proxy helper."""
@@ -35,7 +40,7 @@ async def _proxy(method: str, path: str, request: Request, body_json: dict = Non
             
         return JSONResponse(content=content, status_code=resp.status_code)
 
-@router.post("/webhook/{path:path}")
+@webhook_router.post("/webhook/{path:path}")
 async def proxy_webhook(path: str, request: Request):
     """Proxy incoming webhook payloads to the Disparador service without intercepting or logging."""
     body_json = await request.json()
@@ -43,53 +48,53 @@ async def proxy_webhook(path: str, request: Request):
 
 # ── Dashboard GET routes ──────────────────────────────────────────────
 
-@router.get("/dashboard/stats")
+@dashboard_router.get("/dashboard/stats")
 async def proxy_dashboard_stats(request: Request):
     return await _proxy("GET", "/dashboard/stats", request)
 
-@router.get("/dashboard/campaigns")
+@dashboard_router.get("/dashboard/campaigns")
 async def proxy_dashboard_campaigns(request: Request):
     return await _proxy("GET", "/dashboard/campaigns", request)
 
-@router.get("/dashboard/campaigns/{service_id}")
+@dashboard_router.get("/dashboard/campaigns/{service_id}")
 async def proxy_dashboard_campaign_details(service_id: str, request: Request):
     return await _proxy("GET", f"/dashboard/campaigns/{service_id}", request)
 
-@router.get("/dashboard/campaigns/{service_id}/report")
+@dashboard_router.get("/dashboard/campaigns/{service_id}/report")
 async def proxy_campaign_report(service_id: str, request: Request):
     return await _proxy("GET", f"/dashboard/campaigns/{service_id}/report", request)
 
-@router.get("/dashboard/staged")
+@dashboard_router.get("/dashboard/staged")
 async def proxy_staged_queues(request: Request):
     return await _proxy("GET", "/dashboard/staged", request)
 
-@router.post("/dashboard/staged/{queue_id}/dispatch")
+@dashboard_router.post("/dashboard/staged/{queue_id}/dispatch")
 async def proxy_dispatch_staged_queue(queue_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/staged/{queue_id}/dispatch", request)
 
-@router.delete("/dashboard/staged/{queue_id}/delete")
+@dashboard_router.delete("/dashboard/staged/{queue_id}/delete")
 async def proxy_delete_staged_queue(queue_id: str, request: Request):
     return await _proxy("DELETE", f"/dashboard/staged/{queue_id}/delete", request)
 
 # ── Dashboard POST action routes ─────────────────────────────────────
 
-@router.post("/dashboard/campaigns/{service_id}/pause")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/pause")
 async def proxy_pause_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/pause", request)
 
-@router.post("/dashboard/campaigns/{service_id}/resume")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/resume")
 async def proxy_resume_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/resume", request)
 
-@router.post("/dashboard/campaigns/{service_id}/activate")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/activate")
 async def proxy_activate_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/activate", request)
 
-@router.post("/dashboard/campaigns/{service_id}/retry-dlq")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/retry-dlq")
 async def proxy_retry_dlq(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/retry-dlq", request)
 
-@router.post("/dashboard/campaigns/{service_id}/recreate")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/recreate")
 async def proxy_recreate_campaign(service_id: str, request: Request):
     body_json = None
     try:
@@ -98,21 +103,21 @@ async def proxy_recreate_campaign(service_id: str, request: Request):
         pass
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/recreate", request, body_json)
 
-@router.post("/dashboard/campaigns/{service_id}/delete")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/delete")
 async def proxy_delete_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/delete", request)
 
-@router.post("/dashboard/campaigns/{service_id}/redispatch-contact")
+@dashboard_router.post("/dashboard/campaigns/{service_id}/redispatch-contact")
 async def proxy_redispatch_contact(service_id: str, request: Request):
     body_json = await request.json()
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/redispatch-contact", request, body_json)
 
-@router.post("/dashboard/campaigns/unlock")
+@dashboard_router.post("/dashboard/campaigns/unlock")
 async def proxy_unlock_campaign(request: Request):
     body_json = await request.json()
     return await _proxy("POST", "/dashboard/campaigns/unlock", request, body_json)
 
-@router.post("/dashboard/campaigns/lock")
+@dashboard_router.post("/dashboard/campaigns/lock")
 async def proxy_lock_campaign(request: Request):
     body_json = await request.json()
     return await _proxy("POST", "/dashboard/campaigns/lock", request, body_json)

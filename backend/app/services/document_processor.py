@@ -24,7 +24,10 @@ logger = logging.getLogger(__name__)
 
 # Storage directory for uploaded files
 UPLOAD_DIR = Path("/app/uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+try:
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 
 class OpenAIEmbeddings:

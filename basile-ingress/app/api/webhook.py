@@ -3,7 +3,7 @@ Webhook Receive Endpoint — Normalizes, forwards, and queues on failure
 """
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi import APIRouter, Depends, HTTPException, Header, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -26,6 +26,8 @@ async def receive_webhook(
     path: str,
     request: Request,
     x_api_key: str = Header(None, alias="X-API-Key"),
+    api_key: str = Query(None),
+    authorization: str = Header(None, alias="Authorization"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -67,7 +69,14 @@ async def receive_webhook(
 
         dest_url = pipeline.output_url
 
-        if not validate_pipeline_auth(pipeline.auth_type, pipeline.auth_token, x_api_key):
+        provided_key = x_api_key or api_key
+        if not provided_key and authorization:
+            if authorization.startswith("Bearer "):
+                provided_key = authorization.replace("Bearer ", "").strip()
+            else:
+                provided_key = authorization.strip()
+
+        if not validate_pipeline_auth(pipeline.auth_type, pipeline.auth_token, provided_key):
             status = "unauthorized"
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
 

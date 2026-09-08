@@ -21,6 +21,7 @@ from fastapi import Request
 import time
 
 from fastapi import Query
+from app.config import settings
 
 @router.post("/trigger/personalizado/{path:path}", response_model=DispatchAcceptedResponse)
 async def receive_dispatch(
@@ -28,6 +29,8 @@ async def receive_dispatch(
     request: Request,
     retrigger: bool = Query(False),
     x_api_key: str = Header(None, alias="X-API-Key"),
+    api_key: str = Query(None),
+    authorization: str = Header(None, alias="Authorization"),
     db: AsyncSession = Depends(get_db)
 ):
     start_time = time.time()
@@ -79,8 +82,17 @@ async def receive_dispatch(
         if not config.is_active:
             raise HTTPException(status_code=400, detail="Config is inactive")
             
-        if config.api_key and x_api_key != config.api_key:
-            raise HTTPException(status_code=403, detail="Invalid API Key")
+        provided_key = x_api_key or api_key
+        if not provided_key and authorization:
+            if authorization.startswith("Bearer "):
+                provided_key = authorization.replace("Bearer ", "").strip()
+            else:
+                provided_key = authorization.strip()
+
+        master_key = getattr(settings, "ADMIN_API_KEY", None)
+        if config.api_key:
+            if provided_key != config.api_key and (not master_key or provided_key != master_key):
+                raise HTTPException(status_code=403, detail="Invalid API Key")
 
         # Idempotency Lock: Prevent external systems from sending duplicate requests
         campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"

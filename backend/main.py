@@ -127,12 +127,14 @@ app.add_middleware(
 from app.api.deps import require_admin_auth
 admin_security = [Depends(require_admin_auth)]
 
-# Public routers
+# Public / Webhook routers (auth managed per webhook configuration in DB or open)
 app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+app.include_router(webhook.router, prefix="/webhook", tags=["Webhook"])
+app.include_router(dispatcher_proxy.webhook_router, prefix="/disparador", tags=["Dispatcher Webhook"])
 
 # Protected routers (require Admin JWT or Master API Key)
-app.include_router(webhook.router, prefix="/webhook", tags=["Webhook"], dependencies=admin_security)
+app.include_router(dispatcher_proxy.dashboard_router, prefix="/disparador", tags=["Dispatcher Dashboard"], dependencies=admin_security)
 app.include_router(agents.router, prefix="/agents", tags=["Agents"], dependencies=admin_security)
 app.include_router(mcp.router, prefix="/mcp", tags=["MCP"], dependencies=admin_security)
 app.include_router(mcp_groups.router, prefix="/mcp-groups", tags=["MCP Groups"], dependencies=admin_security)
@@ -146,7 +148,6 @@ app.include_router(ai_providers.router, prefix="/ai-providers", tags=["AI Provid
 app.include_router(webhooks_config.router, prefix="/webhooks-config", tags=["Webhook Configs"], dependencies=admin_security)
 app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"], dependencies=admin_security)
 app.include_router(dispatcher_config.router, prefix="/disparador-configs", tags=["Dispatcher Configs"], dependencies=admin_security)
-app.include_router(dispatcher_proxy.router, prefix="/disparador", tags=["Dispatcher Proxy"], dependencies=admin_security)
 app.include_router(workflows.router, prefix="/workflows", tags=["Workflows"], dependencies=admin_security)
 app.include_router(workflows.router, prefix="/api/workflows", tags=["Workflows"], dependencies=admin_security)
 app.include_router(agent_graphs.router, prefix="/agent-graphs", tags=["Agent Graphs"], dependencies=admin_security)
