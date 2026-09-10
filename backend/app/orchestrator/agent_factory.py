@@ -804,10 +804,73 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
         )
         seen_fingerprints = set()
 
-        # Build system prompt
-        system_prompt = agent_config["system_prompt"]
-        
-        # Inject context data if provided
+        # --- 1. BLOCO ESTÁTICO (PREFIXO GLOBAL DE CACHE) ---
+        # 1.1 Base System Prompt (Persona, orientações de tom de voz, regras gerais)
+        base_system_prompt = agent_config["system_prompt"]
+
+        # 1.2 Skills Summary Reminder (Estático)
+        skills_reminder = ""
+        if agent_config.get("skills_summary"):
+            skill_names = [s["name"] for s in agent_config["skills_summary"]]
+            skills_reminder = f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: {', '.join(skill_names)}.\n"
+
+        # 1.3 Árvore de Ferramentas / MCPs Disponíveis (Estático para o agente)
+        resilience_cfg = agent_config.get("resilience", {})
+        max_retries = resilience_cfg.get("max_retries", 3)
+        timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
+
+        tool_instructions = ""
+        if agent_config.get("has_tools") and agent_config.get("tools"):
+            tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
+            tool_instructions = f"\n{skills_reminder}\n## Árvore de Ferramentas / MCPs Disponíveis\n{tool_list}\n\n## Instruções de Ferramentas\nUSE-AS SEMPRE que necessário. Max {max_retries} retries por ferramenta.\n"
+        elif skills_reminder:
+            tool_instructions = skills_reminder
+
+        # 1.4 Modo de Execução (Estático)
+        mode_section = f"\n\n## Modo de Execução (Determinístico)\n- Modo resolvido deste turno: {resolved_execution_mode}\n- Você deve obedecer os limites de execução.\n"
+
+        # 1.5 Regras Sentinel HITL (Estático)
+        hitl_section = ""
+        if agent_config.get("resilience"):
+            res_cfg = agent_config["resilience"]
+            hitl_user = res_cfg.get("hitl_user_approval_enabled", False)
+            hitl_admin = res_cfg.get("hitl_admin_approval_enabled", False)
+            
+            if hitl_user or hitl_admin:
+                hitl_msg = res_cfg.get("hitl_message_template") or ""
+                hitl_section += "\n\n## 🛑 INTERVENÇÃO HUMANA OBRIGATÓRIA (HITL ATIVO)\n"
+                hitl_section += "Você **DEVE** interromper sua execução e aguardar a aprovação ou resposta de um humano antes de tomar a ação final desta tarefa.\n"
+                hitl_section += "Para solicitar esta aprovação, você deve formular sua pergunta para o humano e OBRIGATORIAMENTE incluir a tag `{{ $HITL }}` ao final de sua fala.\n"
+                if hitl_msg:
+                    hitl_section += f"Template sugerido para sua pergunta: \"{hitl_msg}\"\n"
+                hitl_section += "REGRA CRÍTICA: Se a resposta do humano já foi fornecida acima no histórico, NÃO PARE. Vá em frente.\n"
+
+        # Concatenação do Prefixo Estático (Idêntico para todos os usuários/mensagens -> Cache Hit garantido)
+        static_prefix = (
+            base_system_prompt
+            + tool_instructions
+            + mode_section
+            + hitl_section
+        )
+
+        # --- 2. BLOCO DINÂMICO (SUFIXO QUE VARIA POR USUÁRIO / SESSÃO / INTENT) ---
+        dynamic_suffix = ""
+
+        # 2.1 Regras de Treinamento RLHF
+        training_rules_text = await self._inject_training_rules(agent_config, messages, "")
+        if training_rules_text:
+            dynamic_suffix += f"\n\n{training_rules_text.strip()}"
+
+        # 2.2 Diretrizes de Skills Dinâmicas (Sob demanda)
+        dynamic_skills_prompt = await self._get_dynamic_skills_prompt(agent_config, messages)
+        if dynamic_skills_prompt:
+            dynamic_suffix += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
+
+        # 2.3 Contexto RAG da Base de Conhecimento (Específico da pergunta atual)
+        if rag_context:
+            dynamic_suffix += f"\n\n## Contexto da Base de Conhecimento\n\nUse as seguintes informações para responder:\n\n{rag_context}\n\n---\n\nCite a fonte quando usar informações do contexto acima.\n"
+
+        # 2.4 Dados de Contexto do Usuário/Igreja (<context_data>)
         if context_data:
             input_schema = agent_config.get("input_schema")
             context_section = None
@@ -866,58 +929,21 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 context_section = format_context_data_for_prompt(context_data, input_schema)
             
             if context_section:
-                system_prompt += context_section
-        
-        # Inject HITL Sentinel Rules
-        if agent_config.get("resilience"):
-            res_cfg = agent_config["resilience"]
-            hitl_user = res_cfg.get("hitl_user_approval_enabled", False)
-            hitl_admin = res_cfg.get("hitl_admin_approval_enabled", False)
-            
-            if hitl_user or hitl_admin:
-                hitl_msg = res_cfg.get("hitl_message_template") or ""
-                system_prompt += "\n\n## 🛑 INTERVENÇÃO HUMANA OBRIGATÓRIA (HITL ATIVO)\n"
-                system_prompt += "Você **DEVE** interromper sua execução e aguardar a aprovação ou resposta de um humano antes de tomar a ação final desta tarefa.\n"
-                system_prompt += "Para solicitar esta aprovação, você deve formular sua pergunta para o humano e OBRIGATORIAMENTE incluir a tag `{{ $HITL }}` ao final de sua fala.\n"
-                if hitl_msg:
-                    system_prompt += f"Template sugerido para sua pergunta: \"{hitl_msg}\"\n"
-                system_prompt += "REGRA CRÍTICA: Se a resposta do humano já foi fornecida acima no histórico, NÃO PARE. Vá em frente.\n"
+                dynamic_suffix += f"\n\n{context_section}"
 
-        system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
-        dynamic_skills_prompt = await self._get_dynamic_skills_prompt(agent_config, messages)
-        
-        if rag_context:
-            system_prompt += f"\n\n## Contexto da Base de Conhecimento\n\nUse as seguintes informações para responder:\n\n{rag_context}\n\n---\n\nCite a fonte quando usar informações do contexto acima.\n"
-
-        system_prompt = resolve_global_macros(system_prompt, context_data)
-        system_prompt += f"\n\n## Modo de Execução (Determinístico)\n- Modo resolvido deste turno: {resolved_execution_mode}\n- Você deve obedecer os limites de execução.\n"
+        # Resolução de macros globais unificada
+        full_prompt = resolve_global_macros(static_prefix + dynamic_suffix, context_data)
 
         if not agent_config["has_tools"]:
-            if agent_config.get("skills_summary"):
-                skill_names = [s["name"] for s in agent_config["skills_summary"]]
-                system_prompt += f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: {', '.join(skill_names)}.\n"
-            if dynamic_skills_prompt:
-                system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
-            
             trimmed_nr_messages = _clean_and_trim_messages(messages, max_history=8, for_tools=False)
             return {
                 "is_react": False,
                 "llm": llm,
                 "run_config": run_config,
-                "full_prompt": system_prompt,
+                "full_prompt": full_prompt,
                 "messages": messages,
-                "agent_messages": [SystemMessage(content=system_prompt)] + trimmed_nr_messages
+                "agent_messages": [SystemMessage(content=full_prompt)] + trimmed_nr_messages
             }
-
-        tool_list = "\n".join([f"- **{t.name}**: {t.description}" for t in agent_config["tools"]])
-        skills_reminder = ""
-        if agent_config.get("skills_summary"):
-            skill_names = [s["name"] for s in agent_config["skills_summary"]]
-            skills_reminder = f"\n\n## ⚠️ LEMBRETE DE SKILLS ATIVAS\nVocê TEM skills ativas: {', '.join(skill_names)}.\n"
-
-        resilience_cfg = agent_config.get("resilience", {})
-        max_retries = resilience_cfg.get("max_retries", 3)
-        timeout_seconds = resilience_cfg.get("timeout_seconds", 120)
 
         if resolved_execution_mode == "tools_first":
             planner_llm = llm.with_structured_output(ToolFirstPlan)
@@ -993,11 +1019,6 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             )
 
         selected_tools = [_make_guarded_tool(t, budget, seen_fingerprints, t.name.startswith("consultar_")) for t in selected_tools]
-        tool_instructions = f"\n{skills_reminder}\n## Árvore de Ferramentas / MCPs Disponíveis\n{tool_list}\n\n## Instruções de Ferramentas\nUSE-AS SEMPRE que necessário. Max {max_retries} retries por ferramenta.\n"
-        full_prompt = system_prompt + tool_instructions
-        if dynamic_skills_prompt:
-            full_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
-            
         trimmed_messages = _clean_and_trim_messages(messages, max_history=8, for_tools=True)
         agent_messages = [SystemMessage(content=full_prompt)] + trimmed_messages
         llm_with_tools = llm.bind_tools(selected_tools)
