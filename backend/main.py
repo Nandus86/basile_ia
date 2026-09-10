@@ -132,6 +132,8 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(webhook.router, prefix="/webhook", tags=["Webhook"])
 app.include_router(dispatcher_proxy.webhook_router, prefix="/disparador", tags=["Dispatcher Webhook"])
+app.include_router(workflows.trigger_router, prefix="/workflows", tags=["Workflow Triggers"])
+app.include_router(workflows.trigger_router, prefix="/api/workflows", tags=["Workflow Triggers"])
 
 # Protected routers (require Admin JWT or Master API Key)
 app.include_router(dispatcher_proxy.dashboard_router, prefix="/disparador", tags=["Dispatcher Dashboard"], dependencies=admin_security)

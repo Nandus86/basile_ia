@@ -93,19 +93,119 @@
             </v-btn>
           </v-alert>
 
+          <!-- Authentication Layer -->
           <v-select
-            v-model="config.webhook_config_id"
-            :items="webhookConfigs"
-            item-title="name"
-            item-value="id"
-            label="Webhook Config (Autenticação opcional)"
+            v-model="resolvedAuthType"
+            :items="[
+              { title: 'Sem Autenticação (Aberto / Sem chave)', value: 'none' },
+              { title: 'Chave de API Dinâmica (API Key / Bearer)', value: 'api_key' }
+            ]"
+            item-title="title"
+            item-value="value"
+            label="Autenticação do Gatilho"
             variant="outlined"
             density="compact"
-            clearable
-            hide-details
             class="mb-3"
-            @update:model-value="emitUpdate"
+            hide-details
+            @update:model-value="onAuthTypeChange"
           ></v-select>
+
+          <!-- API Key inputs if auth_type === 'api_key' -->
+          <div v-if="resolvedAuthType === 'api_key'" class="mb-3">
+            <v-text-field
+              v-model="config.api_key"
+              :type="showApiKey ? 'text' : 'password'"
+              label="Chave de API Dinâmica"
+              placeholder="ex: wf_live_..."
+              variant="outlined"
+              density="compact"
+              class="mb-2"
+              hide-details
+              @update:model-value="emitUpdate"
+            >
+              <template #append-inner>
+                <v-btn
+                  icon
+                  variant="text"
+                  size="x-small"
+                  :title="showApiKey ? 'Ocultar chave' : 'Mostrar chave'"
+                  @click="showApiKey = !showApiKey"
+                >
+                  <v-icon size="18">{{ showApiKey ? 'mdi-eye-off' : 'mdi-eye' }}</v-icon>
+                </v-btn>
+                <v-btn
+                  icon
+                  variant="text"
+                  size="x-small"
+                  title="Gerar Chave Aleatória"
+                  color="primary"
+                  @click="generateApiKey"
+                >
+                  <v-icon size="18">mdi-refresh</v-icon>
+                </v-btn>
+                <v-btn
+                  icon
+                  variant="text"
+                  size="x-small"
+                  title="Copiar Chave"
+                  :color="copiedApiKey ? 'success' : undefined"
+                  @click="copyApiKey"
+                >
+                  <v-icon size="18">{{ copiedApiKey ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
+                </v-btn>
+              </template>
+            </v-text-field>
+
+            <v-alert type="info" variant="tonal" density="compact" class="text-caption mb-3">
+              <div class="font-weight-bold mb-1">Como autenticar chamadas externas:</div>
+              <ul class="pl-3 mb-0" style="font-size: 11px; line-height: 1.5;">
+                <li>Header: <code>X-API-Key: {{ config.api_key || '&lt;chave&gt;' }}</code></li>
+                <li>Header: <code>Authorization: Bearer {{ config.api_key || '&lt;chave&gt;' }}</code></li>
+                <li>Query Param: <code>?api_key={{ config.api_key || '&lt;chave&gt;' }}</code></li>
+              </ul>
+            </v-alert>
+
+            <!-- Optional legacy WebhookConfig linking -->
+            <v-select
+              v-if="webhookConfigs && webhookConfigs.length"
+              v-model="config.webhook_config_id"
+              :items="webhookConfigs"
+              item-title="name"
+              item-value="id"
+              label="Ou vincular Webhook Config existente (opcional)"
+              variant="outlined"
+              density="compact"
+              clearable
+              hide-details
+              class="mb-3"
+              @update:model-value="emitUpdate"
+            ></v-select>
+          </div>
+
+          <!-- Open access info if auth_type === 'none' -->
+          <div v-else class="mb-3">
+            <v-alert type="success" variant="tonal" density="compact" class="text-caption">
+              <v-icon start size="14">mdi-lock-open-outline</v-icon>
+              <strong>Acesso Aberto:</strong> Este gatilho aceita disparos diretos sem chave e sem depender de login ou token de admin.
+            </v-alert>
+          </div>
+
+          <!-- cURL sample helper -->
+          <div v-if="config.webhook_path" class="mb-3">
+            <div class="d-flex justify-space-between align-center mb-1">
+              <span class="text-caption font-weight-bold" style="color: #9CA3AF;">Exemplo de chamada (cURL):</span>
+              <v-btn
+                size="x-small"
+                variant="text"
+                color="primary"
+                @click="copyCurlSample"
+              >
+                <v-icon start size="12">{{ copiedCurl ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
+                {{ copiedCurl ? 'Copiado!' : 'Copiar cURL' }}
+              </v-btn>
+            </div>
+            <pre class="pa-2 text-caption" style="background: rgba(0,0,0,0.3); border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; font-family: monospace; font-size: 11px; color: #E5E7EB;">{{ curlSample }}</pre>
+          </div>
 
           <v-switch
             :model-value="config.inject_mtm !== false"
@@ -118,6 +218,7 @@
             persistent-hint
           ></v-switch>
         </div>
+
 
         <!-- Internal Synchronous Webhook Trigger Configuration -->
         <div v-if="config.trigger_type === 'internal_webhook'">
@@ -2065,6 +2166,76 @@ function copyInternalWebhookUrl() {
   }
 }
 
+// ── Webhook Trigger Authentication ──────────────────────────────────────────
+const showApiKey = ref(false)
+const copiedApiKey = ref(false)
+const copiedCurl = ref(false)
+
+const resolvedAuthType = computed({
+  get() {
+    if (config.value.auth_type) return config.value.auth_type
+    if (config.value.api_key || config.value.webhook_config_id) return 'api_key'
+    return 'none'
+  },
+  set(val) {
+    config.value.auth_type = val
+    if (val === 'api_key' && !config.value.api_key) {
+      generateApiKey()
+    }
+    emitUpdate()
+  }
+})
+
+function onAuthTypeChange(val) {
+  config.value.auth_type = val
+  if (val === 'api_key' && !config.value.api_key) {
+    generateApiKey()
+  }
+  emitUpdate()
+}
+
+function generateApiKey() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  let random = ''
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+    const array = new Uint8Array(24)
+    window.crypto.getRandomValues(array)
+    for (let i = 0; i < 24; i++) {
+      random += chars[array[i] % chars.length]
+    }
+  } else {
+    for (let i = 0; i < 24; i++) {
+      random += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+  }
+  config.value.api_key = `wf_${random}`
+  emitUpdate()
+}
+
+function copyApiKey() {
+  if (config.value.api_key) {
+    navigator.clipboard.writeText(config.value.api_key)
+    copiedApiKey.value = true
+    setTimeout(() => { copiedApiKey.value = false }, 2000)
+  }
+}
+
+const curlSample = computed(() => {
+  const url = webhookUrl.value || 'https://seu-dominio.com/api/workflows/trigger/path'
+  const isKey = resolvedAuthType.value === 'api_key' && config.value.api_key
+  const headerKey = isKey ? `  -H "X-API-Key: ${config.value.api_key}" \\\n` : ''
+  return `curl -X POST "${url}" \\\n  -H "Content-Type: application/json" \\\n${headerKey}  -d '{"message": "Olá", "session_id": "sessao_123"}'`
+})
+
+function copyCurlSample() {
+  if (curlSample.value) {
+    navigator.clipboard.writeText(curlSample.value)
+    copiedCurl.value = true
+    setTimeout(() => { copiedCurl.value = false }, 2000)
+  }
+}
+
+
 const supportsErrorRouting = computed(() => {
   return [
     'http_request',
@@ -2085,11 +2256,13 @@ const supportsErrorRouting = computed(() => {
 function onTriggerTypeChange(val) {
   if (val === 'webhook' || val === 'internal_webhook') {
     if (!config.value.webhook_path) config.value.webhook_path = ''
+    if (!config.value.auth_type) config.value.auth_type = 'none'
   } else if (val === 'schedule') {
     if (!config.value.cron) config.value.cron = '*/15 * * * *'
   }
   emitUpdate()
 }
+
 
 function emitUpdate() {
   emit('update', props.block)

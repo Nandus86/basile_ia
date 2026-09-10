@@ -24,6 +24,7 @@ from app.schemas.workflow_execution import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+trigger_router = APIRouter()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -541,7 +542,83 @@ async def resume_workflow_execution(
         raise HTTPException(status_code=500, detail=f"Workflow resume failed: {str(e)}")
 
 
-@router.post("/trigger/internal/{path:path}")
+async def _validate_trigger_auth(
+    target_block_config: dict,
+    request: Request,
+    db: AsyncSession
+) -> None:
+    """
+    Validate incoming request against trigger block authentication settings.
+    If auth is 'none' or no key configured, allows public execution.
+    If auth is 'api_key' (or key is configured), requires valid token via:
+      - Header 'Authorization: Bearer <token>' or raw '<token>'
+      - Header 'X-API-Key: <token>'
+      - Query param '?api_key=<token>'
+    Also accepts settings.ADMIN_API_KEY as master fallback.
+    """
+    auth_type = target_block_config.get("auth_type", "none")
+    configured_api_key = (target_block_config.get("api_key") or "").strip()
+    require_auth = (
+        target_block_config.get("require_auth", False)
+        or auth_type == "api_key"
+        or bool(configured_api_key)
+    )
+
+    if not require_auth:
+        return
+
+    provided_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        if auth_header.startswith("Bearer "):
+            provided_token = auth_header.replace("Bearer ", "").strip()
+        else:
+            provided_token = auth_header.strip()
+
+    if not provided_token and request.headers.get("X-API-Key"):
+        provided_token = request.headers.get("X-API-Key").strip()
+
+    if not provided_token and request.query_params.get("api_key"):
+        provided_token = request.query_params.get("api_key").strip()
+
+    if not provided_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API Key or Authorization header for workflow trigger"
+        )
+
+    from app.config import settings
+    master_key = getattr(settings, "ADMIN_API_KEY", None)
+
+    # Also check if target_block_config has webhook_config_id linked to WebhookConfig in database
+    webhook_config_token = None
+    webhook_config_id = target_block_config.get("webhook_config_id")
+    if webhook_config_id:
+        try:
+            from app.models.webhook_config import WebhookConfig
+            cfg_res = await db.execute(select(WebhookConfig).where(WebhookConfig.id == webhook_config_id))
+            wh_cfg = cfg_res.scalar_one_or_none()
+            if wh_cfg and wh_cfg.access_token:
+                webhook_config_token = wh_cfg.access_token.strip()
+        except Exception:
+            pass
+
+    is_valid = False
+    if configured_api_key and provided_token == configured_api_key:
+        is_valid = True
+    elif webhook_config_token and provided_token == webhook_config_token:
+        is_valid = True
+    elif master_key and provided_token == master_key:
+        is_valid = True
+
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid API Key for workflow trigger"
+        )
+
+
+@trigger_router.post("/trigger/internal/{path:path}")
 async def trigger_internal_workflow_by_path(
     path: str,
     request: Request,
@@ -563,6 +640,7 @@ async def trigger_internal_workflow_by_path(
     workflows = result.scalars().all()
 
     target_wf = None
+    target_block_config = {}
     for wf in workflows:
         definition = wf.definition or {}
         blocks = definition.get("blocks", [])
@@ -574,12 +652,16 @@ async def trigger_internal_workflow_by_path(
                 trigger_type = config.get("trigger_type")
                 if trigger_type in ("internal_webhook", "webhook") and config.get("webhook_path") == path:
                     target_wf = wf
+                    target_block_config = config
                     break
         if target_wf:
             break
 
     if not target_wf:
         raise HTTPException(status_code=404, detail=f"No active workflow found with internal webhook trigger path: {path}")
+
+    # Validate trigger authentication (Dynamic API Key, Bearer, or open)
+    await _validate_trigger_auth(target_block_config, request, db)
 
     from app.services.workflow_engine import WorkflowEngine
     engine = WorkflowEngine(db)
@@ -608,19 +690,24 @@ async def trigger_internal_workflow_by_path(
         if execution and execution.result is not None:
             return execution.result
         return result_context
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[Workflows API] Internal synchronous workflow execution failed: {e}")
         raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
 
 
-@router.post("/trigger/{path:path}")
+@trigger_router.post("/trigger/{path:path}")
 async def trigger_workflow_by_path(
     path: str,
     request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db)
 ):
-    """Trigger a workflow by its configured webhook trigger path."""
+    """
+    Trigger a workflow by its configured webhook trigger path.
+    Public endpoint: authentication is handled per workflow trigger settings (Dynamic API Key or Open).
+    """
     try:
         trigger_data = await request.json()
     except Exception:
@@ -631,6 +718,7 @@ async def trigger_workflow_by_path(
     workflows = result.scalars().all()
 
     target_wf = None
+    target_block_config = {}
     is_internal_trigger = False
     for wf in workflows:
         definition = wf.definition or {}
@@ -644,6 +732,7 @@ async def trigger_workflow_by_path(
                 ttype = config.get("trigger_type")
                 if ttype in ("webhook", "internal_webhook") and config.get("webhook_path") == path:
                     target_wf = wf
+                    target_block_config = config
                     if ttype == "internal_webhook":
                         is_internal_trigger = True
                     break
@@ -652,6 +741,9 @@ async def trigger_workflow_by_path(
 
     if not target_wf:
         raise HTTPException(status_code=404, detail=f"No active workflow found with webhook trigger path: {path}")
+
+    # Validate trigger authentication (Dynamic API Key, Bearer, or open)
+    await _validate_trigger_auth(target_block_config, request, db)
 
     from app.services.workflow_engine import WorkflowEngine
     engine = WorkflowEngine(db)
@@ -713,4 +805,5 @@ async def trigger_workflow_by_path(
             "status": "pending",
             "message": "Workflow disparado e enfileirado para execução",
         }
+
 
