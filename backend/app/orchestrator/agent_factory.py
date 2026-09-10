@@ -21,6 +21,7 @@ import copy
 import urllib.parse
 import hashlib
 import time
+from datetime import datetime
 from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
@@ -774,7 +775,7 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
     ):
         """Prepare LLM, tools, prompt and graph for agent execution."""
         from app.schemas.structured_output import format_context_data_for_prompt
-        from app.utils.macros import resolve_global_macros
+        from app.utils.macros import resolve_global_macros, get_user_timezone
         from langgraph.graph import StateGraph, START, END
         from langgraph.graph.message import add_messages
         from langgraph.prebuilt import ToolNode
@@ -930,6 +931,24 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             
             if context_section:
                 dynamic_suffix += f"\n\n{context_section}"
+
+        # 2.5 Metadados Temporais do Atendimento (Injetado dinamicamente no backend no final para preservar o prefix caching)
+        try:
+            tz_name = get_user_timezone(context_data)
+            try:
+                from zoneinfo import ZoneInfo
+                user_tz = ZoneInfo(tz_name)
+            except Exception:
+                import pytz
+                user_tz = pytz.timezone(tz_name or 'America/Sao_Paulo')
+
+            base_now = datetime.now(user_tz)
+            dias_semana = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo']
+            dia_semana = dias_semana[base_now.weekday()]
+            data_hora_str = f"{dia_semana}, {base_now.strftime('%d/%m/%Y %H:%M')}"
+            dynamic_suffix += f"\n\n## ⏱️ Metadados de Tempo deste Atendimento\n- Data e hora atual: {data_hora_str}\n"
+        except Exception as e:
+            logger.warning(f"[AgentFactory] Falha ao injetar metadados temporais: {e}")
 
         # Resolução de macros globais unificada
         full_prompt = resolve_global_macros(static_prefix + dynamic_suffix, context_data)
