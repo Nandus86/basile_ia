@@ -7,7 +7,7 @@ import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, cast, String
 from uuid import UUID
 
 from app.database import get_db
@@ -349,22 +349,26 @@ async def list_workflow_executions(
     workflow_id: UUID,
     skip: int = 0,
     limit: int = 50,
+    run_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """List execution history for a workflow"""
+    query = select(WorkflowExecution).where(WorkflowExecution.workflow_id == workflow_id)
+    count_query = select(func.count(WorkflowExecution.id)).where(WorkflowExecution.workflow_id == workflow_id)
+
+    if run_id and run_id.strip():
+        search_val = f"%{run_id.strip()}%"
+        query = query.where(cast(WorkflowExecution.id, String).ilike(search_val))
+        count_query = count_query.where(cast(WorkflowExecution.id, String).ilike(search_val))
+
     result = await db.execute(
-        select(WorkflowExecution)
-        .where(WorkflowExecution.workflow_id == workflow_id)
-        .order_by(WorkflowExecution.created_at.desc())
+        query.order_by(WorkflowExecution.created_at.desc())
         .offset(skip)
         .limit(limit)
     )
     executions = result.scalars().all()
 
-    count_result = await db.execute(
-        select(func.count(WorkflowExecution.id))
-        .where(WorkflowExecution.workflow_id == workflow_id)
-    )
+    count_result = await db.execute(count_query)
     total = count_result.scalar() or 0
 
     return {"executions": executions, "total": total}

@@ -1182,9 +1182,24 @@
 
         <!-- Executions Table -->
         <v-card class="glass-card" v-if="selectedWorkflowId">
-          <v-card-title class="px-6 py-4">
-            <v-icon class="mr-2" color="primary">mdi-history</v-icon>
-            Histórico de Execuções
+          <v-card-title class="d-flex align-center justify-space-between flex-wrap px-6 py-3 ga-3">
+            <div class="d-flex align-center">
+              <v-icon class="mr-2" color="primary">mdi-history</v-icon>
+              <span>Histórico de Execuções</span>
+            </div>
+            <div style="min-width: 280px; max-width: 380px;" class="flex-grow-1">
+              <v-text-field
+                v-model="workflowRunIdSearch"
+                placeholder="Pesquisar por ID do Run..."
+                prepend-inner-icon="mdi-magnify"
+                variant="outlined"
+                density="compact"
+                hide-details
+                clearable
+                @click:clear="onClearWorkflowSearch"
+                @keyup.enter="onSearchWorkflowEnter"
+              ></v-text-field>
+            </div>
           </v-card-title>
           <v-divider></v-divider>
           <v-card-text class="pa-0">
@@ -1199,6 +1214,7 @@
               ]"
               :items="workflowExecutions"
               :loading="wfLoading"
+              :no-data-text="workflowRunIdSearch ? 'Nenhuma execução encontrada para o ID pesquisado.' : 'Nenhuma execução registrada para este workflow.'"
               hover
               hide-default-footer
               class="bg-transparent"
@@ -1257,7 +1273,22 @@
               </template>
 
               <template v-slot:bottom>
-                <div class="d-flex align-center justify-end pa-4 border-t" style="gap: 16px;">
+                <div class="d-flex align-center justify-space-between flex-wrap pa-4 border-t ga-4">
+                  <div class="d-flex align-center ga-2 text-caption text-medium-emphasis">
+                    <span>Itens por página:</span>
+                    <v-select
+                      v-model="workflowItemsPerPage"
+                      :items="[10, 20, 50, 100]"
+                      variant="outlined"
+                      density="compact"
+                      hide-details
+                      style="width: 95px;"
+                    ></v-select>
+                    <span class="ml-2">
+                      Total: {{ workflowExecutionsTotal }} {{ workflowExecutionsTotal === 1 ? 'execução' : 'execuções' }}
+                    </span>
+                  </div>
+
                   <v-pagination
                     v-model="workflowPage"
                     :length="Math.ceil(workflowExecutionsTotal / workflowItemsPerPage) || 1"
@@ -2019,6 +2050,7 @@ const workflowExecutions = ref([])
 const workflowExecutionsTotal = ref(0)
 const workflowPage = ref(1)
 const workflowItemsPerPage = ref(20)
+const workflowRunIdSearch = ref('')
 const wfLoading = ref(false)
 const wfStats = computed(() => {
   const list = workflowExecutions.value || []
@@ -2874,8 +2906,15 @@ const fetchWorkflowExecutions = async () => {
   wfLoading.value = true
   try {
     const skip = (workflowPage.value - 1) * workflowItemsPerPage.value
+    const params = {
+      skip,
+      limit: workflowItemsPerPage.value
+    }
+    if (workflowRunIdSearch.value && workflowRunIdSearch.value.trim()) {
+      params.run_id = workflowRunIdSearch.value.trim()
+    }
     const { data } = await axiosInstance.get(`/workflows/${selectedWorkflowId.value}/executions`, {
-      params: { skip, limit: workflowItemsPerPage.value }
+      params
     })
     workflowExecutions.value = data.executions || []
     workflowExecutionsTotal.value = data.total || 0
@@ -2950,6 +2989,7 @@ const getWfStatusIcon = (status) => {
 }
 
 watch(selectedWorkflowId, () => {
+  workflowRunIdSearch.value = ''
   workflowPage.value = 1
   fetchWorkflowExecutions()
 })
@@ -2957,6 +2997,33 @@ watch(selectedWorkflowId, () => {
 watch(workflowPage, () => {
   fetchWorkflowExecutions()
 })
+
+watch(workflowItemsPerPage, () => {
+  workflowPage.value = 1
+  fetchWorkflowExecutions()
+})
+
+let wfSearchDebounce = null
+watch(workflowRunIdSearch, () => {
+  if (wfSearchDebounce) clearTimeout(wfSearchDebounce)
+  wfSearchDebounce = setTimeout(() => {
+    workflowPage.value = 1
+    fetchWorkflowExecutions()
+  }, 350)
+})
+
+const onClearWorkflowSearch = () => {
+  if (wfSearchDebounce) clearTimeout(wfSearchDebounce)
+  workflowRunIdSearch.value = ''
+  workflowPage.value = 1
+  fetchWorkflowExecutions()
+}
+
+const onSearchWorkflowEnter = () => {
+  if (wfSearchDebounce) clearTimeout(wfSearchDebounce)
+  workflowPage.value = 1
+  fetchWorkflowExecutions()
+}
 
 const fetchIngressLogs = async () => {
   ingressLoading.value = true
