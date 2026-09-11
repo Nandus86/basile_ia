@@ -2559,6 +2559,201 @@ async def _check_global_workflow_shortcuts(
 
 
 # ─────────────────────────────────────────────────────────────
+# Expired Cell Menu Button Shortcut — Zero-Token Fallback
+# ─────────────────────────────────────────────────────────────
+
+CELL_MENU_ROW_IDS = {
+    "registrar", "listar_membros", "adicionar_membro", "adicionar_visitante",
+    "remover", "informacoes_celula", "encontrar_celula"
+}
+
+
+def _is_expired_cell_menu_button(message: str, context_data: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Deterministic detector for WhatsApp cell/GC interactive button/list clicks.
+    Differentiates cell menu actions from church promotions/campaigns.
+    """
+    if not message and not context_data:
+        return False
+
+    context_data = context_data or {}
+
+    try:
+        # 1. Obter button_response ou selectedRowID
+        button_resp = (
+            context_data.get("global", {}).get("button_response") or
+            context_data.get("system", {}).get("button_response")
+        )
+
+        msg_dict = {}
+        if isinstance(message, str) and message.strip().startswith("{"):
+            try:
+                import json
+                msg_dict = json.loads(message)
+            except Exception:
+                msg_dict = {}
+
+        if not button_resp and msg_dict:
+            button_resp = (
+                msg_dict.get("singleSelectReply", {}).get("selectedRowID") or
+                msg_dict.get("selectedRowID")
+            )
+
+        button_resp_str = str(button_resp).strip().lower() if button_resp else ""
+
+        # 2. Obter quotedMessage
+        quoted_list = (
+            msg_dict.get("contextInfo", {}).get("quotedMessage", {}).get("listMessage", {}) or
+            msg_dict.get("quotedMessage", {}).get("listMessage", {})
+        )
+        desc = str(quoted_list.get("description", "")).strip().lower()
+        title = str(quoted_list.get("title", "")).strip().lower()
+        sections = quoted_list.get("sections", [])
+
+        quoted_row_ids = set()
+        for sec in sections:
+            for r in sec.get("rows", []):
+                rid = str(r.get("rowID", "")).strip().lower()
+                if rid:
+                    quoted_row_ids.add(rid)
+
+        label_cell = str(context_data.get("ai_params", {}).get("label_cell", "")).strip().lower()
+
+        # Caso 1: Botão direto do menu principal de célula (ex: listar_membros, remover, etc.)
+        if button_resp_str in CELL_MENU_ROW_IDS:
+            if "modo " in desc or "modo " in title or (label_cell and label_cell in desc):
+                return True
+            if quoted_row_ids.intersection(CELL_MENU_ROW_IDS):
+                return True
+
+        # Caso 2: A lista citada era inequivocamente o menu de célula
+        if quoted_row_ids.intersection(CELL_MENU_ROW_IDS):
+            return True
+
+        # Caso 3: Sub-menus específicos da célula (ex: "Escolha GC" ou "Escolha uma das opções:" com remover/voltar/sair)
+        if "escolha gc" in desc or "escolha gc" in title:
+            return True
+        if "escolha uma das opções" in desc and ("remover" in quoted_row_ids or "registrar" in quoted_row_ids):
+            return True
+
+    except Exception as err:
+        print(f"[CellMenuShortcut] ⚠️ Error evaluating cell menu button detection: {err}")
+
+    return False
+
+
+async def _handle_expired_cell_menu_shortcut(
+    db,
+    message: str,
+    session_id: str,
+    context_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Handles old/expired WhatsApp cell/GC button clicks outside active workflow runs.
+    Bypasses AI agents completely (Zero Token cost), sends an expiration alert,
+    and restarts the main cell workflow ('Cadastrar Lista de Presença').
+    """
+    from sqlalchemy import select as sa_select
+    from app.models.workflow import Workflow
+    from app.services.workflow_engine import WorkflowEngine
+    import json
+
+    context_data = context_data or {}
+    label_cell = context_data.get("ai_params", {}).get("label_cell") or "GC"
+
+    # 1. Localizar o workflow de cadastro de lista de presença da célula
+    res = await db.execute(
+        sa_select(Workflow).where(
+            Workflow.is_active == True,
+            Workflow.name.ilike("%Cadastrar Lista de Presen%")
+        )
+    )
+    wf = res.scalars().first()
+
+    if not wf:
+        res_all = await db.execute(sa_select(Workflow).where(Workflow.is_active == True))
+        for candidate in res_all.scalars().all():
+            kws = [str(k).lower() for k in (getattr(candidate, "trigger_keywords", []) or [])]
+            if any("modo gc" in k or "testedecelula" in k or "modo lista" in k for k in kws):
+                wf = candidate
+                break
+
+    if not wf:
+        print("[CellMenuShortcut] ⚠️ Could not find active cell workflow 'Cadastrar Lista de Presença'")
+        return None
+
+    print(f"[CellMenuShortcut] ⚡ Intercepting expired cell button click outside active workflow. Restarting '{wf.name}' for session={session_id}")
+
+    try:
+        engine = WorkflowEngine(db)
+        trigger_data = context_data.copy()
+        trigger_data["message"] = f"Modo {label_cell}"
+        trigger_data["matched_keyword"] = f"modo {label_cell.lower()}"
+        trigger_data["session_id"] = session_id
+
+        result_ctx = await engine.execute(
+            workflow_id=wf.id,
+            trigger_data=trigger_data,
+            trigger_type="keyword_trigger",
+        )
+
+        final_result = result_ctx.get("result")
+        if isinstance(final_result, dict):
+            if "result" in final_result:
+                final_result = final_result["result"]
+            elif "saida" in final_result:
+                saida_val = final_result["saida"]
+                if isinstance(saida_val, dict) and "result" in saida_val:
+                    final_result = saida_val["result"]
+                else:
+                    final_result = saida_val
+
+        warning_notice = "⚠️ Essa interação anterior já havia sido encerrada.\n\n"
+
+        # Prepend warning in WhatsApp list description or response
+        if isinstance(final_result, dict):
+            if "description" in final_result and isinstance(final_result["description"], str):
+                final_result["description"] = f"{warning_notice}{final_result['description']}"
+            elif "response" in final_result and isinstance(final_result["response"], str):
+                final_result["response"] = f"{warning_notice}{final_result['response']}"
+
+        is_direct_payload = getattr(wf, "return_direct_payload", False) or result_ctx.get("response_config", {}).get("retornar_payload_direto", False)
+
+        direct_payload = {
+            "__direct_payload": True,
+            "status": result_ctx.get("status", "completed"),
+            "agent_used": f"Workflow Automation ({wf.name})",
+            "workflow_name": wf.name,
+            "matched_keyword": f"modo {label_cell.lower()}",
+            "store_in_memory": result_ctx.get("store_in_memory", True),
+            "response_config": result_ctx.get("response_config", {}),
+        }
+        if result_ctx.get("status") == "paused":
+            direct_payload["execution_id"] = str(result_ctx.get("execution_id"))
+
+        if isinstance(final_result, dict):
+            direct_payload.update(final_result)
+            if "response" not in direct_payload:
+                direct_payload["response"] = f"{warning_notice}*Modo {label_cell}*"
+        elif isinstance(final_result, list):
+            direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
+            direct_payload["data"] = final_result
+        elif final_result is not None:
+            direct_payload["response"] = f"{warning_notice}{final_result}"
+        else:
+            direct_payload["response"] = f"{warning_notice}Menu de {label_cell} reiniciado."
+
+        print(f"[CellMenuShortcut] ⚡ Cell menu restarted successfully with expiration notice. Direct payload ready.")
+        return direct_payload
+
+    except Exception as e:
+        import traceback
+        print(f"[CellMenuShortcut] ❌ Error executing cell workflow shortcut: {e}")
+        traceback.print_exc()
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
 # Trigger MCP Pre-execution — force MCP execution when keyword matches
 # ─────────────────────────────────────────────────────────────
 
@@ -3231,12 +3426,27 @@ async def process_message_task(
 
             # ═══════════════════════════════════════════════════════
             # GLOBAL Workflow Keyword Trigger (Bypasses Everything)
-            # ═══════════════════════════════════════════════════════
-            print("[Task] 🔍 Checking ALL workflows for direct shortcut triggers...")
+            global_wf_response = None
+
+            # 0. Check expired cell menu button shortcut first (Zero AI Tokens)
+            if _is_expired_cell_menu_button(message, context_data):
+                print("[Task] ⚡ Expired cell menu button detected outside active workflow! Intercepting before LLM...")
+                try:
+                    global_wf_response = await _handle_expired_cell_menu_shortcut(db, message, session_id, context_data)
+                except Exception as cell_err:
+                    print(f"[Task] ⚠️ Error in expired cell menu intercept: {cell_err}")
+
+            if global_wf_response is None:
+                print("[Task] 🔍 Checking ALL workflows for direct shortcut triggers...")
+                try:
+                    from app.worker.tasks import _check_global_workflow_shortcuts
+                    global_wf_response = await _check_global_workflow_shortcuts(db, message, session_id, user_access_level, context_data)
+                except Exception as e:
+                    import traceback
+                    print(f"[Task] ❌ Error checking global workflow shortcuts: {e}")
+                    traceback.print_exc()
+
             try:
-                from app.worker.tasks import _check_global_workflow_shortcuts
-                global_wf_response = await _check_global_workflow_shortcuts(db, message, session_id, user_access_level, context_data)
-                
                 if global_wf_response is not None:
                     print(f"[Task] ⚡ Global Workflow direct trigger executed. Bypassing ALL agents.")
                     
