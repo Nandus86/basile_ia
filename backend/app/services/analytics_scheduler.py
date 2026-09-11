@@ -21,11 +21,52 @@ async def _resolve_church_name(session, church_id: str) -> str:
             return name
     return church_id
 
-async def run_analytics_agent():
+from datetime import datetime, date, time, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    import pytz
+    ZoneInfo = pytz.timezone
+
+
+def get_utc_day_range(target_date=None, tz_name="America/Sao_Paulo"):
     """
-    Function that runs periodically (daily) to invoke the Analyst Agent for users.
+    Retorna (start_utc, end_utc, target_date_obj) para um dia específico
+    convertido do timezone local (ex: America/Sao_Paulo) para UTC.
+    Se target_date for None, assume ontem (D-1).
     """
-    logger.info("[AnalyticsScheduler] Starting daily analytics agent run...")
+    try:
+        user_tz = ZoneInfo(tz_name)
+    except Exception:
+        user_tz = ZoneInfo("America/Sao_Paulo")
+
+    now_local = datetime.now(user_tz)
+    if target_date is None:
+        target_date_obj = (now_local - timedelta(days=1)).date()
+    elif isinstance(target_date, str):
+        target_date_obj = date.fromisoformat(target_date.strip())
+    elif isinstance(target_date, datetime):
+        target_date_obj = target_date.date()
+    elif isinstance(target_date, date):
+        target_date_obj = target_date
+    else:
+        target_date_obj = (now_local - timedelta(days=1)).date()
+
+    start_local = datetime.combine(target_date_obj, time.min).replace(tzinfo=user_tz)
+    end_local = datetime.combine(target_date_obj, time.max).replace(tzinfo=user_tz)
+
+    start_utc = start_local.astimezone(timezone.utc)
+    end_utc = end_local.astimezone(timezone.utc)
+    return start_utc, end_utc, target_date_obj
+
+
+async def run_analytics_agent(target_date=None):
+    """
+    Function that runs periodically (daily) to invoke the Analyst Agent for users
+    who actually sent messages on the target day (defaults to yesterday D-1).
+    """
+    start_utc, end_utc, target_date_obj = get_utc_day_range(target_date)
+    logger.info(f"[AnalyticsScheduler] Starting daily analytics run for date {target_date_obj} (UTC {start_utc} to {end_utc})...")
     try:
         async with AsyncSessionLocal() as session:
             # 1. Fetch AnalyticsConfig to know which agent to use
@@ -36,43 +77,53 @@ async def run_analytics_agent():
                 logger.warning("[AnalyticsScheduler] No agent configured for Analytics. Skipping run.")
                 return
                 
-            from app.models.user_analytics import UserAnalytics
-            from sqlalchemy import select, and_, or_
+            from app.models.conversation_message import ConversationMessage
+            from sqlalchemy import select, func
 
-            # 3. Find eligible users
-            query_users = select(UserAnalytics).where(
-                and_(
-                    UserAnalytics.interaction_count >= 3,
-                    or_(
-                        UserAnalytics.last_analyzed_at == None,
-                        UserAnalytics.last_seen_at > UserAnalytics.last_analyzed_at
-                    )
+            # 2. Find sessions that actually interacted on the target day (role == 'user')
+            query_active = (
+                select(
+                    ConversationMessage.session_id,
+                    func.count(ConversationMessage.id).label("user_msg_count")
                 )
+                .where(
+                    ConversationMessage.role == "user",
+                    ConversationMessage.created_at >= start_utc,
+                    ConversationMessage.created_at <= end_utc
+                )
+                .group_by(ConversationMessage.session_id)
             )
-            users_res = await session.execute(query_users)
-            users = users_res.scalars().all()
+            res = await session.execute(query_active)
+            active_sessions = res.all()
             
-            logger.info(f"[AnalyticsScheduler] Found {len(users)} users pending analysis.")
+            logger.info(f"[AnalyticsScheduler] Found {len(active_sessions)} active users who interacted on {target_date_obj}.")
             
             from app.services.rabbitmq_service import rabbitmq_client
             await rabbitmq_client.connect()
             
-            for user in users:
+            queued = 0
+            for row in active_sessions:
+                session_id = row[0]
+                msg_count = row[1]
                 try:
                     payload = {
-                        "session_id": user.session_id,
-                        "agent_id": config.agent_id
+                        "session_id": session_id,
+                        "agent_id": str(config.agent_id),
+                        "target_date": target_date_obj.isoformat(),
+                        "start_time": start_utc.isoformat(),
+                        "end_time": end_utc.isoformat(),
+                        "daily_msg_count": msg_count
                     }
                     await rabbitmq_client.publish_message(
                         exchange_name="",
                         routing_key="analytics_tasks",
                         message_body=payload
                     )
-                    logger.info(f"[AnalyticsScheduler] Queued session {user.session_id} for analysis")
+                    queued += 1
                 except Exception as e:
-                    logger.error(f"[AnalyticsScheduler] Failed to queue session {user.session_id}: {e}")
+                    logger.error(f"[AnalyticsScheduler] Failed to queue session {session_id}: {e}")
                     
-            
+            logger.info(f"[AnalyticsScheduler] Enqueued {queued} users for date {target_date_obj}.")
     except Exception as e:
         logger.error(f"[AnalyticsScheduler] Error running analytics agent: {e}")
     finally:

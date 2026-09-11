@@ -137,27 +137,188 @@
     </v-window>
 
     <!-- Dialog for details -->
-    <v-dialog v-model="dialog" max-width="800px">
-      <v-card v-if="selectedUser">
-        <v-card-title class="text-h5 bg-surface pa-4 d-flex justify-space-between align-center">
-          Perfil Analítico
-          <v-btn icon="mdi-close" variant="text" @click="dialog = false"></v-btn>
+    <v-dialog v-model="dialog" max-width="920px" scrollable>
+      <v-card v-if="selectedUser" class="border-radius-xl">
+        <v-card-title class="pa-4 bg-surface d-flex justify-space-between align-center border-b">
+          <div class="d-flex align-center ga-3">
+            <v-avatar color="primary" variant="tonal" size="44">
+              <v-icon size="24">mdi-account-heart</v-icon>
+            </v-avatar>
+            <div>
+              <div class="text-h6 font-weight-bold">
+                {{ selectedUser.profile_data?.__zona_crm?.first_name || selectedUser.profile_data?.__zona_crm?.['Nome Completo'] || selectedUser.profile_data?.__zona_crm?.name || 'Membro / Contato' }}
+              </div>
+              <div class="text-caption text-medium-emphasis">
+                {{ selectedUser.profile_data?.__zona_crm?.church_name || selectedUser.profile_data?.__zona_crm?.['Igreja Sede'] || 'Igreja não informada' }} &bull; Sessão: {{ selectedUser.session_id }}
+              </div>
+            </div>
+          </div>
+          <div class="d-flex align-center ga-2">
+            <v-chip :color="getScoreColor(selectedUser.engagement_score)" size="small" variant="flat">
+              Score: {{ selectedUser.engagement_score }}
+            </v-chip>
+            <v-chip :color="getPriorityColor(selectedUser.care_priority)" size="small" variant="flat" class="text-uppercase">
+              {{ selectedUser.care_priority }}
+            </v-chip>
+            <v-btn icon="mdi-close" variant="text" size="small" @click="dialog = false"></v-btn>
+          </div>
         </v-card-title>
-        <v-card-text class="pa-4">
-          <v-row>
-            <v-col cols="12" md="6">
-              <h3 class="text-h6 mb-3">Snapshot CRM</h3>
-              <pre class="bg-grey-darken-4 pa-3 rounded text-caption">{{ JSON.stringify(selectedUser.profile_data.__zona_crm, null, 2) }}</pre>
-            </v-col>
-            <v-col cols="12" md="6">
-              <h3 class="text-h6 mb-3">Métricas</h3>
-              <pre class="bg-grey-darken-4 pa-3 rounded text-caption">{{ JSON.stringify(selectedUser.profile_data.__zona_metricas, null, 2) }}</pre>
-            </v-col>
-            <v-col cols="12">
-              <h3 class="text-h6 mb-3 text-primary">Aprendizado (IA)</h3>
-              <pre class="bg-grey-darken-4 pa-3 rounded text-caption">{{ JSON.stringify(selectedUser.profile_data.__zona_aprendizado, null, 2) }}</pre>
-            </v-col>
-          </v-row>
+
+        <v-tabs v-model="detailsTab" bg-color="surface-light" density="compact">
+          <v-tab value="ia" prepend-icon="mdi-brain">Visão Pastoral & IA</v-tab>
+          <v-tab value="crm" prepend-icon="mdi-account-details">Dados Cadastrais (CRM)</v-tab>
+          <v-tab value="metrics" prepend-icon="mdi-chart-timeline-variant">Métricas</v-tab>
+          <v-tab value="raw" prepend-icon="mdi-code-json">JSON Técnico</v-tab>
+        </v-tabs>
+
+        <v-card-text class="pa-5" style="max-height: 70vh; overflow-y: auto;">
+          <v-window v-model="detailsTab">
+            <!-- ABA 1: VISÃO PASTORAL & IA -->
+            <v-window-item value="ia">
+              <div v-if="selectedUser.profile_data?.__zona_aprendizado && Object.keys(selectedUser.profile_data.__zona_aprendizado).length > 0">
+                <!-- Vínculo e Sentimento -->
+                <v-row class="mb-2">
+                  <v-col cols="12" md="6">
+                    <v-card variant="outlined" class="pa-4 h-100 bg-surface">
+                      <div class="text-caption text-medium-emphasis mb-1 font-weight-bold text-uppercase">Vínculo com a Igreja</div>
+                      <div class="d-flex align-center ga-2 mb-2">
+                        <v-chip
+                          :color="selectedUser.profile_data.__zona_aprendizado.vinculo_igreja_ativo ? 'success' : 'error'"
+                          size="small"
+                          variant="flat"
+                          :prepend-icon="selectedUser.profile_data.__zona_aprendizado.vinculo_igreja_ativo ? 'mdi-check-circle' : 'mdi-alert-circle'"
+                        >
+                          {{ selectedUser.profile_data.__zona_aprendizado.vinculo_igreja_ativo ? 'Ativo & Conectado' : 'Afastado / Em Risco' }}
+                        </v-chip>
+                        <span v-if="selectedUser.profile_data.__zona_aprendizado.data_analise" class="text-caption text-medium-emphasis">
+                          (Ref: {{ selectedUser.profile_data.__zona_aprendizado.data_analise }})
+                        </span>
+                      </div>
+                      <p class="text-body-2 mb-0">
+                        {{ selectedUser.profile_data.__zona_aprendizado.motivo_do_vinculo || 'Sem justificativa de vínculo registrada.' }}
+                      </p>
+                    </v-card>
+                  </v-col>
+
+                  <v-col cols="12" md="6">
+                    <v-card variant="outlined" class="pa-4 h-100 bg-surface">
+                      <div class="text-caption text-medium-emphasis mb-1 font-weight-bold text-uppercase">Estado Emocional & Comunicação</div>
+                      <div class="d-flex align-center ga-2 mb-2">
+                        <v-chip color="info" size="small" variant="flat" prepend-icon="mdi-emoticon-outline">
+                          Sentimento: {{ selectedUser.profile_data.__zona_aprendizado.sentimento_predominante || 'Neutro' }}
+                        </v-chip>
+                      </div>
+                      <p class="text-body-2 mb-0">
+                        <strong>Estilo:</strong> {{ selectedUser.profile_data.__zona_aprendizado.estilo_de_comunicacao || 'Comunicação padrão.' }}
+                      </p>
+                    </v-card>
+                  </v-col>
+                </v-row>
+
+                <!-- Tópicos de Interesse -->
+                <v-card variant="outlined" class="pa-4 mb-4 bg-surface" v-if="selectedUser.profile_data.__zona_aprendizado.topicos_de_interesse?.length">
+                  <div class="text-caption text-medium-emphasis mb-2 font-weight-bold text-uppercase">Tópicos de Interesse / Assuntos Abordados</div>
+                  <div class="d-flex flex-wrap ga-2">
+                    <v-chip
+                      v-for="(topic, idx) in selectedUser.profile_data.__zona_aprendizado.topicos_de_interesse"
+                      :key="idx"
+                      size="small"
+                      color="primary"
+                      variant="tonal"
+                      prepend-icon="mdi-tag-outline"
+                    >
+                      {{ topic }}
+                    </v-chip>
+                  </div>
+                </v-card>
+
+                <!-- Pontos de Atenção Pastoral -->
+                <v-alert
+                  v-if="selectedUser.profile_data.__zona_aprendizado.pontos_de_atencao"
+                  color="warning"
+                  variant="tonal"
+                  icon="mdi-shield-alert-outline"
+                  class="mb-2"
+                >
+                  <template v-slot:title>
+                    <span class="font-weight-bold">Pontos de Atenção Pastoral</span>
+                  </template>
+                  <div class="text-body-2 mt-1" style="white-space: pre-wrap;">
+                    {{ selectedUser.profile_data.__zona_aprendizado.pontos_de_atencao }}
+                  </div>
+                </v-alert>
+              </div>
+
+              <!-- Estado Vazio de IA -->
+              <v-card v-else variant="outlined" class="pa-8 text-center bg-surface">
+                <v-icon size="48" color="medium-emphasis" class="mb-2">mdi-brain</v-icon>
+                <div class="text-h6 font-weight-medium mb-1">Perfil Analítico Ainda Não Processado</div>
+                <p class="text-body-2 text-medium-emphasis mb-4">
+                  O Agente Analista processa perfis diariamente às 01:00 para usuários que conversaram no dia. Você também pode disparar a análise agora.
+                </p>
+                <v-btn
+                  color="primary"
+                  prepend-icon="mdi-play"
+                  :loading="runningSessions[selectedUser.session_id]"
+                  @click="runAgent(selectedUser.session_id)"
+                >
+                  Analisar Perfil Agora
+                </v-btn>
+              </v-card>
+            </v-window-item>
+
+            <!-- ABA 2: DADOS CADASTRAIS (CRM) -->
+            <v-window-item value="crm">
+              <v-card variant="outlined" class="bg-surface">
+                <v-table density="compact">
+                  <tbody>
+                    <tr v-for="(val, key) in (selectedUser.profile_data?.__zona_crm || {})" :key="key">
+                      <td class="font-weight-bold text-medium-emphasis" style="width: 35%;">{{ key }}</td>
+                      <td>{{ val }}</td>
+                    </tr>
+                    <tr v-if="!selectedUser.profile_data?.__zona_crm || Object.keys(selectedUser.profile_data.__zona_crm).length === 0">
+                      <td colspan="2" class="text-center pa-4 text-medium-emphasis">Nenhum dado cadastral mapeado no CRM.</td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </v-card>
+            </v-window-item>
+
+            <!-- ABA 3: MÉTRICAS DO ATENDIMENTO -->
+            <v-window-item value="metrics">
+              <v-card variant="outlined" class="bg-surface">
+                <v-table density="compact">
+                  <tbody>
+                    <tr>
+                      <td class="font-weight-bold text-medium-emphasis" style="width: 35%;">Total de Interações</td>
+                      <td>{{ selectedUser.interaction_count }}</td>
+                    </tr>
+                    <tr>
+                      <td class="font-weight-bold text-medium-emphasis">Primeira Interação</td>
+                      <td>{{ formatDate(selectedUser.first_seen_at) }}</td>
+                    </tr>
+                    <tr>
+                      <td class="font-weight-bold text-medium-emphasis">Última Atividade</td>
+                      <td>{{ formatDate(selectedUser.last_seen_at) }}</td>
+                    </tr>
+                    <tr>
+                      <td class="font-weight-bold text-medium-emphasis">Última Análise do Agente</td>
+                      <td>{{ formatDate(selectedUser.last_analyzed_at) || 'Nunca analisado' }}</td>
+                    </tr>
+                    <tr v-for="(val, key) in (selectedUser.profile_data?.__zona_metricas || {})" :key="key">
+                      <td class="font-weight-bold text-medium-emphasis">{{ key }}</td>
+                      <td>{{ val }}</td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </v-card>
+            </v-window-item>
+
+            <!-- ABA 4: JSON TÉCNICO -->
+            <v-window-item value="raw">
+              <pre class="bg-grey-darken-4 pa-4 rounded text-caption" style="overflow-x: auto; max-height: 50vh;">{{ JSON.stringify(selectedUser.profile_data, null, 2) }}</pre>
+            </v-window-item>
+          </v-window>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -456,6 +617,7 @@ const systemReportsRef = ref(null)
 const loading = ref(false)
 const users = ref([])
 const dialog = ref(false)
+const detailsTab = ref('ia')
 const selectedUser = ref(null)
 const runningSessions = ref({})
 const runningAll = ref(false)
@@ -625,6 +787,7 @@ const runAllManual = async () => {
 
 const viewDetails = (user) => {
   selectedUser.value = user
+  detailsTab.value = 'ia'
   dialog.value = true
 }
 

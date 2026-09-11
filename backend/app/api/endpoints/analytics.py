@@ -175,13 +175,11 @@ async def run_analytics_manual(session_id: str, db: AsyncSession = Depends(get_d
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao enfileirar tarefa: {str(e)}")
 
-@router.post("/users/run-all", summary="Forçar Análise de Todos os Usuários")
+@router.post("/users/run-all", summary="Forçar Análise de Usuários por Data Alvo")
 async def run_all_analytics_manual(target_date: str = Body(..., embed=True), db: AsyncSession = Depends(get_db)):
     """
-    Busca todos os usuários com interaction_count >= 3 e os coloca na fila
-    para análise manual forçada (útil para retroativos).
-    A 'target_date' aqui serve apenas como referência para log,
-    ou para usar futuramente na lógica de filtragem se necessário.
+    Busca todas as sessões que enviaram mensagens reais no target_date
+    (baseado no fuso horário local convertido para UTC) e as coloca na fila.
     """
     query = select(AnalyticsConfig).limit(1)
     result = await db.execute(query)
@@ -190,22 +188,51 @@ async def run_all_analytics_manual(target_date: str = Body(..., embed=True), db:
     if not config or not config.agent_id:
         raise HTTPException(status_code=400, detail="Nenhum agente analista configurado nas configurações de Analytics.")
         
-    user_query = select(UserAnalytics).where(UserAnalytics.interaction_count >= 3)
-    user_res = await db.execute(user_query)
-    users = user_res.scalars().all()
+    from app.services.analytics_scheduler import get_utc_day_range
+    from app.models.conversation_message import ConversationMessage
     
-    if not users:
-        return {"status": "success", "message": "Nenhum usuário elegível encontrado para análise.", "queued": 0}
+    try:
+        start_utc, end_utc, target_date_obj = get_utc_day_range(target_date)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Formato de data inválido. Use YYYY-MM-DD: {e}")
+        
+    query_active = (
+        select(
+            ConversationMessage.session_id,
+            func.count(ConversationMessage.id).label("user_msg_count")
+        )
+        .where(
+            ConversationMessage.role == "user",
+            ConversationMessage.created_at >= start_utc,
+            ConversationMessage.created_at <= end_utc
+        )
+        .group_by(ConversationMessage.session_id)
+    )
+    res = await db.execute(query_active)
+    active_sessions = res.all()
+    
+    if not active_sessions:
+        return {
+            "status": "success",
+            "message": f"Nenhum usuário com mensagens enviadas em {target_date_obj.strftime('%d/%m/%Y')}.",
+            "queued": 0,
+            "target_date": target_date_obj.isoformat()
+        }
         
     from app.services.rabbitmq_service import rabbitmq_client
     await rabbitmq_client.connect()
     
     queued = 0
-    for user in users:
+    for row in active_sessions:
+        session_id = row[0]
+        msg_count = row[1]
         payload = {
-            "session_id": user.session_id,
+            "session_id": session_id,
             "agent_id": str(config.agent_id),
-            "target_date": target_date
+            "target_date": target_date_obj.isoformat(),
+            "start_time": start_utc.isoformat(),
+            "end_time": end_utc.isoformat(),
+            "daily_msg_count": msg_count
         }
         try:
             await rabbitmq_client.publish_message(
@@ -215,9 +242,14 @@ async def run_all_analytics_manual(target_date: str = Body(..., embed=True), db:
             )
             queued += 1
         except Exception as e:
-            print(f"Error queueing user {user.session_id}: {e}")
+            print(f"Error queueing user {session_id}: {e}")
             
-    return {"status": "success", "message": f"{queued} usuários enviados para a fila de processamento.", "queued": queued}
+    return {
+        "status": "success",
+        "message": f"{queued} usuários que interagiram em {target_date_obj.strftime('%d/%m/%Y')} enviados para a fila.",
+        "queued": queued,
+        "target_date": target_date_obj.isoformat()
+    }
 
 from app.models.analytics_report import AnalyticsReport
 from app.schemas.analytics import AnalyticsReportListResponse, AnalyticsReportResponse

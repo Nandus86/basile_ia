@@ -30,12 +30,15 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
             payload = json.loads(body_str)
             session_id = payload.get("session_id")
             agent_id = payload.get("agent_id")
+            target_date_str = payload.get("target_date")
+            start_time_str = payload.get("start_time")
+            end_time_str = payload.get("end_time")
 
             if not session_id or not agent_id:
                 logger.error(f"[AnalyticsConsumer] Invalid payload: {payload}")
                 return
 
-            logger.info(f"[AnalyticsConsumer] Processing analytics for session {session_id}")
+            logger.info(f"[AnalyticsConsumer] Processing analytics for session {session_id} (target_date={target_date_str})")
 
             async with async_session_maker() as session:
                 # Get the Agent
@@ -50,14 +53,22 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     logger.error(f"[AnalyticsConsumer] Agent {agent_id} not found.")
                     return
                 
-                # Get UserAnalytics
+                # Get UserAnalytics or create on-the-fly
                 user_res = await session.execute(
                     select(UserAnalytics).where(UserAnalytics.session_id == session_id)
                 )
                 user = user_res.scalar_one_or_none()
                 if not user:
-                    logger.error(f"[AnalyticsConsumer] UserAnalytics for {session_id} not found.")
-                    return
+                    logger.info(f"[AnalyticsConsumer] UserAnalytics for {session_id} not found. Creating initial profile.")
+                    user = UserAnalytics(
+                        session_id=session_id,
+                        interaction_count=payload.get("daily_msg_count") or 1,
+                        engagement_score=50.0,
+                        care_priority="medium",
+                        profile_data={"__zona_crm": {}, "__zona_metricas": {}, "__zona_aprendizado": {}}
+                    )
+                    session.add(user)
+                    await session.flush()
 
                 # Fetch Config
                 from app.models.analytics_config import AnalyticsConfig
@@ -71,7 +82,7 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     job_id=str(uuid_mod.uuid4()),
                     webhook_path="/internal/analytics_agent",
                     status="processing",
-                    request_data={"session_id": session_id, "agent": agent.name}
+                    request_data={"session_id": session_id, "agent": agent.name, "target_date": target_date_str}
                 )
                 session.add(job_log)
                 await session.commit()
@@ -79,11 +90,29 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                 start_time = datetime.now()
 
                 try:
-                    # Fetch recent messages
+                    start_dt = None
+                    end_dt = None
+                    if start_time_str:
+                        try:
+                            start_dt = datetime.fromisoformat(start_time_str)
+                        except Exception:
+                            pass
+                    if end_time_str:
+                        try:
+                            end_dt = datetime.fromisoformat(end_time_str)
+                        except Exception:
+                            pass
+
+                    # Fetch messages (restricted to target day if provided)
                     msg_query = select(ConversationMessage).where(
-                        ConversationMessage.session_id == user.session_id
+                        ConversationMessage.session_id == session_id
                     )
-                    if user.last_analyzed_at:
+                    if start_dt and end_dt:
+                        msg_query = msg_query.where(
+                            ConversationMessage.created_at >= start_dt,
+                            ConversationMessage.created_at <= end_dt
+                        )
+                    elif user.last_analyzed_at:
                         msg_query = msg_query.where(ConversationMessage.created_at > user.last_analyzed_at)
                     msg_query = msg_query.order_by(ConversationMessage.created_at.asc())
                     
@@ -91,26 +120,38 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     raw_messages = msg_res.scalars().all()
                     
                     if not raw_messages:
-                        # Nothing to do
                         job_log.status = "completed"
-                        job_log.response_data = {"status": "no_new_messages"}
+                        job_log.response_data = {"status": "no_messages_in_window"}
                         user.last_analyzed_at = datetime.now(timezone.utc)
                         await session.commit()
                         return
                     
                     # Filter messages based on allowed_endpoints if configured
+                    def _is_path_allowed(msg_path: str, allowed_list: list) -> bool:
+                        if not allowed_list:
+                            return True
+                        if not msg_path:
+                            return True
+                        clean_msg = msg_path.strip().strip("/").split("/")[-1].lower()
+                        for item in allowed_list:
+                            if not item:
+                                continue
+                            clean_item = item.strip().strip("/").split("/")[-1].lower()
+                            if clean_item == clean_msg or clean_item in msg_path.lower():
+                                return True
+                        return False
+
                     allowed_paths = config.allowed_endpoints if (config and config.allowed_endpoints) else []
-                    messages = []
-                    for m in raw_messages:
-                        if allowed_paths and m.webhook_path and m.webhook_path not in allowed_paths:
-                            continue
-                        messages.append(m)
+                    messages = [m for m in raw_messages if _is_path_allowed(m.webhook_path, allowed_paths)]
+                    if not messages and allowed_paths:
+                        # Fallback: if strict filter resulted in 0 but raw messages exist, use raw messages to avoid dropping real human interaction
+                        messages = list(raw_messages)
 
                     # Ensure there is at least one message sent by a real user
                     user_msgs = [m for m in messages if m.role == "user"]
                     if not user_msgs:
                         job_log.status = "completed"
-                        job_log.response_data = {"status": "no_new_user_messages"}
+                        job_log.response_data = {"status": "no_user_messages_in_window"}
                         user.last_analyzed_at = datetime.now(timezone.utc)
                         await session.commit()
                         logger.info(f"[AnalyticsConsumer] Skipping LLM for {user.session_id}: no user messages found in window")
@@ -125,7 +166,7 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     
                     context = f"DADOS DO USUÁRIO (CRM):\n{json.dumps(crm_data, ensure_ascii=False, indent=2)}\n\n"
                     context += f"APRENDIZADOS ANTERIORES (SE EXISTIREM):\n{json.dumps(aprendizado_data, ensure_ascii=False, indent=2)}\n\n"
-                    context += f"HISTÓRICO DE CONVERSAS RECENTES:\n{history_text}"
+                    context += f"HISTÓRICO DE CONVERSAS DO DIA ({target_date_str or 'RECENTE'}):\n{history_text}"
                     
                     # Update JobLog with full prompt context
                     job_log.request_data["context"] = context
@@ -168,13 +209,29 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                             if text.startswith("```json"): text = text[7:-3]
                             elif text.startswith("```"): text = text[3:-3]
                             new_aprendizado = json.loads(text.strip())
-                        except:
+                        except Exception:
                             new_aprendizado = {"raw_analysis": response.content}
 
-                    # Merge
-                    current_aprendizado = user.profile_data.get("__zona_aprendizado", {})
+                    # Attach target date metadata
+                    new_aprendizado["data_analise"] = target_date_str or datetime.now().strftime("%Y-%m-%d")
+
+                    # Merge into profile_data["__zona_aprendizado"]
+                    current_aprendizado = user.profile_data.get("__zona_aprendizado") or {}
                     current_aprendizado.update(new_aprendizado)
                     user.profile_data["__zona_aprendizado"] = current_aprendizado
+                    
+                    # Recalculate engagement_score and care_priority
+                    from app.services.analytics_service import AnalyticsService
+                    analytics_svc = AnalyticsService(session)
+                    days_since = 0
+                    if user.last_seen_at:
+                        days_since = max(0, (datetime.now(timezone.utc) - user.last_seen_at).days)
+                    user.engagement_score = analytics_svc._calculate_engagement_score(
+                        user.profile_data, user.interaction_count, days_since
+                    )
+                    user.care_priority = analytics_svc._determine_care_priority(
+                        user.engagement_score, days_since
+                    )
                     
                     user.last_analyzed_at = datetime.now(timezone.utc)
                     flag_modified(user, "profile_data")
@@ -187,7 +244,7 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     job_log.completed_at = datetime.now(timezone.utc)
                     
                     await session.commit()
-                    logger.info(f"[AnalyticsConsumer] Successfully analyzed session {user.session_id}")
+                    logger.info(f"[AnalyticsConsumer] Successfully analyzed session {user.session_id} for date {new_aprendizado['data_analise']}")
                     
                     # Fire webhook if configured
                     if config and config.user_webhook_url:

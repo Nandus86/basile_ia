@@ -153,7 +153,7 @@ async def process_map_reduce(session, report, config):
     if report.level == "system":
         sys_prompt += (
             "\n\n## ⚠️ Alertas de Inatividade\n"
-            "Caso alguma igreja apresente o resumo 'Não houveram movimentações significativas nesta igreja no dia de hoje.', "
+            "Caso alguma igreja apresente o resumo 'Não houve movimentações significativas nesta igreja no dia de hoje.', "
             "você DEVE criar obrigatoriamente uma seção no início do relatório intitulada '⚠️ Alertas de Inatividade' listando essas igrejas "
             "para atenção imediata dos gestores e diretores."
         )
@@ -198,7 +198,15 @@ async def process_map_reduce(session, report, config):
                 crm = u.profile_data.get("__zona_crm", {})
                 aprendizado = u.profile_data.get("__zona_aprendizado", {})
                 name = crm.get("first_name") or crm.get("Nome Completo") or "Desconhecido"
-                if not aprendizado: continue # skip empty
+                if not aprendizado:
+                    if u.interaction_count > 0:
+                        block_data.append({
+                            "nome": name,
+                            "score": u.engagement_score,
+                            "prioridade": u.care_priority,
+                            "analise": {"status": "perfil_ativo", "interacoes": u.interaction_count}
+                        })
+                    continue
                 
                 block_data.append({
                     "nome": name,
@@ -315,7 +323,7 @@ async def process_map_reduce(session, report, config):
     
     if not sub_reports_texts:
         if report.level == "church":
-            report.report_content = "Não houveram movimentações significativas nesta igreja no dia de hoje."
+            report.report_content = "Não houve movimentações significativas nesta igreja no dia de hoje."
         else:
             report.report_content = "Não houve interações ou dados suficientes neste período para gerar um relatório."
         return
