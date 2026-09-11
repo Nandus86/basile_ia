@@ -934,19 +934,14 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
 
         # 2.5 Metadados Temporais do Atendimento (Injetado dinamicamente no backend no final para preservar o prefix caching)
         try:
-            tz_name = get_user_timezone(context_data)
-            try:
-                from zoneinfo import ZoneInfo
-                user_tz = ZoneInfo(tz_name)
-            except Exception:
-                import pytz
-                user_tz = pytz.timezone(tz_name or 'America/Sao_Paulo')
-
-            base_now = datetime.now(user_tz)
-            dias_semana = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo']
-            dia_semana = dias_semana[base_now.weekday()]
-            data_hora_str = f"{dia_semana}, {base_now.strftime('%d/%m/%Y %H:%M')}"
-            dynamic_suffix += f"\n\n## ⏱️ Metadados de Tempo deste Atendimento\n- Data e hora atual: {data_hora_str}\n"
+            from app.utils.timezone import get_current_time_info
+            time_info = get_current_time_info(context_data=context_data)
+            dynamic_suffix += (
+                f"\n\n## ⏱️ Metadados de Tempo deste Atendimento\n"
+                f"- Data e hora atual: {time_info['data_hora_str']} (Fuso: {time_info['tz_name']})\n"
+                f"- Período do dia: {time_info['periodo_dia']}\n"
+                f"- Diretriz Temporal de Saudação: {time_info['greeting_directive']}\n"
+            )
         except Exception as e:
             logger.warning(f"[AgentFactory] Falha ao injetar metadados temporais: {e}")
 
@@ -1655,6 +1650,19 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             
             if context_section:
                 system_prompt += context_section
+
+        # Metadados Temporais do Atendimento no modo estruturado
+        try:
+            from app.utils.timezone import get_current_time_info
+            time_info = get_current_time_info(context_data=context_data)
+            system_prompt += (
+                f"\n\n## ⏱️ Metadados de Tempo deste Atendimento\n"
+                f"- Data e hora atual: {time_info['data_hora_str']} (Fuso: {time_info['tz_name']})\n"
+                f"- Período do dia: {time_info['periodo_dia']}\n"
+                f"- Diretriz Temporal de Saudação: {time_info['greeting_directive']}\n"
+            )
+        except Exception as e:
+            logger.warning(f"[AgentFactory] Falha ao injetar metadados temporais no modo estruturado: {e}")
                 
         # Inject RLHF Training Rules
         system_prompt = await self._inject_training_rules(agent_config, messages, system_prompt)
@@ -1690,6 +1698,10 @@ Se houver o campo 'output', ele DEVE conter sua resposta completa ao usuário, N
         # AGORA ANEXA AS SKILLS NO FIM DE TUDO!
         if dynamic_skills_prompt:
             system_prompt += f"\n\n## 🚨 DIRETRIZES DE FLUXO E SKILLS (PRIORIDADE MÁXIMA)\n{dynamic_skills_prompt}"
+
+        # Resolução de macros globais unificada
+        from app.utils.macros import resolve_global_macros
+        system_prompt = resolve_global_macros(system_prompt, context_data)
             
         trimmed_structured_msgs = _clean_and_trim_messages(messages, max_history=8, for_tools=True)
         all_messages = [SystemMessage(content=system_prompt)] + trimmed_structured_msgs

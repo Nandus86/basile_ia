@@ -721,9 +721,7 @@ async def process_message_stream(
             history = await redis.get_conversation(session_id)
             
             # Resolve Timezone
-            tz_name = "America/Sao_Paulo"
-            if transition_data:
-                 tz_name = resolve_timezone_name(transition_data)
+            tz_name = resolve_timezone_name(transition_data=transition_data, context_data=context_data)
 
             # Convert history to LangChain messages
             from langchain_core.messages import HumanMessage, AIMessage

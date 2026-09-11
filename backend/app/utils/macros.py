@@ -11,26 +11,8 @@ from datetime import datetime, timedelta
 
 def get_user_timezone(context_data: Optional[Dict[str, Any]] = None) -> str:
     """Extrai o fuso horário (zoneName) da organização do contexto atual."""
-    tz_name = 'America/Sao_Paulo'
-    if not context_data:
-        return tz_name
-
-    # Check direct top-level string first
-    if isinstance(context_data.get('zoneName'), str):
-        tz_name = context_data.get('zoneName')
-    else:
-        # Fallback to nested safely: church -> address -> timezone -> zoneName
-        church_dict = context_data.get('church', {})
-        if isinstance(church_dict, dict):
-            address_dict = church_dict.get('address', {})
-            if isinstance(address_dict, dict):
-                timezone_dict = address_dict.get('timezone', {})
-                if isinstance(timezone_dict, dict):
-                    zone_val = timezone_dict.get('zoneName')
-                    if zone_val and isinstance(zone_val, str):
-                        tz_name = zone_val
-
-    return tz_name
+    from app.utils.timezone import resolve_timezone_name
+    return resolve_timezone_name(context_data=context_data)
 
 
 # Mapping of moment.js format tokens to Python strftime tokens.
@@ -68,20 +50,8 @@ def resolve_global_macros(text: str, context_data: Optional[Dict[str, Any]] = No
     if "{{ $now" not in text and "{{ $randomNumber" not in text:
         return text
 
-    tz_name = get_user_timezone(context_data)
-
-    try:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-    except ImportError:
-        import pytz
-        ZoneInfo = pytz.timezone
-        ZoneInfoNotFoundError = pytz.UnknownTimeZoneError
-
-    try:
-        user_tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        user_tz = ZoneInfo('America/Sao_Paulo')
-
+    from app.utils.timezone import resolve_timezone_obj
+    tz_name, user_tz = resolve_timezone_obj(context_data=context_data)
     base_now = datetime.now(user_tz)
 
     def replacer(match):

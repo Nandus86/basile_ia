@@ -183,26 +183,11 @@ def _merge_transition_data(
     return merged or None
 
 
-def _resolve_tz_name(transition_data: Optional[Dict[str, Any]] = None) -> str:
-    """Extract IANA timezone name from transition_data payload.
+def _resolve_tz_name(transition_data: Optional[Dict[str, Any]] = None, context_data: Optional[Dict[str, Any]] = None) -> str:
+    """Extract IANA timezone name from transition_data or context payload.
     Falls back to 'America/Sao_Paulo' if not found."""
-    tz_name = 'America/Sao_Paulo'
-    if not transition_data:
-        return tz_name
-    # Direct top-level key
-    if isinstance(transition_data.get('zoneName'), str):
-        return transition_data['zoneName']
-    # Nested: church -> address -> timezone -> zoneName
-    church_dict = transition_data.get('church', {})
-    if isinstance(church_dict, dict):
-        address_dict = church_dict.get('address', {})
-        if isinstance(address_dict, dict):
-            timezone_dict = address_dict.get('timezone', {})
-            if isinstance(timezone_dict, dict):
-                zone_val = timezone_dict.get('zoneName')
-                if zone_val and isinstance(zone_val, str):
-                    return zone_val
-    return tz_name
+    from app.utils.timezone import resolve_timezone_name
+    return resolve_timezone_name(transition_data=transition_data, context_data=context_data)
 
 async def _enrich_agent_prompt(
     db,
@@ -230,27 +215,14 @@ async def _enrich_agent_prompt(
     """
     rag_context = None
 
-    # Resolve dynamically provided timezone from transition_data
-    tz_name = _resolve_tz_name(transition_data)
-
-    # Inject CURRENT DATETIME as the very first contextual item
-    from datetime import datetime
-    try:
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-    except ImportError:
-        # Fallback to pytz just in case the environment is somehow older
-        import pytz
-        ZoneInfo = pytz.timezone
-        ZoneInfoNotFoundError = pytz.UnknownTimeZoneError
-    
-    try:
-        user_tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        user_tz = ZoneInfo('America/Sao_Paulo')
-
-    now = datetime.now(user_tz)
-    current_time_str = now.strftime(f'%A, %d/%m/%Y %H:%M:%S (Fuso: {tz_name})')
-    current_iso = now.isoformat()
+    # Resolve dynamically provided timezone and time info
+    from app.utils.timezone import get_current_time_info
+    time_info = get_current_time_info(transition_data=transition_data, context_data=context_data)
+    tz_name = time_info["tz_name"]
+    user_tz = time_info["tz_obj"]
+    now = time_info["now"]
+    current_time_str = time_info["current_time_str"]
+    current_iso = time_info["current_iso"]
     
     # [12H WINDOW RULE] Calculate deterministic greeting rule in code
     is_within_12h = False
@@ -294,16 +266,24 @@ async def _enrich_agent_prompt(
 
     # Define explicit greeting instruction for the AI
     if is_within_12h:
-        greeting_rule = "🚨 REGRA CRÍTICA DE SAUDAÇÃO: ÚLTIMA INTERAÇÃO HÁ MENOS DE 12H. **NÃO SAUDE O USUÁRIO**. Vá direto ao ponto, sem 'Paz do Senhor', 'Olá', 'Tudo bem?' ou 'Como posso ajudar?'."
+        greeting_rule = (
+            "🚨 REGRA CRÍTICA DE SAUDAÇÃO: ÚLTIMA INTERAÇÃO HÁ MENOS DE 12H. "
+            "**NÃO SAUDE O USUÁRIO**. Vá direto ao ponto, sem saudações "
+            "(como 'Paz do Senhor', 'Olá', 'Tudo bem?', 'Bom dia', 'Boa tarde', 'Boa noite' ou 'Como posso ajudar?')."
+        )
     else:
-        greeting_rule = "Pode saudar o usuário normalmente (Primeiro contato ou última interação há mais de 12h)."
+        greeting_rule = (
+            f"Primeiro contato ou última interação há mais de 12h. Pode saudar o usuário normalmente. "
+            f"REGRA ESTRITA DE PERÍODO: {time_info['greeting_directive']}"
+        )
 
     agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
         f"\n\n## Data e Hora Local do Sistema\n"
-        f"Abaixo estão os dados temporais deste exato momento. "
-        f"Use isso para calcular prazos, responder se é dia/noite ou comparar com "
+        f"Abaixo estão os dados temporais deste exato momento no fuso horário da igreja ({tz_name}). "
+        f"Use isso para calcular prazos, responder se é dia/noite/manhã/tarde ou comparar com "
         f"as datas gravadas nas memórias (que também possuem timestamp).\n"
         f"- Data/Hora legível: {current_time_str}\n"
+        f"- Período atual do dia: {time_info['periodo_dia']} ({time_info['saudacao_obrigatoria']})\n"
         f"- Timestamp ISO: {current_iso}\n"
         f"- Última interação detectada: {last_interaction_info}\n"
         f"- **DIRETRIZ DE SAUDAÇÃO**: {greeting_rule}\n"
@@ -2885,6 +2865,8 @@ async def process_message_task(
     # (like church, member, etc.) are available to workflows and MCP templates.
     if transition_data:
         context_data.update(transition_data)
+        if "transition_data" not in context_data:
+            context_data["transition_data"] = dict(transition_data)
 
     if session_id and "session_id" not in context_data:
         context_data["session_id"] = session_id
