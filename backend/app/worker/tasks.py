@@ -2708,15 +2708,6 @@ async def _handle_expired_cell_menu_shortcut(
                 else:
                     final_result = saida_val
 
-        warning_notice = "⚠️ Essa interação anterior já havia sido encerrada.\n\n"
-
-        # Prepend warning in WhatsApp list description or response
-        if isinstance(final_result, dict):
-            if "description" in final_result and isinstance(final_result["description"], str):
-                final_result["description"] = f"{warning_notice}{final_result['description']}"
-            elif "response" in final_result and isinstance(final_result["response"], str):
-                final_result["response"] = f"{warning_notice}{final_result['response']}"
-
         is_direct_payload = getattr(wf, "return_direct_payload", False) or result_ctx.get("response_config", {}).get("retornar_payload_direto", False)
 
         direct_payload = {
@@ -2734,16 +2725,16 @@ async def _handle_expired_cell_menu_shortcut(
         if isinstance(final_result, dict):
             direct_payload.update(final_result)
             if "response" not in direct_payload:
-                direct_payload["response"] = f"{warning_notice}*Modo {label_cell}*"
+                direct_payload["response"] = f"*Modo {label_cell}*"
         elif isinstance(final_result, list):
             direct_payload["response"] = json.dumps(final_result, ensure_ascii=False)
             direct_payload["data"] = final_result
         elif final_result is not None:
-            direct_payload["response"] = f"{warning_notice}{final_result}"
+            direct_payload["response"] = str(final_result)
         else:
-            direct_payload["response"] = f"{warning_notice}Menu de {label_cell} reiniciado."
+            direct_payload["response"] = f"Menu de {label_cell} reiniciado."
 
-        print(f"[CellMenuShortcut] ⚡ Cell menu restarted successfully with expiration notice. Direct payload ready.")
+        print(f"[CellMenuShortcut] ⚡ Cell menu restarted cleanly. Direct payload ready.")
         return direct_payload
 
     except Exception as e:
