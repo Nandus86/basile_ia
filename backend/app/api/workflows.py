@@ -7,7 +7,7 @@ import asyncio
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, cast, String
+from sqlalchemy import select, func, cast, String, or_
 from uuid import UUID
 
 from app.database import get_db
@@ -350,16 +350,27 @@ async def list_workflow_executions(
     skip: int = 0,
     limit: int = 50,
     run_id: Optional[str] = None,
+    search: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """List execution history for a workflow"""
+    """List execution history for a workflow with search support in context JSON, trigger_data, result, status, and ID"""
     query = select(WorkflowExecution).where(WorkflowExecution.workflow_id == workflow_id)
     count_query = select(func.count(WorkflowExecution.id)).where(WorkflowExecution.workflow_id == workflow_id)
 
-    if run_id and run_id.strip():
-        search_val = f"%{run_id.strip()}%"
-        query = query.where(cast(WorkflowExecution.id, String).ilike(search_val))
-        count_query = count_query.where(cast(WorkflowExecution.id, String).ilike(search_val))
+    search_term = (search or run_id or "").strip()
+    if search_term:
+        search_val = f"%{search_term}%"
+        filter_cond = or_(
+            cast(WorkflowExecution.id, String).ilike(search_val),
+            WorkflowExecution.status.ilike(search_val),
+            WorkflowExecution.trigger_type.ilike(search_val),
+            WorkflowExecution.error_message.ilike(search_val),
+            cast(WorkflowExecution.context, String).ilike(search_val),
+            cast(WorkflowExecution.trigger_data, String).ilike(search_val),
+            cast(WorkflowExecution.result, String).ilike(search_val),
+        )
+        query = query.where(filter_cond)
+        count_query = count_query.where(filter_cond)
 
     result = await db.execute(
         query.order_by(WorkflowExecution.created_at.desc())

@@ -1190,7 +1190,7 @@
             <div style="min-width: 280px; max-width: 380px;" class="flex-grow-1">
               <v-text-field
                 v-model="workflowRunIdSearch"
-                placeholder="Pesquisar por ID do Run..."
+                placeholder="Pesquisar por ID, palavra ou contexto..."
                 prepend-inner-icon="mdi-magnify"
                 variant="outlined"
                 density="compact"
@@ -1214,7 +1214,7 @@
               ]"
               :items="workflowExecutions"
               :loading="wfLoading"
-              :no-data-text="workflowRunIdSearch ? 'Nenhuma execução encontrada para o ID pesquisado.' : 'Nenhuma execução registrada para este workflow.'"
+              :no-data-text="workflowRunIdSearch ? 'Nenhuma execução encontrada para a pesquisa.' : 'Nenhuma execução registrada para este workflow.'"
               hover
               hide-default-footer
               class="bg-transparent"
@@ -2911,7 +2911,7 @@ const fetchWorkflowExecutions = async () => {
       limit: workflowItemsPerPage.value
     }
     if (workflowRunIdSearch.value && workflowRunIdSearch.value.trim()) {
-      params.run_id = workflowRunIdSearch.value.trim()
+      params.search = workflowRunIdSearch.value.trim()
     }
     const { data } = await axiosInstance.get(`/workflows/${selectedWorkflowId.value}/executions`, {
       params
