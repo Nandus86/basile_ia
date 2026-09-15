@@ -207,15 +207,75 @@ def _parse_group_fields(fields_str: str) -> list:
     return fields
 
 
+def _apply_exclude(val: Any, exclude_fields: List[str]) -> Any:
+    """Remove recursivamente ou em nível de objeto as chaves especificadas em exclude_fields."""
+    if val is None or not exclude_fields:
+        return val
+
+    exclude_set = set(exclude_fields)
+
+    if isinstance(val, list):
+        return [_apply_exclude(item, exclude_fields) for item in val]
+
+    if isinstance(val, dict):
+        new_dict = {}
+        for k, v in val.items():
+            if k in exclude_set:
+                continue
+            # Tratamento para exclusão aninhada via notação de ponto (ex: 'user.password')
+            sub_excludes = [
+                f.split('.', 1)[1] for f in exclude_fields
+                if f.startswith(f"{k}.") and '.' in f
+            ]
+            if sub_excludes:
+                new_dict[k] = _apply_exclude(v, sub_excludes)
+            elif isinstance(v, (dict, list)):
+                new_dict[k] = _apply_exclude(v, exclude_fields)
+            else:
+                new_dict[k] = v
+        return new_dict
+
+    return val
+
+
 def _apply_response_mapping(data: dict, mapping: dict) -> dict:
     """Extrai partes de um JSON de resposta profundo e mapeia como especificado pelo admin.
     
-    Suporta sintaxe agrupada: "body[*].{_id, name, address}" que retorna
-    [{_id, name, address}, ...] ao invés de arrays separados.
-    Também suporta renomeação: "body[*].{id: _id, nome: name}".
+    Suporta:
+    - Sintaxe agrupada: "body[*].{_id, name, address}" que retorna
+      [{_id, name, address}, ...] ao invés de arrays separados.
+    - Renomeação: "body[*].{id: _id, nome: name}".
+    - Filtro truncate/limit: "body.desc | truncate(150)" ou "body.desc.truncate(150)".
+    - Filtro exclude: "body | exclude(campo1, campo2)" ou "body.exclude(campo)".
+    - Diretiva de exclusão no mapping: {"exclude": "campo"} ou {"__exclude__": ["campo1", "campo2"]}.
+    - Chaves com prefixo de exclusão: {"-campo": True} ou {"!campo": True}.
     """
     if not mapping or not isinstance(mapping, dict):
         return data
+
+    # 1. Coleta diretivas de exclusão declaradas no nível raiz do mapping
+    global_excludes = []
+    for exc_key in ("exclude", "__exclude__"):
+        if exc_key in mapping:
+            raw_exc = mapping[exc_key]
+            if isinstance(raw_exc, str):
+                global_excludes.extend([f.strip() for f in raw_exc.split(",") if f.strip()])
+            elif isinstance(raw_exc, list):
+                global_excludes.extend([str(f).strip() for f in raw_exc if f])
+
+    for k in list(mapping.keys()):
+        if k.startswith("-") or k.startswith("!"):
+            global_excludes.append(k[1:].strip())
+
+    # Mapeamentos válidos (desconsiderando as diretivas de exclusão pura)
+    action_mapping = {
+        k: v for k, v in mapping.items()
+        if k not in ("exclude", "__exclude__") and not k.startswith("-") and not k.startswith("!")
+    }
+
+    # Se o mapping contiver APENAS chaves de exclusão, aplica diretamente no payload original
+    if not action_mapping and global_excludes:
+        return _apply_exclude(copy.deepcopy(data), global_excludes)
 
     def _apply_limit(val, limit):
         if val is None:
@@ -257,7 +317,7 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
                 return None
         return current
 
-    def _extract_grouped(source_data, base_path, fields, limit):
+    def _extract_grouped(source_data, base_path, fields, limit, excludes=None):
         """Extrai campos agrupados de um array, retornando [{alias: val, ...}, ...]"""
         # Resolve o base_path até chegar no array (remove [*] do final)
         # Ex: "body[*]" -> extrai "body", "data.results[*]" -> extrai "data.results"
@@ -280,24 +340,43 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
                 if limit is not None:
                     val = _apply_limit(val, limit)
                 obj[alias] = val
+            if excludes:
+                obj = _apply_exclude(obj, excludes)
             grouped.append(obj)
         return grouped
 
     result = {}
-    for key, raw_path in mapping.items():
+    for key, raw_path in action_mapping.items():
         if isinstance(raw_path, str):
             path = raw_path.strip()
             limit = None
-            
-            # Detecta filtro truncate/limit via pipe ou dot notation
-            # Ex: "body[*].desc | truncate(150)" ou "body[*].desc.truncate(150)"
-            filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', path)
-            if filter_match:
-                try:
-                    limit = int(filter_match.group(1))
-                    path = path[:filter_match.start()].strip()
-                except:
-                    pass
+            field_excludes = []
+
+            # Detecta filtros em cadeia (truncate, limit, exclude)
+            changed = True
+            while changed:
+                changed = False
+
+                # Check exclude: "body | exclude(campo1, campo2)" ou "body.exclude(campo)"
+                exclude_match = re.search(r'(?:[|.]\s*)exclude\(([^)]+)\)$', path, re.IGNORECASE)
+                if exclude_match:
+                    try:
+                        raw_args = exclude_match.group(1)
+                        field_excludes.extend([f.strip().strip("'\"") for f in raw_args.split(',') if f.strip()])
+                        path = path[:exclude_match.start()].strip()
+                        changed = True
+                    except Exception:
+                        pass
+
+                # Check truncate/limit: "body.desc | truncate(150)" ou "body.desc.truncate(150)"
+                filter_match = re.search(r'(?:[|.]\s*)(?:truncate|limit)\((\d+)\)$', path, re.IGNORECASE)
+                if filter_match:
+                    try:
+                        limit = int(filter_match.group(1))
+                        path = path[:filter_match.start()].strip()
+                        changed = True
+                    except Exception:
+                        pass
             
             # Detecta sintaxe agrupada: path[*].{field1, field2, alias: field3}
             group_match = re.search(r'\.\{([^}]+)\}$', path)
@@ -306,10 +385,14 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
                 fields = _parse_group_fields(fields_str)
                 base_path = path[:group_match.start()]  # tudo antes do .{...}
                 
-                val = _extract_grouped(data, base_path, fields, limit)
+                val = _extract_grouped(data, base_path, fields, limit, field_excludes)
             else:
                 val = _extract(data, path)
                 
+                # Aplica o exclude se encontrado
+                if field_excludes:
+                    val = _apply_exclude(val, field_excludes)
+
                 # Aplica o limite se encontrado (suporta listas recursivamente)
                 if limit is not None:
                     val = _apply_limit(val, limit)
@@ -317,6 +400,10 @@ def _apply_response_mapping(data: dict, mapping: dict) -> dict:
             result[key] = val
         else:
             result[key] = raw_path
+
+    # Aplica exclusões globais se declaradas
+    if global_excludes:
+        result = _apply_exclude(result, global_excludes)
 
     # Filtra apenas os valores que não são None (que foram encontrados)
     filtered_result = {k: v for k, v in result.items() if v is not None}
