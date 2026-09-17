@@ -654,10 +654,12 @@ class MCPToolExecutor:
         return []
     
     def _create_tool_executor(self, mcp_id: str, tool_name: str, protocol: str, all_params: list,
-                              pre_resolved_templates: Optional[Dict[str, Any]] = None) -> Callable:
+                              pre_resolved_templates: Optional[Dict[str, Any]] = None,
+                              mcp: Optional[MCP] = None) -> Callable:
         """Create an async executor function for a tool.
         all_params: ALL parameter names the MCP tool expects (including context ones)
         pre_resolved_templates: Templates with {{ $request }} already resolved
+        mcp: Optional pre-loaded MCP instance to avoid concurrent database calls during tool execution
         """
         _pre_resolved = pre_resolved_templates or {}
         
@@ -767,10 +769,13 @@ class MCPToolExecutor:
             )
             logger.debug(f"[MCPTool] 📦 args enviados: {json.dumps(final_args, default=str, ensure_ascii=False)[:800]}")
             
+            target_mcp = mcp
             try:
-                mcp = await self.get_mcp_by_id(mcp_id)
-                if not mcp:
+                if not target_mcp:
+                    target_mcp = await self.get_mcp_by_id(mcp_id)
+                if not target_mcp:
                     return json.dumps({"error": f"MCP {mcp_id} not found"})
+                mcp = target_mcp
                 
                 if protocol == "mcp":
                     query_params = {}
@@ -994,20 +999,23 @@ class MCPToolExecutor:
                     exc_info=True
                 )
                 err_res = json.dumps({"error": str(e)})
+                safe_endpoint = endpoint_str if 'endpoint_str' in locals() and endpoint_str else (getattr(target_mcp, 'endpoint', None) or "") if ('target_mcp' in locals() and target_mcp) else ""
+                safe_req_params = {"body": body, "query": query} if ('body' in locals() and 'query' in locals()) else final_args if 'final_args' in locals() else kwargs
                 asyncio.create_task(
                     log_mcp_execution(
                         mcp_id=uuid.UUID(mcp_id) if mcp_id else None,
                         mcp_name=tool_name,
                         protocol=protocol,
-                        endpoint=endpoint_str if 'endpoint_str' in locals() else (mcp.endpoint or ""),
-                        request_params={"body": body, "query": query} if 'body' in locals() and 'query' in locals() else final_args,
+                        endpoint=safe_endpoint,
+                        request_params=safe_req_params,
                         response_data={},
                         status_str="failed",
                         error_message=str(e),
                         duration_ms=0.0
                     )
                 )
-                _call_history[kwargs_hash]["last_result"] = err_res
+                if kwargs_hash in _call_history:
+                    _call_history[kwargs_hash]["last_result"] = err_res
                 return err_res
         
         return execute_tool
@@ -1145,7 +1153,8 @@ class MCPToolExecutor:
                     tool_name=tool_name,
                     protocol=tool_def.get("protocol", "http"),
                     all_params=all_params,
-                    pre_resolved_templates=pre_resolved_templates
+                    pre_resolved_templates=pre_resolved_templates,
+                    mcp=mcp
                 )
                 
                 # Sanitize tool name for provider compatibility
