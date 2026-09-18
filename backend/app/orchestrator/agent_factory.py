@@ -943,18 +943,28 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
             if context_section:
                 dynamic_suffix += f"\n\n{context_section}"
 
-        # 2.5 Metadados Temporais do Atendimento (Injetado dinamicamente no backend no final para preservar o prefix caching)
-        try:
-            from app.utils.timezone import get_current_time_info
-            time_info = get_current_time_info(context_data=context_data)
-            dynamic_suffix += (
-                f"\n\n## ⏱️ Metadados de Tempo deste Atendimento\n"
-                f"- Data e hora atual: {time_info['data_hora_str']} (Fuso: {time_info['tz_name']})\n"
-                f"- Período do dia: {time_info['periodo_dia']}\n"
-                f"- Diretriz Temporal de Saudação: {time_info['greeting_directive']}\n"
-            )
-        except Exception as e:
-            logger.warning(f"[AgentFactory] Falha ao injetar metadados temporais: {e}")
+        # 2.5 Contexto Dinâmico do Agente (Memórias, Triggers, Continuidade, Thinker, etc.)
+        dyn_ctx = agent_config.get("dynamic_prompt_context")
+        if dyn_ctx and dyn_ctx.strip():
+            dynamic_suffix += f"\n\n{dyn_ctx.strip()}"
+
+        # 2.6 Data e Hora Local do Sistema (Sempre no fim absoluto do prompt)
+        system_time = agent_config.get("system_time_section")
+        if system_time and system_time.strip():
+            dynamic_suffix += f"\n\n{system_time.strip()}"
+        elif "## Data e Hora Local do Sistema" not in (static_prefix + dynamic_suffix):
+            # Fallback caso não tenha passado pelo worker (ex: chamadas diretas)
+            try:
+                from app.utils.timezone import get_current_time_info
+                time_info = get_current_time_info(context_data=context_data)
+                dynamic_suffix += (
+                    f"\n\n## ⏱️ Metadados de Tempo deste Atendimento\n"
+                    f"- Data e hora atual: {time_info['data_hora_str']} (Fuso: {time_info['tz_name']})\n"
+                    f"- Período do dia: {time_info['periodo_dia']}\n"
+                    f"- Diretriz Temporal de Saudação: {time_info['greeting_directive']}\n"
+                )
+            except Exception as e:
+                logger.warning(f"[AgentFactory] Falha ao injetar metadados temporais: {e}")
 
         # Resolução de macros globais unificada
         full_prompt = resolve_global_macros(static_prefix + dynamic_suffix, context_data)

@@ -421,8 +421,10 @@ async def process_message_structured(
         try:
             trigger_results = await _check_trigger_mcps(db, str(agent.id), request.message, request.context_data)
             if trigger_results:
-                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
-                print(f"[Structured] 🎯 Trigger MCP results injected")
+                agent_config["dynamic_prompt_context"] = (
+                    agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + trigger_results.strip()
+                )
+                print(f"[Structured] 🎯 Trigger MCP results injected into dynamic prompt context")
         except Exception as e:
             print(f"[Structured] ❌ Error checking trigger MCPs: {e}")
 
@@ -859,8 +861,10 @@ async def process_message_stream(
                 try:
                     trigger_results = await _check_trigger_mcps(db, agent_id, message, context_data)
                     if trigger_results:
-                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
-                        print(f"[Stream] 🎯 Trigger MCP results injected")
+                        agent_config["dynamic_prompt_context"] = (
+                            agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + trigger_results.strip()
+                        )
+                        print(f"[Stream] 🎯 Trigger MCP results injected into dynamic prompt context")
                 except Exception as e:
                     print(f"[Stream] ❌ Error checking trigger MCPs: {e}")
 
