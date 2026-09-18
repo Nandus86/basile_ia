@@ -556,10 +556,21 @@ você DEVE aguardar a resposta do usuário antes de continuar para a próxima et
                 provider_routing = extra_config["provider_routing"]
 
             if provider_routing:
-                if "extra_body" not in kwargs:
-                    kwargs["extra_body"] = {}
-                kwargs["extra_body"]["provider"] = provider_routing
-                logger.info(f"[AgentFactory] 🔀 Custom OpenRouter provider routing configured for '{model_id}': {provider_routing}")
+                # Sanitização de segurança: se provider.only for especificado (ex: ['deepseek']), mas o modelo
+                # for de outra família (ex: openai/..., anthropic/...) que o provedor não atende, remove a restrição
+                # 'only' para evitar erro 404 de roteamento no OpenRouter.
+                sanitized_routing = copy.deepcopy(provider_routing)
+                if isinstance(sanitized_routing, dict) and "only" in sanitized_routing:
+                    only_list = sanitized_routing["only"]
+                    if isinstance(only_list, list) and "deepseek" in only_list and "deepseek" not in model_id.lower():
+                        logger.warning(f"[AgentFactory] ⚠️ Ignorou provider.only={only_list} para modelo não-deepseek '{model_id}' para evitar 404 no OpenRouter")
+                        del sanitized_routing["only"]
+
+                if sanitized_routing:
+                    if "extra_body" not in kwargs:
+                        kwargs["extra_body"] = {}
+                    kwargs["extra_body"]["provider"] = sanitized_routing
+                    logger.info(f"[AgentFactory] 🔀 Custom OpenRouter provider routing configured for '{model_id}': {sanitized_routing}")
 
             # 2. Model Fallback chain
             model_fallbacks = None
