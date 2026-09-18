@@ -214,6 +214,7 @@ async def _enrich_agent_prompt(
     Mutates agent_config["system_prompt"] in place and returns rag_context.
     """
     rag_context = None
+    dynamic_sections: List[str] = []
 
     # Resolve dynamically provided timezone and time info
     from app.utils.timezone import get_current_time_info
@@ -277,8 +278,9 @@ async def _enrich_agent_prompt(
             f"REGRA ESTRITA DE PERÍODO: {time_info['greeting_directive']}"
         )
 
-    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-        f"\n\n## Data e Hora Local do Sistema\n"
+    # Injected into agent_config["system_time_section"] to always sit at the absolute end of the prompt
+    agent_config["system_time_section"] = (
+        f"## Data e Hora Local do Sistema\n"
         f"Abaixo estão os dados temporais deste exato momento no fuso horário da igreja ({tz_name}). "
         f"Use isso para calcular prazos, responder se é dia/noite/manhã/tarde ou comparar com "
         f"as datas gravadas nas memórias (que também possuem timestamp).\n"
@@ -286,7 +288,7 @@ async def _enrich_agent_prompt(
         f"- Período atual do dia: {time_info['periodo_dia']} ({time_info['saudacao_obrigatoria']})\n"
         f"- Timestamp ISO: {current_iso}\n"
         f"- Última interação detectada: {last_interaction_info}\n"
-        f"- **DIRETRIZ DE SAUDAÇÃO**: {greeting_rule}\n"
+        f"- **DIRETRIZ DE SAUDAÇÃO**: {greeting_rule}"
     )
 
     # 0. User Analytics Injection
@@ -302,14 +304,14 @@ async def _enrich_agent_prompt(
             learned = analytics.profile_data.get("__zona_aprendizado", {})
             metrics = analytics.profile_data.get("__zona_metricas", {})
             
-            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                f"\n\n## 👤 Inteligência Analítica do Contato\n\n"
+            dynamic_sections.append(
+                f"## 👤 Inteligência Analítica do Contato\n\n"
                 f"- Engajamento: {analytics.engagement_score}/100 ({analytics.care_priority})\n"
                 f"- Interações totais: {analytics.interaction_count}\n"
                 f"- Tópicos de interesse: {learned.get('topics_of_interest', 'Não detectado')}\n"
                 f"- Estilo de comunicação: {learned.get('communication_style', 'Não detectado')}\n"
                 f"- Horário preferido: {metrics.get('preferred_hours', 'Não detectado')}\n"
-                f"- Sentimento predominante: {learned.get('emotional_baseline', 'Não detectado')}\n"
+                f"- Sentimento predominante: {learned.get('emotional_baseline', 'Não detectado')}"
             )
     except Exception as e:
         print(f"[Task] Error fetching UserAnalytics: {e}")
@@ -319,11 +321,11 @@ async def _enrich_agent_prompt(
         last_name = session_context.get("last_agent_name", "")
         agents_used = session_context.get("agents_used", [])
         if last_name:
-            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                f"\n\n## Continuidade do Atendimento\n\n"
+            dynamic_sections.append(
+                f"## Continuidade do Atendimento\n\n"
                 f"Este contato foi atendido anteriormente pelo agente \"{last_name}\".\n"
                 f"Agentes que já participaram desta sessão: {', '.join(agents_used)}.\n"
-                f"Considere este histórico para manter a fluidez do atendimento.\n"
+                f"Considere este histórico para manter a fluidez do atendimento."
             )
             print(f"[Task] 📋 Session continuity injected: last_agent='{last_name}'")
 
@@ -342,10 +344,10 @@ async def _enrich_agent_prompt(
         vfs_context = await get_vfs_context(db, agent_id, message)
         if vfs_context:
             print(f"[Task] 📂 VFS RAG 3.0 context loaded for {agent_config['name']}")
-            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                f"\n\n## Base de Conhecimento VFS (RAG 3.0)\n\n"
+            dynamic_sections.append(
+                f"## Base de Conhecimento VFS (RAG 3.0)\n\n"
                 f"As seguintes informações foram recuperadas da base de conhecimento VFS por um subagente especializado:\n\n"
-                f"{vfs_context}\n"
+                f"{vfs_context}"
             )
     except Exception as e:
         print(f"[Task] VFS RAG 3.0 error: {e}")
@@ -470,9 +472,9 @@ async def _enrich_agent_prompt(
                                 meta_str = n.get('metadata', '{}')
                                 info_parts.append(f"- {meta_str}")
                             info_str = "\n".join(info_parts)
-                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                                f"\n\n## Contextualização Personalizada Externa\n\n"
-                                f"Informações anexadas aos bancos de dados do usuário logado:\n{info_str}\n"
+                            dynamic_sections.append(
+                                f"## Contextualização Personalizada Externa\n\n"
+                                f"Informações anexadas aos bancos de dados do usuário logado:\n{info_str}"
                             )
         except Exception as ib_err:
             print(f"[Task] Failed to retrieve Information Bases: {ib_err}")
@@ -505,11 +507,11 @@ async def _enrich_agent_prompt(
                     print(f"[Task] ⚠️ Retrieved {len(corrections)} corrections + {len(preferences)} preferences for contact {session_id}")
                     priority_lines = [f"- {m['content']}" for m in priority_items]
                     priority_str = "\n".join(priority_lines)
-                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                        f"\n\n## ⚠️ Correções e Preferências do Usuário (PRIORIDADE MÁXIMA)\n\n"
+                    dynamic_sections.append(
+                        f"## ⚠️ Correções e Preferências do Usuário (PRIORIDADE MÁXIMA)\n\n"
                         f"As seguintes correções e preferências foram feitas PELO PRÓPRIO USUÁRIO. "
                         f"NUNCA repita os erros corrigidos abaixo. Respeite as preferências SEMPRE:\n\n"
-                        f"{priority_str}\n"
+                        f"{priority_str}"
                     )
 
                 # 3b. General facts (normal priority)
@@ -539,12 +541,12 @@ async def _enrich_agent_prompt(
                             date_str = '—'
                         mem_lines.append(f"- [{date_str}] {m['content']}")
                     mem_str = "\n".join(mem_lines)
-                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                        f"\n\n## Inteligência e Memória Histórica do Contato\n\n"
+                    dynamic_sections.append(
+                        f"## Inteligência e Memória Histórica do Contato\n\n"
                         f"Abaixo estão informações e peculiaridades qualitativas deste usuário, "
                         f"adquiridas em interações anteriores. A data entre colchetes indica quando o fato foi registrado. "
                         f"Utilize isso para personalizar ativamente o engajamento de maneira natural:\n\n"
-                        f"{mem_str}\n"
+                        f"{mem_str}"
                     )
 
                 # 3c. Agent self-memories (agent-level learning)
@@ -557,11 +559,11 @@ async def _enrich_agent_prompt(
                     print(f"[Task] 🔧 Retrieved {len(agent_self_memories)} agent self-memories")
                     self_lines = [f"- {m['content']}" for m in agent_self_memories]
                     self_str = "\n".join(self_lines)
-                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                        f"\n\n## 🔧 Auto-Aprendizado do Agente (Lições Anteriores)\n\n"
+                    dynamic_sections.append(
+                        f"## 🔧 Auto-Aprendizado do Agente (Lições Anteriores)\n\n"
                         f"Em interações passadas, você cometeu os erros abaixo e aprendeu a corrigi-los. "
                         f"NÃO repita esses erros:\n\n"
-                        f"{self_str}\n"
+                        f"{self_str}"
                     )
 
                 # 3d. Entity-level memories (dynamic entity training)
@@ -595,11 +597,11 @@ async def _enrich_agent_prompt(
                             print(f"[Task] 🏢 Retrieved {len(entity_memories)} entity memories for {entity_path}={entity_id}")
                             ent_lines = [f"- {m['content']}" for m in entity_memories]
                             ent_str = "\n".join(ent_lines)
-                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                                f"\n\n## 🏢 Regras Específicas da Entidade ({entity_path}={entity_id})\n\n"
+                            dynamic_sections.append(
+                                f"## 🏢 Regras Específicas da Entidade ({entity_path}={entity_id})\n\n"
                                 f"As regras abaixo foram treinadas especificamente para esta entidade. "
                                 f"Respeite-as SEMPRE:\n\n"
-                                f"{ent_str}\n"
+                                f"{ent_str}"
                             )
 
         except Exception as e:
@@ -691,13 +693,13 @@ async def _enrich_agent_prompt(
                     if len(filtered_tools) != len(collab_tools):
                         collab_tools = filtered_tools
 
-                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                        f"\n\n## TRUE TRIGGER EXECUTADO (DETERMINÍSTICO)\n"
+                    dynamic_sections.append(
+                        f"## TRUE TRIGGER EXECUTADO (DETERMINÍSTICO)\n"
                         f"- Agente acionado diretamente: {collab_name}\n"
                         f"- Modo de match: {selected_mode}\n"
                         f"- Keyword: {selected_keyword}\n"
                         f"- Resultado bruto:\n{collab_response}\n"
-                        f"Use este resultado como fonte prioritária e não reacione o mesmo especialista para a mesma tarefa neste turno.\n"
+                        f"Use este resultado como fonte prioritária e não reacione o mesmo especialista para a mesma tarefa neste turno."
                     )
                     print(f"[Task] ✅ True trigger executado: '{collab_name}' via keyword '{selected_keyword}' ({selected_mode})")
 
@@ -772,11 +774,11 @@ async def _enrich_agent_prompt(
             # 1. Execute auto-run workflows first (Pre-hooks)
             startup_results = await _execute_startup_workflows(db, agent_model, context_data, agent_config=agent_config)
             if startup_results:
-                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                    f"\n\n## 🔄 DADOS PRÉ-CARREGADOS (AUTOMAÇÕES DE INÍCIO)\n"
+                dynamic_sections.append(
+                    f"## 🔄 DADOS PRÉ-CARREGADOS (AUTOMAÇÕES DE INÍCIO)\n"
                     f"As seguintes automações foram executadas automaticamente antes desta interação:\n"
                     f"{startup_results}\n"
-                    f"Use esses dados para responder ou resolver a tarefa sem precisar chamar as automações novamente.\n"
+                    f"Use esses dados para responder ou resolver a tarefa sem precisar chamar as automações novamente."
                 )
 
             # 2. Build standard workflow tools
@@ -827,21 +829,21 @@ async def _enrich_agent_prompt(
                         print(f"[Task] ⚡ Direct payload bypass detected from collaborator — LLM will be skipped")
                     except (_dp_json.JSONDecodeError, ValueError):
                         print(f"[Task] ⚠️ Failed to parse direct payload JSON, falling back to normal flow")
-                        agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                            f"\n\n## Colaboradores (Subordinados)\n"
+                        dynamic_sections.append(
+                            f"## Colaboradores (Subordinados)\n"
                             f"Os seguintes especialistas forneceram contribuições sobre a solicitação do usuário. "
                             f"Se as respostas já estiverem adequadas para o usuário final, utilize-as diretamente. "
                             f"Se necessário, sintetize e adapte o conteúdo para garantir clareza e coesão:\n"
-                            f"{payload_json}\n"
+                            f"{payload_json}"
                         )
                 else:
                     print(f"[Task] 🎭 Pre-consult loaded for {agent_config['name']}")
-                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
-                        f"\n\n## Colaboradores (Subordinados)\n"
+                    dynamic_sections.append(
+                        f"## Colaboradores (Subordinados)\n"
                         f"Os seguintes especialistas forneceram contribuições sobre a solicitação do usuário. "
                         f"Se as respostas já estiverem adequadas para o usuário final, utilize-as diretamente. "
                         f"Se necessário, sintetize e adapte o conteúdo para garantir clareza e coesão:\n"
-                        f"{subordinate_context}\n"
+                        f"{subordinate_context}"
                     )
         except Exception as e:
             import traceback
@@ -857,29 +859,32 @@ async def _enrich_agent_prompt(
     current_prompt = current_prompt.replace("{{ $greeting.initial }}", initial_text)
     current_prompt = current_prompt.replace("{{ $greeting.normal }}", normal_text)
 
-    # Inject definitive state rule
+    # Inject definitive state rule dynamically
     state_instruction = ""
     if history_source == "STM":
         state_instruction = (
-            "\n\n## ESTADO DA CONVERSA: RECENTE (Fluxo Contínuo)\n"
+            "## ESTADO DA CONVERSA: RECENTE (Fluxo Contínuo)\n"
             "Interação detectada na memória de curto prazo (Redis). "
             "REGRA ABSOLUTA: **NÃO USE SAUDAÇÕES**. Não utilize 'Paz do Senhor', 'Olá', 'Tudo bem?' ou qualquer cumprimento inicial. "
-            "A conversa já está em andamento. Responda diretamente ao que foi solicitado.\n"
+            "A conversa já está em andamento. Responda diretamente ao que foi solicitado."
         )
     elif history_source == "MTM":
         state_instruction = (
-            "\n\n## ESTADO DA CONVERSA: RETORNO (Boas-vindas de Volta)\n"
+            "## ESTADO DA CONVERSA: RETORNO (Boas-vindas de Volta)\n"
             "O usuário está retornando após algum tempo. "
-            f"Se for apropriado saudar, utilize preferencialmente a saudação de retorno: \"{normal_text}\".\n"
+            f"Se for apropriado saudar, utilize preferencialmente a saudação de retorno: \"{normal_text}\"."
         )
     else:
         state_instruction = (
-            "\n\n## ESTADO DA CONVERSA: INICIAL (Primeiro Contato)\n"
+            "## ESTADO DA CONVERSA: INICIAL (Primeiro Contato)\n"
             "Este é o primeiro contato deste usuário. "
-            f"Inicie o atendimento utilizando a saudação inicial: \"{initial_text}\".\n"
+            f"Inicie o atendimento utilizando a saudação inicial: \"{initial_text}\"."
         )
     
-    agent_config["system_prompt"] = current_prompt + state_instruction
+    if state_instruction:
+        dynamic_sections.append(state_instruction)
+
+    agent_config["system_prompt"] = current_prompt
 
     # Resolve global macros like {{ $now }} with ISO-8601 format
     try:
@@ -887,6 +892,14 @@ async def _enrich_agent_prompt(
         agent_config["system_prompt"] = resolve_global_macros(agent_config["system_prompt"], transition_data)
     except Exception as e:
         print(f"[Task] Erro ao resolver macros globais: {e}")
+
+    # Set dynamic_prompt_context
+    existing_dyn = agent_config.get("dynamic_prompt_context", "").strip()
+    new_dyn = "\n\n".join([s.strip() for s in dynamic_sections if s and s.strip()])
+    if existing_dyn and new_dyn:
+        agent_config["dynamic_prompt_context"] = f"{existing_dyn}\n\n{new_dyn}"
+    elif new_dyn:
+        agent_config["dynamic_prompt_context"] = new_dyn
 
     print(f"[Task] 📝 Greeting logic applied: state={history_source}")
 
@@ -4015,9 +4028,11 @@ async def process_message_task(
                     messages.append(AIMessage(content=f"{prefix}{msg['content']}"))
             messages.append(HumanMessage(content=message))
 
-            # Inject MTM context note into system prompt
+            # Inject MTM context note into dynamic prompt context
             if mtm_context_note:
-                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + mtm_context_note
+                agent_config["dynamic_prompt_context"] = (
+                    agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + mtm_context_note.strip()
+                )
 
             # Adicionar regra de encerramento de interação
             agent_config["system_prompt"] = agent_config.get("system_prompt", "") + (
@@ -4087,8 +4102,10 @@ async def process_message_task(
                 if not trigger_results:
                     trigger_results = await _check_trigger_mcps(db, agent_id, message, context_data)
                 if trigger_results:
-                    agent_config["system_prompt"] = agent_config.get("system_prompt", "") + trigger_results
-                    print(f"[Task] 🎯 Trigger MCP results injected into agent prompt")
+                    agent_config["dynamic_prompt_context"] = (
+                        agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + trigger_results.strip()
+                    )
+                    print(f"[Task] 🎯 Trigger MCP results injected into dynamic prompt context")
             except Exception as e:
                 import traceback
                 print(f"[Task] ❌ Error checking trigger MCPs: {e}")
@@ -4146,7 +4163,9 @@ async def process_message_task(
                                 f"Instruções: Execute a tarefa atual, marque como concluída (✓), e avance para a próxima.\n"
                                 f"⚠️ NÃO use o Thinker novamente - continue a partir da lista existente.\n"
                             )
-                            agent_config["system_prompt"] = agent_config.get("system_prompt", "") + continuation_instruction
+                            agent_config["dynamic_prompt_context"] = (
+                                agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + continuation_instruction.strip()
+                            )
                             thinker_enabled = True  # Thinker was already used, just continuing
                     
                     if not thinker_enabled and is_thinker:
@@ -4235,7 +4254,9 @@ async def process_message_task(
                                     f"⚠️ Após completar todas as tarefas, limpe a memória do Thinker.\n"
                                 )
                                 
-                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                                agent_config["dynamic_prompt_context"] = (
+                                    agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + thinking_instruction.strip()
+                                )
                                 print(f"[Task] 🧠 Thinker task list injected for agent '{agent_model.name}'")
                                 
                                 # NOTE: thinker_model is used ONLY in call_thinker, not on main agent
@@ -4265,7 +4286,9 @@ async def process_message_task(
                                         f"Antes de responder, considere: {thinker_prompt}\n"
                                     )
                                 
-                                agent_config["system_prompt"] = agent_config.get("system_prompt", "") + thinking_instruction
+                                agent_config["dynamic_prompt_context"] = (
+                                    agent_config.get("dynamic_prompt_context", "") + ("\n\n" if agent_config.get("dynamic_prompt_context") else "") + thinking_instruction.strip()
+                                )
                                 print(f"[Task] 🧠 Thinker enabled for agent '{agent_model.name}' (fallback mode)")
                             
             except Exception as e:
