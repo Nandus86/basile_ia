@@ -662,6 +662,7 @@ class MCPToolExecutor:
         mcp: Optional pre-loaded MCP instance to avoid concurrent database calls during tool execution
         """
         _pre_resolved = pre_resolved_templates or {}
+        initial_mcp = mcp
         
         # State to track identical calls within this executor's lifecycle (per turn)
         _call_history: Dict[str, Any] = {}
@@ -769,13 +770,12 @@ class MCPToolExecutor:
             )
             logger.debug(f"[MCPTool] 📦 args enviados: {json.dumps(final_args, default=str, ensure_ascii=False)[:800]}")
             
-            target_mcp = mcp
+            mcp = initial_mcp
             try:
-                if not target_mcp:
-                    target_mcp = await self.get_mcp_by_id(mcp_id)
-                if not target_mcp:
+                if not mcp:
+                    mcp = await self.get_mcp_by_id(mcp_id)
+                if not mcp:
                     return json.dumps({"error": f"MCP {mcp_id} not found"})
-                mcp = target_mcp
                 
                 if protocol == "mcp":
                     query_params = {}
