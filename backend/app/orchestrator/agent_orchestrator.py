@@ -313,6 +313,34 @@ Responda APENAS em JSON válido com este formato exato:
             print(f"[Orchestrator] ⚠️ Error checking workflow triggers for collaborator '{agent.name}': {wf_err}")
             traceback.print_exc()
 
+        # ── GENERIC JEV DISPATCHER: Activated if agent config contains "jev": true ──
+        raw_agent_config = getattr(agent, "config", {}) or {}
+        if isinstance(raw_agent_config, str):
+            try:
+                import json as _j
+                raw_agent_config = _j.loads(raw_agent_config)
+            except Exception:
+                raw_agent_config = {}
+
+        if isinstance(raw_agent_config, dict) and raw_agent_config.get("jev") is True:
+            try:
+                from app.services.jev_dispatcher_service import JevDispatcherService
+                jev_dispatcher = JevDispatcherService(db=self.db, context_data=context_data)
+                jev_res = await jev_dispatcher.dispatch(
+                    agent=agent,
+                    message=message,
+                    orientation=orientation,
+                    context_data=context_data,
+                    response_style=response_style
+                )
+                if jev_res is not None:
+                    print(f"[Orchestrator] ⚡ Collaborator '{agent.name}' resolved via Generic JEV Dispatcher")
+                    return (agent.name, jev_res)
+            except Exception as jev_err:
+                import traceback
+                print(f"[Orchestrator] ⚠️ Error in generic JEV dispatch for '{agent.name}': {jev_err}")
+                traceback.print_exc()
+
         factory = AgentFactory(self.db)
         agent_config = await factory.get_agent_config(agent, context_data=context_data)
         
