@@ -446,6 +446,19 @@ class JevDispatcherService:
                 agent_model=agent_model
             )
 
+        # Resolução especializada para ferramentas de busca de células próximas
+        if (
+            "cell_near_residence" in mcp_name_lower
+            or "near_residence" in getattr(mcp, "endpoint", "").lower()
+            or ("near" in mcp_name_lower and "cell" in mcp_name_lower)
+            or ("celula" in mcp_name_lower and "perto" in mcp_name_lower)
+        ):
+            self._resolve_cell_near_parameters(
+                mcp=mcp,
+                query=query,
+                tool_args=tool_args
+            )
+
         return tool_args
 
     async def _resolve_cell_attendance_parameters(
@@ -618,6 +631,126 @@ class JevDispatcherService:
                         f"{len(present_ids)} presentes ({len(absents)} ausentes: {absents})"
                     )
 
+    def _resolve_cell_near_parameters(
+        self,
+        mcp: MCP,
+        query: str,
+        tool_args: Dict[str, Any]
+    ) -> None:
+        """
+        Resolve deterministicamente os parâmetros para busca de célula próxima à residência:
+        - CEP (do query ou fallback para context_data['member']['address'])
+        - address (do query ou fallback formatado de context_data['member']['address'])
+        - distance (do query ou default 5)
+        Garante que tool_args['CEP'] e tool_args['address'] existam como strings (nunca None).
+        """
+        # 1. Distância
+        m_dist = re.search(r'(\d+)\s*(?:km|quil[oô]metros)', query, re.IGNORECASE)
+        if m_dist:
+            try:
+                tool_args["distance"] = int(m_dist.group(1))
+            except Exception:
+                tool_args["distance"] = 5
+        elif "distance" not in tool_args:
+            tool_args["distance"] = 5
+
+        # 2. CEP informado na query
+        query_cep = None
+        m_cep = re.search(r'\b(\d{5})[-]?(\d{3})\b', query)
+        if m_cep:
+            query_cep = f"{m_cep.group(1)}{m_cep.group(2)}"
+        else:
+            m_cep8 = re.search(r'\bcep\s*[:=]?\s*(\d{8})\b', query, re.IGNORECASE)
+            if m_cep8:
+                query_cep = m_cep8.group(1)
+
+        # 3. Endereço informado na query
+        query_addr = None
+        prefix_match = re.search(
+            r'(?:endereço|endereco|moro na|moro no|moro em|fica na|fica no|localizada na|na rua|no bairro|no endereço|no endereco)\s*[:=]?\s*(.+)',
+            query,
+            re.IGNORECASE
+        )
+        if prefix_match:
+            candidate = prefix_match.group(1).strip().rstrip('?.! ')
+            if re.search(r'na rua\s*$', query[:prefix_match.start(1)], re.IGNORECASE) and not re.match(r'^(?:rua|r\.|av|avenida)\b', candidate, re.IGNORECASE):
+                candidate = f"Rua {candidate}"
+            if len(candidate) >= 4 and not re.match(r'^\d{5}[-]?\d{3}$', candidate):
+                query_addr = candidate
+
+        if not query_addr:
+            street_match = re.search(
+                r'\b((?:rua|r\.|av\.|avenida|travessa|trav\.|alameda|al\.|rodovia|rod\.|estrada|servidão|serv\.)\b.+)',
+                query,
+                re.IGNORECASE
+            )
+            if street_match:
+                candidate = street_match.group(1).strip().rstrip('?.! ')
+                if len(candidate) >= 4:
+                    query_addr = candidate
+
+        # 4. Contexto do membro caso query não tenha CEP nem endereço
+        ctx_addr_raw = (
+            self.context_data.get("member", {}).get("address")
+            or self.context_data.get("address")
+            or self.context_data.get("user", {}).get("address")
+        )
+
+        ctx_cep = None
+        ctx_formatted_addr = None
+
+        if isinstance(ctx_addr_raw, dict):
+            ctx_cep = ctx_addr_raw.get("zip_code") or ctx_addr_raw.get("cep") or ctx_addr_raw.get("postal_code")
+            parts = []
+            st = ctx_addr_raw.get("street") or ctx_addr_raw.get("logradouro") or ctx_addr_raw.get("address")
+            num = ctx_addr_raw.get("number") or ctx_addr_raw.get("numero")
+            nb = ctx_addr_raw.get("neighborhood") or ctx_addr_raw.get("bairro")
+            ci = ctx_addr_raw.get("city") or ctx_addr_raw.get("cidade")
+            uf = ctx_addr_raw.get("state") or ctx_addr_raw.get("uf")
+            if st: parts.append(str(st))
+            if num: parts.append(str(num))
+            if nb: parts.append(str(nb))
+            if ci: parts.append(str(ci))
+            if uf: parts.append(str(uf))
+            if parts:
+                ctx_formatted_addr = ", ".join(parts)
+        elif isinstance(ctx_addr_raw, str) and ctx_addr_raw.strip():
+            ctx_formatted_addr = ctx_addr_raw.strip()
+            m_c = re.search(r'\b(\d{5})[-]?(\d{3})\b', ctx_formatted_addr)
+            if m_c:
+                ctx_cep = f"{m_c.group(1)}{m_c.group(2)}"
+
+        if not ctx_cep:
+            ctx_cep = self.context_data.get("member", {}).get("zip_code") or self.context_data.get("member", {}).get("cep")
+
+        # 5. Decisão de preenchimento
+        if query_cep:
+            tool_args["CEP"] = query_cep
+            tool_args["address"] = query_addr or ""
+        elif query_addr:
+            tool_args["CEP"] = ""
+            tool_args["address"] = query_addr
+        elif ctx_cep:
+            tool_args["CEP"] = str(ctx_cep).replace("-", "").strip()
+            tool_args["address"] = ctx_formatted_addr or ""
+        elif ctx_formatted_addr:
+            tool_args["CEP"] = ""
+            tool_args["address"] = ctx_formatted_addr
+        else:
+            tool_args.setdefault("CEP", "")
+            tool_args.setdefault("address", "")
+
+        # Garantir chaves presentes e strings não-nulas
+        if not tool_args.get("CEP"):
+            tool_args["CEP"] = ""
+        if not tool_args.get("address"):
+            tool_args["address"] = ""
+
+        logger.info(
+            f"[JevDispatcher] 📍 Parâmetros de cell_near resolvidos: "
+            f"CEP={tool_args.get('CEP')!r}, address={tool_args.get('address')!r}, distance={tool_args.get('distance')!r}"
+        )
+
     async def _extract_open_text_param(
         self,
         query: str,
@@ -644,6 +777,31 @@ class JevDispatcherService:
                     return int(f"{m_cep.group(1)}{m_cep.group(2)}")
                 except Exception:
                     return f"{m_cep.group(1)}{m_cep.group(2)}"
+            return ""
+
+        # Endereço / Logradouro / Rua
+        if any(k in param_name.lower() for k in ["address", "endereco", "endereço", "rua", "logradouro"]):
+            prefix_match = re.search(
+                r'(?:endereço|endereco|moro na|moro no|moro em|fica na|fica no|localizada na|na rua|no bairro|no endereço|no endereco)\s*[:=]?\s*(.+)',
+                query,
+                re.IGNORECASE
+            )
+            if prefix_match:
+                candidate = prefix_match.group(1).strip().rstrip('?.! ')
+                if re.search(r'na rua\s*$', query[:prefix_match.start(1)], re.IGNORECASE) and not re.match(r'^(?:rua|r\.|av|avenida)\b', candidate, re.IGNORECASE):
+                    candidate = f"Rua {candidate}"
+                if len(candidate) >= 4 and not re.match(r'^\d{5}[-]?\d{3}$', candidate):
+                    return candidate
+
+            street_match = re.search(
+                r'\b((?:rua|r\.|av\.|avenida|travessa|trav\.|alameda|al\.|rodovia|rod\.|estrada|servidão|serv\.)\b.+)',
+                query,
+                re.IGNORECASE
+            )
+            if street_match:
+                candidate = street_match.group(1).strip().rstrip('?.! ')
+                if len(candidate) >= 4:
+                    return candidate
 
         # Celular
         if any(k in param_name.lower() for k in ["cellphone", "telefone", "celular", "phone"]):
@@ -733,6 +891,38 @@ class JevDispatcherService:
                     ],
                     "dados": parsed_data,
                     "recomendacao": "Confirme amigavelmente ao líder que a presença da sua célula foi lançada e registrada com sucesso."
+                }
+                return json.dumps(structured_payload, ensure_ascii=False)
+
+            if "cell_near" in mcp_name.lower() or "near_residence" in mcp_name.lower() or "perto" in mcp_name.lower():
+                cells = []
+                if isinstance(parsed_data, list):
+                    cells = parsed_data
+                elif isinstance(parsed_data, dict) and isinstance(parsed_data.get("celulas"), list):
+                    cells = parsed_data["celulas"]
+
+                if cells:
+                    top_cell = cells[0]
+                    c_name = top_cell.get("name", "Célula")
+                    c_dist = top_cell.get("address", {}).get("distancia_km")
+                    dist_str = f" a {c_dist:.2f} km de distância" if c_dist is not None else ""
+                    achados = [
+                        f"Encontrada a célula '{c_name}'{dist_str}.",
+                        f"Total de {len(cells)} célula(s) encontrada(s) no raio pesquisado."
+                    ]
+                    rec = (
+                        f"Informe ao usuário que a célula mais próxima encontrada foi a '{c_name}'"
+                        f"{dist_str}. Apresente o endereço, dia/horário e líderes de forma acolhedora e convidativa."
+                    )
+                else:
+                    msg = parsed_data.get("mensagem") if isinstance(parsed_data, dict) else "Nenhuma célula encontrada."
+                    achados = [f"Nenhuma célula foi localizada para o endereço/CEP informado. ({msg})"]
+                    rec = "Explique gentilmente que não foram encontradas células próximas nesse raio e solicite confirmação do endereço ou bairro/cidade."
+
+                structured_payload = {
+                    "achados": achados,
+                    "dados": parsed_data,
+                    "recomendacao": rec
                 }
                 return json.dumps(structured_payload, ensure_ascii=False)
 

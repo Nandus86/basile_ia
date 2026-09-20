@@ -917,7 +917,7 @@ class MCPToolExecutor:
                     except Exception as e:
                         logger.warning(f"[MCPTool] Falha ao parsear body JSON ({e}): {body_str[:300]}")
                         try:
-                            sanitized = re.sub(r'\{\{[\s\+]*\$fromAI\(.*?\)[\s\+]*\}\}', '""', body_str)
+                            sanitized = re.sub(r'\{\{.*?\}\}', '""', body_str)
                             body = json.loads(sanitized)
                         except Exception:
                             body = {}
