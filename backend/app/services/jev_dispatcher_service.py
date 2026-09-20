@@ -376,6 +376,43 @@ class JevDispatcherService:
                 import datetime
                 tool_args[p_name] = f"{datetime.date.today().isoformat()}T23:59:59"
 
+            elif p_name in ["presence_date", "data_presenca"]:
+                import datetime
+                q_lower = query.lower()
+                today = datetime.date.today()
+                if "ontem" in q_lower:
+                    tool_args[p_name] = (today - datetime.timedelta(days=1)).isoformat()
+                elif "hoje" in q_lower:
+                    tool_args[p_name] = today.isoformat()
+                else:
+                    m_date = re.search(r'(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})', query)
+                    if m_date:
+                        d, m, y = m_date.groups()
+                        tool_args[p_name] = f"{y}-{int(m):02d}-{int(d):02d}"
+                    else:
+                        m_short = re.search(r'(\d{1,2})[\/\-](\d{1,2})', query)
+                        if m_short:
+                            d, m = m_short.groups()
+                            tool_args[p_name] = f"{today.year}-{int(m):02d}-{int(d):02d}"
+                        else:
+                            extracted_val = await self._extract_open_text_param(
+                                query=query,
+                                param_name=p_name,
+                                param_desc=p_info.get("description", p_name),
+                                model=agent_model
+                            )
+                            if extracted_val:
+                                m_conv = re.search(r'(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})', extracted_val)
+                                if m_conv:
+                                    d, m, y = m_conv.groups()
+                                    tool_args[p_name] = f"{y}-{int(m):02d}-{int(d):02d}"
+                                elif re.match(r'^\d{4}-\d{2}-\d{2}$', extracted_val):
+                                    tool_args[p_name] = extracted_val
+                                else:
+                                    tool_args[p_name] = today.isoformat()
+                            else:
+                                tool_args[p_name] = today.isoformat()
+
             else:
                 extracted_val = await self._extract_open_text_param(
                     query=query,
@@ -385,6 +422,16 @@ class JevDispatcherService:
                 )
                 if extracted_val:
                     tool_args[p_name] = extracted_val
+
+        # Fallback de cell_id via context_data se não resolvido
+        if "cell_id" in ai_params and "cell_id" not in tool_args:
+            ctx_cell_id = (
+                self.context_data.get("cell_id")
+                or self.context_data.get("cell", {}).get("_id")
+                or self.context_data.get("member", {}).get("cell_id")
+            )
+            if ctx_cell_id:
+                tool_args["cell_id"] = str(ctx_cell_id)
 
         return tool_args
 
@@ -399,6 +446,33 @@ class JevDispatcherService:
         Extração pontual e cirúrgica de texto aberto utilizando o modelo configurado no agente.
         Garante alta agilidade (~150-250ms) e consumo mínimo de tokens.
         """
+        # Hexadecimal Mongo ObjectId (24 chars) para cell_id ou member_id
+        if any(k in param_name.lower() for k in ["cell_id", "member_id", "_id"]):
+            m_hex = re.search(r'\b[a-fA-F0-9]{24}\b', query)
+            if m_hex:
+                return m_hex.group(0)
+
+        # CEP numérico
+        if "cep" in param_name.lower():
+            m_cep = re.search(r'\b(\d{5})[-]?(\d{3})\b', query)
+            if m_cep:
+                try:
+                    return int(f"{m_cep.group(1)}{m_cep.group(2)}")
+                except Exception:
+                    return f"{m_cep.group(1)}{m_cep.group(2)}"
+
+        # Celular
+        if any(k in param_name.lower() for k in ["cellphone", "telefone", "celular", "phone"]):
+            m_phone = re.search(r'\b(?:55)?(?:\d{2})?(?:9\d{8})\b', re.sub(r'[\s\(\)\-]', '', query))
+            if m_phone:
+                return m_phone.group(0)
+
+        # Nome de pessoa / visitante
+        if any(k in param_name.lower() for k in ["fullname", "nome"]):
+            m_fn = re.search(r'(?:visitante|membro|nome(?:\s+do\s+visitante)?)\s*[:=]?\s*([A-Za-zÀ-ÿ\s]{3,40})', query, re.IGNORECASE)
+            if m_fn and len(m_fn.group(1).strip()) > 2:
+                return m_fn.group(1).strip()
+
         if any(k in param_name.lower() for k in ["cell", "celula"]):
             m = re.search(r'c[ée]lula\s+([A-Za-z0-9À-ÿ\s\-]+?)(?:\s*(?:\?|\.|,|$|hoje|ontem|nesse|neste))', query, re.IGNORECASE)
             if m and len(m.group(1).strip()) > 2:
