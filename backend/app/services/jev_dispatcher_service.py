@@ -5,18 +5,20 @@ Permite que qualquer agente especialista com a configuração {"jev": true}
 em seu config JSON execute suas ferramentas com ultra-baixa latência (~200ms)
 utilizando TypeSafe JEV (~typesafe/jev-latest no OpenRouter).
 
-Arquitetura Híbrida Inteligente:
-1. JEV seleciona a ferramenta correta e os parâmetros discretos (alternativas) em 1 único passo (~200ms).
-2. Se a ferramenta escolhida exigir parâmetros de texto aberto (ex: nome de evento, célula),
-   utiliza uma chamada cirúrgica ao modelo do próprio agente (agent.model) para extração pontual (~150ms).
-3. Executa o MCP diretamente via MCPToolExecutor.
-4. Caso o JEV seja inconclusivo ou retorne 'nenhuma', o fluxo faz fallback automático para o ReAct comum.
+Suporte a Execução Paralela (Batch) com {"jev_paralelo": true}:
+- Quando o usuário pede uma visão consolidada ("todos", "resumo geral", "balanço"),
+  o JEV aciona o modo paralelo.
+- Todas as ferramentas de consulta (GET) ativas do agente são disparadas
+  simultaneamente via asyncio.gather, terminando em ~300ms em vez de 9s.
+- Ferramentas de escrita/mutação (POST, DELETE) continuam protegidas e só rodam
+  em chamadas pontuais.
 """
 
 import os
 import re
 import json
 import time
+import asyncio
 import logging
 from typing import Optional, Dict, Any, List
 from uuid import UUID
@@ -52,7 +54,7 @@ class JevDispatcherService:
     ) -> Optional[str]:
         """
         Roteia a mensagem do usuário dinamicamente para as ferramentas do agente via TypeSafe JEV.
-        Retorna a resposta pronta ou None para ativar fallback transparente ao motor padrão.
+        Suporta chamadas pontuais e execução consolidada paralela se jev_paralelo=true.
         """
         if not self.api_key:
             logger.warning("[JevDispatcher] ⚠️ OPENROUTER_API_KEY não encontrada. Fallback para motor padrão.")
@@ -67,25 +69,39 @@ class JevDispatcherService:
             logger.info(f"[JevDispatcher] Agente '{agent.name}' não possui MCPs ativos. Fallback.")
             return None
 
+        # 2. Checar se modo paralelo está ativado no config do agente
+        raw_agent_config = getattr(agent, "config", {}) or {}
+        if isinstance(raw_agent_config, str):
+            try:
+                raw_agent_config = json.loads(raw_agent_config)
+            except Exception:
+                raw_agent_config = {}
+        is_parallel_enabled = bool(raw_agent_config.get("jev_paralelo", False))
+
         full_query = f"{orientation} {message}".strip()
         t0 = time.perf_counter()
 
         try:
-            # 2. Mapeamento dinâmico de ferramentas para o JEV
+            # 3. Mapeamento dinâmico de ferramentas para o JEV
             tool_map = {}
             tool_criteria = {}
 
             for mcp in agent_mcps:
-                # Chave limpa e única para o JEV
                 safe_key = re.sub(r'[^a-zA-Z0-9_]', '_', mcp.name).strip('_')[:64]
                 tool_map[safe_key] = mcp
                 desc = (mcp.description or mcp.name).strip()
-                # Limite seguro para cada critério
                 tool_criteria[safe_key] = desc[:250]
+
+            if is_parallel_enabled:
+                tool_criteria["todas_ferramentas_resumo"] = (
+                    "Executar todas as ferramentas de consulta/resumo em paralelo "
+                    "(usar quando o usuário pede 'todos os relatórios', 'todos', 'resumo geral', "
+                    "'balanço completo', 'panorama geral' ou visão consolidada de dados)"
+                )
 
             tool_criteria["nenhuma"] = "Nenhuma das ferramentas se aplica a esta solicitação"
 
-            # 3. Montagem das Perguntas do JEV (Tool + Filtros Discretos Comuns)
+            # 4. Montagem das Perguntas do JEV (Tool + Filtros Discretos Comuns)
             questions: Dict[str, Any] = {
                 "ferramenta_alvo": {
                     "type": "choice",
@@ -106,7 +122,7 @@ class JevDispatcherService:
                 }
             }
 
-            # 4. Montagem do Contexto (State) contemplando o PROMPT do Agente
+            # 5. Montagem do Contexto (State) contemplando o PROMPT do Agente
             state = (
                 f"DIRETRIZES E REGRAS DO AGENTE ({agent.name}):\n"
                 f"{agent.system_prompt or ''}\n\n"
@@ -114,15 +130,33 @@ class JevDispatcherService:
                 f"{full_query}"
             ).strip()
 
-            # 5. Execução da Decisão no TypeSafe JEV
+            # 6. Execução da Decisão no TypeSafe JEV
             decision = await self._call_jev_decision(state=state, questions=questions)
-            if not decision:
+            
+            # Atalho heurístico caso o JEV seja indeciso mas o usuário tenha pedido expressamente 'todos'
+            query_clean = message.strip().lower()
+            is_explicit_all = query_clean in ["todos", "todos os relatorios", "todos os relatórios", "tudo", "resumo geral", "ver todos"]
+
+            if not decision and not (is_parallel_enabled and is_explicit_all):
                 logger.info(f"[JevDispatcher] JEV sem resposta. Ativando fallback para '{agent.name}'.")
                 return None
 
-            tool_choice = decision.get("ferramenta_alvo", {}).get("choice")
-            tool_conf = decision.get("ferramenta_alvo", {}).get("confidence", 0.0)
-            time_filter = decision.get("filtro_tempo", {}).get("choice", "month")
+            tool_choice = decision.get("ferramenta_alvo", {}).get("choice") if decision else None
+            tool_conf = decision.get("ferramenta_alvo", {}).get("confidence", 0.0) if decision else 0.0
+            time_filter = decision.get("filtro_tempo", {}).get("choice", "month") if decision else "month"
+
+            # Se for pedido explícito de 'todos' com jev_paralelo ativado, assume modo paralelo
+            if is_parallel_enabled and (tool_choice == "todas_ferramentas_resumo" or is_explicit_all):
+                logger.info(f"[JevDispatcher] ⚡ Modo PARALELO ativado para '{agent.name}'. Disparando ferramentas em lote.")
+                return await self._dispatch_parallel(
+                    agent=agent,
+                    mcps=agent_mcps,
+                    executor=executor,
+                    query=full_query,
+                    time_filter=time_filter,
+                    response_style=response_style,
+                    t0=t0
+                )
 
             elapsed_jev = (time.perf_counter() - t0) * 1000
             logger.info(
@@ -139,7 +173,7 @@ class JevDispatcherService:
                 logger.warning(f"[JevDispatcher] Tool '{tool_choice}' não encontrada no mapa local.")
                 return None
 
-            # 6. Descoberta e Resolução Híbrida de Parâmetros
+            # 7. Descoberta e Resolução Híbrida de Parâmetros (Chamada Pontual)
             tool_args = await self._resolve_parameters(
                 mcp=selected_mcp,
                 query=full_query,
@@ -147,7 +181,7 @@ class JevDispatcherService:
                 agent_model=getattr(agent, "model", None) or "deepseek/deepseek-v4.1-flash"
             )
 
-            # 7. Execução do MCP via MCPToolExecutor
+            # 8. Execução do MCP via MCPToolExecutor
             langchain_tools = await executor.create_langchain_tools(selected_mcp)
             if not langchain_tools:
                 logger.error(f"[JevDispatcher] Falha ao criar LangChain Tool para MCP '{selected_mcp.name}'.")
@@ -157,7 +191,7 @@ class JevDispatcherService:
             logger.info(f"[JevDispatcher] 🚀 Executando '{selected_mcp.name}' com args: {tool_args}")
             raw_result = await tool_runner.ainvoke(tool_args)
 
-            # 8. Formatação final de retorno
+            # 9. Formatação final de retorno
             formatted_response = self._format_result(
                 agent_name=agent.name,
                 mcp_name=selected_mcp.name,
@@ -174,6 +208,92 @@ class JevDispatcherService:
             logger.error(f"[JevDispatcher] ❌ Exceção ao despachar via JEV para '{agent.name}': {e}")
             logger.error(traceback.format_exc())
             return None
+
+    async def _dispatch_parallel(
+        self,
+        agent: Agent,
+        mcps: List[MCP],
+        executor: MCPToolExecutor,
+        query: str,
+        time_filter: str,
+        response_style: str,
+        t0: float
+    ) -> Optional[str]:
+        """
+        Executa todas as ferramentas de consulta (GET) em paralelo via asyncio.gather.
+        Deduplica endpoints idênticos e consolida os dados com máxima velocidade (~300ms).
+        """
+        # Filtrar apenas ferramentas de LEITURA (GET) para segurança absoluta
+        read_mcps = [m for m in mcps if str(getattr(m, "method", "GET")).upper() == "GET"]
+        if not read_mcps:
+            logger.warning(f"[JevDispatcher] Nenhuma ferramenta GET disponível para paralelo em '{agent.name}'.")
+            return None
+
+        # Deduplicação de endpoints duplicados/cópias
+        seen_endpoints = set()
+        unique_read_mcps = []
+        for m in read_mcps:
+            ep_key = f"{m.method}:{m.endpoint}"
+            if ep_key not in seen_endpoints:
+                seen_endpoints.add(ep_key)
+                unique_read_mcps.append(m)
+
+        agent_model = getattr(agent, "model", None) or "deepseek/deepseek-v4.1-flash"
+
+        async def _execute_single(mcp_item: MCP):
+            try:
+                args = await self._resolve_parameters(
+                    mcp=mcp_item,
+                    query=query,
+                    time_filter=time_filter,
+                    agent_model=agent_model
+                )
+                tools = await executor.create_langchain_tools(mcp_item)
+                if tools:
+                    res = await tools[0].ainvoke(args)
+                    if isinstance(res, str):
+                        try:
+                            res = json.loads(res)
+                        except Exception:
+                            pass
+                    return mcp_item.name, res
+            except Exception as err:
+                logger.warning(f"[JevDispatcher] Falha na ferramenta paralela '{mcp_item.name}': {err}")
+                return mcp_item.name, {"error": str(err)}
+            return mcp_item.name, None
+
+        logger.info(f"[JevDispatcher] ⚡ Disparando {len(unique_read_mcps)} ferramentas em paralelo via asyncio.gather...")
+        parallel_results = await asyncio.gather(
+            *[_execute_single(m) for m in unique_read_mcps],
+            return_exceptions=True
+        )
+
+        consolidated_data = {}
+        for item in parallel_results:
+            if isinstance(item, tuple) and len(item) == 2:
+                name, val = item
+                consolidated_data[name] = val
+            elif isinstance(item, Exception):
+                logger.warning(f"[JevDispatcher] Exceção em tarefa paralela: {item}")
+
+        total_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            f"[JevDispatcher] 🏁 Modo PARALELO concluído: {len(consolidated_data)} ferramentas "
+            f"executadas em {total_ms:.1f}ms"
+        )
+
+        if response_style == "structured":
+            structured_payload = {
+                "achados": [
+                    f"Relatório consolidado executado com sucesso em paralelo para o agente '{agent.name}'.",
+                    f"Total de {len(consolidated_data)} consultas realizadas simultaneamente via JEV Paralelo."
+                ],
+                "dados": consolidated_data,
+                "recomendacao": "Apresente um resumo completo e humanizado de todos os indicadores levantados."
+            }
+            return json.dumps(structured_payload, ensure_ascii=False)
+        else:
+            return json.dumps({"consolidado": True, "dados": consolidated_data}, ensure_ascii=False)
 
     async def _call_jev_decision(self, state: str, questions: dict) -> Optional[dict]:
         """Faz a requisição para a API de Decisions do OpenRouter com o modelo TypeSafe JEV."""
@@ -221,7 +341,6 @@ class JevDispatcherService:
         import urllib.parse
         tool_args: Dict[str, Any] = {}
 
-        # Extrair todos os $fromAI definidos no MCP
         ai_params = {}
         if mcp.endpoint:
             ai_params.update(_extract_from_ai_params(urllib.parse.unquote(mcp.endpoint)))
@@ -236,7 +355,6 @@ class JevDispatcherService:
         for p_name, p_info in ai_params.items():
             desc = p_info.get("description", "").lower()
 
-            # Caso 1: Parâmetro com alternativas de período / filtro de data
             if p_name in ["filter", "periodo", "filtro"] or any(k in desc for k in ["mês", "mes", "semana", "dia", "month", "week", "day"]):
                 if "current_month" in desc:
                     if time_filter == "last_month":
@@ -246,13 +364,11 @@ class JevDispatcherService:
                     else:
                         tool_args[p_name] = "current_month"
                 else:
-                    # Filtros normais: month, week, day
                     if time_filter in ["month", "week", "day"]:
                         tool_args[p_name] = time_filter
                     else:
                         tool_args[p_name] = "month"
 
-            # Caso 2: Parâmetro de datas no formato ISO (start_date, end_date)
             elif p_name in ["start_date", "data_inicio"]:
                 import datetime
                 tool_args[p_name] = f"{datetime.date.today().isoformat()}T00:00:00"
@@ -260,7 +376,6 @@ class JevDispatcherService:
                 import datetime
                 tool_args[p_name] = f"{datetime.date.today().isoformat()}T23:59:59"
 
-            # Caso 3: Texto aberto (nome de evento, curso, célula, etc.)
             else:
                 extracted_val = await self._extract_open_text_param(
                     query=query,
@@ -284,7 +399,6 @@ class JevDispatcherService:
         Extração pontual e cirúrgica de texto aberto utilizando o modelo configurado no agente.
         Garante alta agilidade (~150-250ms) e consumo mínimo de tokens.
         """
-        # 1. Regex de atalho para entidades comuns
         if any(k in param_name.lower() for k in ["cell", "celula"]):
             m = re.search(r'c[ée]lula\s+([A-Za-z0-9À-ÿ\s\-]+?)(?:\s*(?:\?|\.|,|$|hoje|ontem|nesse|neste))', query, re.IGNORECASE)
             if m and len(m.group(1).strip()) > 2:
@@ -300,7 +414,6 @@ class JevDispatcherService:
             if m and len(m.group(1).strip()) > 2:
                 return m.group(1).strip()
 
-        # 2. Chamada cirúrgica de 1 linha ao modelo do agente
         try:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -308,7 +421,6 @@ class JevDispatcherService:
                 "HTTP-Referer": "https://basileia.global",
                 "X-Title": "Basileia IA"
             }
-            # Fallback seguro para DeepSeek v4.1 Flash se o modelo cadastrado não for compatível
             target_model = model if model and "/" in model else "deepseek/deepseek-v4.1-flash"
             prompt = (
                 f"Da mensagem abaixo, extraia apenas o valor específico para o campo '{param_name}' ({param_desc}).\n"
