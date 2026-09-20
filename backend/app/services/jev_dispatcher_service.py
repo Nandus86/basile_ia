@@ -425,15 +425,198 @@ class JevDispatcherService:
 
         # Fallback de cell_id via context_data se não resolvido
         if "cell_id" in ai_params and "cell_id" not in tool_args:
+            ctx_cids = self.context_data.get("member", {}).get("cell_ids", [])
+            first_cid = ctx_cids[0] if isinstance(ctx_cids, list) and ctx_cids else None
             ctx_cell_id = (
                 self.context_data.get("cell_id")
                 or self.context_data.get("cell", {}).get("_id")
                 or self.context_data.get("member", {}).get("cell_id")
+                or first_cid
             )
-            if ctx_cell_id:
+            if ctx_cell_id and re.match(r'^[a-fA-F0-9]{24}$', str(ctx_cell_id)):
                 tool_args["cell_id"] = str(ctx_cell_id)
 
+        # Resolução especializada para ferramentas de presença de célula
+        mcp_name_lower = getattr(mcp, "name", "").lower()
+        if "register_cell_attendance_list" in mcp_name_lower or "presence" in getattr(mcp, "endpoint", "").lower():
+            await self._resolve_cell_attendance_parameters(
+                mcp=mcp,
+                query=query,
+                tool_args=tool_args,
+                agent_model=agent_model
+            )
+
         return tool_args
+
+    async def _resolve_cell_attendance_parameters(
+        self,
+        mcp: MCP,
+        query: str,
+        tool_args: Dict[str, Any],
+        agent_model: str
+    ) -> None:
+        """
+        Resolve deterministicamente os parâmetros necessários para cadastro de presença de célula:
+        1. cell_id (garante ObjectId válido da célula)
+        2. presence_date (garante formato YYYY-MM-DD para 'ontem', 'hoje' ou data mencionada)
+        3. members_and_members_visitors (mapeia nomes de ausentes e presentes para IDs reais de membros/visitantes)
+        """
+        import datetime
+        import unicodedata
+
+        def _norm(s: str) -> str:
+            if not s:
+                return ""
+            s_clean = unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('ASCII')
+            return s_clean.lower().strip()
+
+        q_lower = query.lower()
+        today = datetime.date.today()
+
+        # 1. Resolver presence_date se ainda não estiver formatado em YYYY-MM-DD
+        cur_date = tool_args.get("presence_date")
+        if not cur_date or not re.match(r'^\d{4}-\d{2}-\d{2}$', str(cur_date)):
+            if "ontem" in q_lower:
+                tool_args["presence_date"] = (today - datetime.timedelta(days=1)).isoformat()
+            elif "hoje" in q_lower:
+                tool_args["presence_date"] = today.isoformat()
+            else:
+                m_date = re.search(r'(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})', query)
+                if m_date:
+                    d, m, y = m_date.groups()
+                    tool_args["presence_date"] = f"{y}-{int(m):02d}-{int(d):02d}"
+                else:
+                    tool_args["presence_date"] = today.isoformat()
+
+        # 2. Resolver cell_id se não for hex de 24 caracteres
+        cur_cid = tool_args.get("cell_id")
+        valid_cid = False
+        if cur_cid and isinstance(cur_cid, str) and re.match(r'^[a-fA-F0-9]{24}$', cur_cid):
+            valid_cid = True
+
+        phone = (
+            self.context_data.get("member", {}).get("phone")
+            or self.context_data.get("system", {}).get("phone")
+            or self.context_data.get("system", {}).get("user_phone")
+            or self.context_data.get("global", {}).get("phone")
+        )
+        church_id = (
+            self.context_data.get("church", {}).get("_id")
+            or self.context_data.get("member", {}).get("church_id")
+        )
+        apikey = (
+            self.context_data.get("system", {}).get("apikey")
+            or self.context_data.get("global", {}).get("apikey")
+        )
+        base_url = (
+            self.context_data.get("system", {}).get("baseUrlBasileia")
+            or self.context_data.get("global", {}).get("baseUrlBasileia")
+            or "https://dash.basileia.global"
+        ).rstrip("/")
+
+        cell_data = None
+        cur_members = tool_args.get("members_and_members_visitors")
+        needs_members = not cur_members or not re.search(r'[a-fA-F0-9]{24}', str(cur_members))
+
+        if not valid_cid or needs_members:
+            if phone and church_id:
+                try:
+                    headers = {"Authorization": f"Bearer {apikey}"} if apikey else {}
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        resp = await client.get(
+                            f"{base_url}/api/cells/n8n/{phone}?church_id={church_id}",
+                            headers=headers
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            cells = data.get("body", []) if isinstance(data, dict) else data
+                            if isinstance(cells, list) and cells:
+                                selected_cell = cells[0]
+                                for c in cells:
+                                    cname = c.get("name", "")
+                                    if cname and _norm(cname) in _norm(query):
+                                        selected_cell = c
+                                        break
+                                cell_data = selected_cell
+                                if not valid_cid and selected_cell.get("_id"):
+                                    tool_args["cell_id"] = selected_cell["_id"]
+                                    valid_cid = True
+                except Exception as e:
+                    logger.warning(f"[JevDispatcher] Aviso ao buscar células do líder: {e}")
+
+        if not valid_cid:
+            ctx_cids = self.context_data.get("member", {}).get("cell_ids", [])
+            if ctx_cids and isinstance(ctx_cids, list) and re.match(r'^[a-fA-F0-9]{24}$', str(ctx_cids[0])):
+                tool_args["cell_id"] = str(ctx_cids[0])
+                valid_cid = True
+
+        # 3. Resolver members_and_members_visitors mapeando nomes para IDs
+        if needs_members:
+            member_list = []
+            if cell_data and isinstance(cell_data.get("member_or_visitant"), list):
+                member_list = cell_data["member_or_visitant"]
+            elif valid_cid and phone and church_id:
+                try:
+                    headers = {"Authorization": f"Bearer {apikey}"} if apikey else {}
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        resp = await client.get(
+                            f"{base_url}/api/cell/members/n8n/{phone}?cell_id={tool_args['cell_id']}&church_id={church_id}",
+                            headers=headers
+                        )
+                        if resp.status_code == 200:
+                            m_json = resp.json()
+                            member_list = m_json.get("members", []) if isinstance(m_json, dict) else m_json
+                except Exception as e:
+                    logger.warning(f"[JevDispatcher] Aviso ao buscar membros da célula: {e}")
+
+            if member_list:
+                q_norm = _norm(query)
+                absent_section = ""
+                absent_patterns = [
+                    r'(?:ausentes|faltaram|faltou|faltas|nao compareceram|nao vieram|ausente)(?: foram| sao|:)?\s*([^.]+)',
+                    r'([^.]+?)(?:faltaram|faltou|nao compareceram|nao vieram)'
+                ]
+                for pat in absent_patterns:
+                    m_abs = re.search(pat, q_norm)
+                    if m_abs:
+                        absent_section = m_abs.group(1)
+                        break
+
+                presents = []
+                absents = []
+                for m_item in member_list:
+                    role = m_item.get("role")
+                    if role not in ["member", "member_visitant"]:
+                        continue
+
+                    m_id = m_item.get("_id")
+                    if not m_id:
+                        continue
+
+                    fname = m_item.get("fullname", "").strip()
+                    fn_norm = _norm(fname)
+                    parts = fn_norm.split()
+                    first_name = parts[0] if parts else ""
+
+                    is_absent = False
+                    if absent_section:
+                        if fn_norm and fn_norm in absent_section:
+                            is_absent = True
+                        elif first_name and len(first_name) >= 3 and re.search(r'\b' + re.escape(first_name) + r'\b', absent_section):
+                            is_absent = True
+
+                    if is_absent:
+                        absents.append(fname)
+                    else:
+                        presents.append(m_item)
+
+                if presents:
+                    present_ids = [p["_id"] for p in presents]
+                    tool_args["members_and_members_visitors"] = ",".join(present_ids)
+                    logger.info(
+                        f"[JevDispatcher] Mapeamento de presença da célula concluído: "
+                        f"{len(present_ids)} presentes ({len(absents)} ausentes: {absents})"
+                    )
 
     async def _extract_open_text_param(
         self,
@@ -451,6 +634,7 @@ class JevDispatcherService:
             m_hex = re.search(r'\b[a-fA-F0-9]{24}\b', query)
             if m_hex:
                 return m_hex.group(0)
+            return ""
 
         # CEP numérico
         if "cep" in param_name.lower():
@@ -473,7 +657,7 @@ class JevDispatcherService:
             if m_fn and len(m_fn.group(1).strip()) > 2:
                 return m_fn.group(1).strip()
 
-        if any(k in param_name.lower() for k in ["cell", "celula"]):
+        if any(k in param_name.lower() for k in ["cell_name", "nome_celula"]) and not param_name.endswith("_id"):
             m = re.search(r'c[ée]lula\s+([A-Za-z0-9À-ÿ\s\-]+?)(?:\s*(?:\?|\.|,|$|hoje|ontem|nesse|neste))', query, re.IGNORECASE)
             if m and len(m.group(1).strip()) > 2:
                 return m.group(1).strip()
@@ -540,6 +724,18 @@ class JevDispatcherService:
                 pass
 
         if response_style == "structured":
+            if "register_cell_attendance_list" in mcp_name.lower():
+                msg_body = parsed_data.get("body", "") if isinstance(parsed_data, dict) else str(parsed_data)
+                structured_payload = {
+                    "achados": [
+                        "A lista de presença da célula foi cadastrada com sucesso no sistema.",
+                        f"Retorno do servidor: {msg_body}"
+                    ],
+                    "dados": parsed_data,
+                    "recomendacao": "Confirme amigavelmente ao líder que a presença da sua célula foi lançada e registrada com sucesso."
+                }
+                return json.dumps(structured_payload, ensure_ascii=False)
+
             structured_payload = {
                 "achados": [f"Dados consultados com sucesso pela ferramenta '{mcp_name}' do agente '{agent_name}'."],
                 "dados": parsed_data,
