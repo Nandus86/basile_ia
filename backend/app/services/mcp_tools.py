@@ -161,7 +161,7 @@ def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
         try:
             args = ast.literal_eval(f'({args_str},)')
             if not args:
-                return match.group(0)
+                return ""
             name = args[0]
             default = args[3] if len(args) > 3 else None
             
@@ -170,15 +170,17 @@ def _inject_from_ai_params(text: str, kwargs: dict) -> tuple[str, set]:
                 used_args.add(name)
                 if isinstance(val, bool):
                      return "true" if val else "false"
+                if isinstance(val, (dict, list)):
+                     return json.dumps(val, ensure_ascii=False)
                 return str(val)
             elif default is not None:
                 used_args.add(name)
                 if isinstance(default, bool):
                      return "true" if default else "false"
                 return str(default)
-            return match.group(0)
+            return ""
         except:
-            return match.group(0)
+            return ""
             
     result = re.sub(r'\{\{[\s\+]*\$fromAI\((.*?)\)[\s\+]*\}\}', replacer, text)
     return result, used_args
@@ -737,17 +739,18 @@ class MCPToolExecutor:
                     val = flat_context[param]
                     final_args[param] = str(val) if not isinstance(val, (dict, list)) else val
                 else:
-                    # Smart fallback for context
+                    # Smart fallback for context (STRICT matching to avoid false substring collisions)
                     found_fallback = False
                     for ctx_key, ctx_val in flat_context.items():
-                        if param in ctx_key or ctx_key in param:
-                            final_args[param] = str(ctx_val) if not isinstance(ctx_val, (dict, list)) else ctx_val
-                            found_fallback = True
-                            break
-                        # Also check if just the suffix matches (e.g. member-phone matches global-phone)
-                        if '-' in param and '-' in ctx_key:
-                            if param.split('-', 1)[-1] == ctx_key.split('-', 1)[-1]:
-                                final_args[param] = str(ctx_val) if not isinstance(ctx_val, (dict, list)) else ctx_val
+                        is_match = (
+                            ctx_key == param or
+                            ctx_key.endswith(f".{param}") or
+                            ctx_key.endswith(f"-{param}") or
+                            param.replace('-', '_') == ctx_key.replace('-', '_')
+                        )
+                        if is_match:
+                            if not isinstance(ctx_val, (dict, list)):
+                                final_args[param] = str(ctx_val)
                                 found_fallback = True
                                 break
                     
@@ -883,10 +886,10 @@ class MCPToolExecutor:
                     import urllib.parse
                     
                     # Use pre-resolved templates if available ({{ $request }} already filled)
-                    body_str = _pre_resolved.get('body_str') or json.dumps(mcp.body_template or {})
-                    headers_str = _pre_resolved.get('headers_str') or json.dumps(mcp.headers or {})
-                    query_str = _pre_resolved.get('query_str') or json.dumps(getattr(mcp, 'query_template', {}) or {})
-                    endpoint_str = _pre_resolved.get('endpoint_str') or urllib.parse.unquote(mcp.endpoint or '')
+                    body_str = _final_templates.get('body_str') or _pre_resolved.get('body_str') or json.dumps(mcp.body_template or {})
+                    headers_str = _final_templates.get('headers_str') or _pre_resolved.get('headers_str') or json.dumps(mcp.headers or {})
+                    query_str = _final_templates.get('query_str') or _pre_resolved.get('query_str') or json.dumps(getattr(mcp, 'query_template', {}) or {})
+                    endpoint_str = _final_templates.get('endpoint_str') or _pre_resolved.get('endpoint_str') or urllib.parse.unquote(mcp.endpoint or '')
                     
                     used_all = set()
                     body_str, u_body = _inject_from_ai_params(body_str, final_args)
@@ -909,9 +912,25 @@ class MCPToolExecutor:
 
                     used_all.update(u_body, u_headers, u_query, u_endpoint)
                     
-                    body = json.loads(body_str)
-                    headers = json.loads(headers_str)
-                    query = json.loads(query_str)
+                    try:
+                        body = json.loads(body_str)
+                    except Exception as e:
+                        logger.warning(f"[MCPTool] Falha ao parsear body JSON ({e}): {body_str[:300]}")
+                        try:
+                            sanitized = re.sub(r'\{\{[\s\+]*\$fromAI\(.*?\)[\s\+]*\}\}', '""', body_str)
+                            body = json.loads(sanitized)
+                        except Exception:
+                            body = {}
+
+                    try:
+                        headers = json.loads(headers_str)
+                    except Exception:
+                        headers = {}
+
+                    try:
+                        query = json.loads(query_str)
+                    except Exception:
+                        query = {}
                     
                     # Legacy behavior: Include explicit 'params' object passed by the LLM
                     # (Only if it was explicitly defined in the schema, which it isn't anymore by default)
