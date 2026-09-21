@@ -34,6 +34,8 @@ from app.services.mcp_tools import MCPToolExecutor, _extract_from_ai_params
 
 logger = logging.getLogger(__name__)
 
+_SOLICITATION_TYPES_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+
 
 class JevDispatcherService:
     def __init__(self, db: AsyncSession, context_data: Optional[Dict[str, Any]] = None):
@@ -90,6 +92,17 @@ class JevDispatcherService:
                 safe_key = re.sub(r'[^a-zA-Z0-9_]', '_', mcp.name).strip('_')[:64]
                 tool_map[safe_key] = mcp
                 desc = (mcp.description or mcp.name).strip()
+                mcp_low = mcp.name.lower()
+                if "register_solicitation" in mcp_low:
+                    desc = "Cadastrar, criar ou registrar novo pedido de oração, solicitação de ajuda, falar com o pastor ou apoio"
+                elif "get_all_solicitation_responsible" in mcp_low:
+                    desc = "Listar solicitações ou pedidos que o usuário é responsável por atender (para líderes, pastores e equipe)"
+                elif "get_all_solicitation" in mcp_low:
+                    desc = "Listar as solicitações ou pedidos feitos pelo próprio usuário (meus pedidos, minhas orações, status de pedidos)"
+                elif "list_solicitation_types" in mcp_low:
+                    desc = "Listar os tipos ou categorias de solicitações disponíveis na igreja"
+                elif "update_status_served" in mcp_low:
+                    desc = "Marcar uma solicitação ou pedido como atendido ou concluído"
                 tool_criteria[safe_key] = desc[:250]
 
             if is_parallel_enabled:
@@ -459,6 +472,20 @@ class JevDispatcherService:
                 tool_args=tool_args
             )
 
+        # Resolução especializada para ferramentas de solicitações / pedidos de oração
+        if (
+            "solicit" in mcp_name_lower
+            or "pedido" in mcp_name_lower
+            or "oracao" in mcp_name_lower
+            or "oração" in mcp_name_lower
+        ):
+            await self._resolve_solicitation_parameters(
+                mcp=mcp,
+                query=query,
+                tool_args=tool_args,
+                agent_model=agent_model
+            )
+
         return tool_args
 
     async def _resolve_cell_attendance_parameters(
@@ -751,6 +778,201 @@ class JevDispatcherService:
             f"CEP={tool_args.get('CEP')!r}, address={tool_args.get('address')!r}, distance={tool_args.get('distance')!r}"
         )
 
+    async def _resolve_solicitation_parameters(
+        self,
+        mcp: MCP,
+        query: str,
+        tool_args: Dict[str, Any],
+        agent_model: str
+    ) -> None:
+        """
+        Resolve deterministicamente os parâmetros para ferramentas de Solicitações / Pedidos:
+        1. church_id: garante _id da igreja presente
+        2. type_id: busca tipos da igreja (com cache em memória), casa com o assunto (oração, pastor, cesta básica)
+        3. subject: preenche assunto coerente com o tipo ou com o texto do usuário
+        4. description: preenche mensagem detalhada do usuário
+        5. solicitation_id: para consultas pontuais, update ou served, localiza o ID da solicitação aberta
+        """
+        import unicodedata
+
+        def _norm(s: str) -> str:
+            if not s:
+                return ""
+            s_clean = unicodedata.normalize('NFKD', str(s)).encode('ASCII', 'ignore').decode('ASCII')
+            return s_clean.lower().strip()
+
+        mcp_name_lower = getattr(mcp, "name", "").lower()
+        endpoint_lower = getattr(mcp, "endpoint", "").lower()
+
+        phone = (
+            self.context_data.get("member", {}).get("phone")
+            or self.context_data.get("system", {}).get("phone")
+            or self.context_data.get("system", {}).get("user_phone")
+            or self.context_data.get("global", {}).get("phone")
+        )
+        church_id = (
+            self.context_data.get("church", {}).get("_id")
+            or self.context_data.get("member", {}).get("church_id")
+        )
+        apikey = (
+            self.context_data.get("system", {}).get("apikey")
+            or self.context_data.get("global", {}).get("apikey")
+        )
+        base_url = (
+            self.context_data.get("system", {}).get("baseUrlBasileia")
+            or self.context_data.get("global", {}).get("baseUrlBasileia")
+            or "https://dash.basileia.global"
+        ).rstrip("/")
+
+        if church_id and not tool_args.get("church_id"):
+            tool_args["church_id"] = str(church_id)
+
+        is_register = "register" in mcp_name_lower or "cadastro" in mcp_name_lower or "criar" in mcp_name_lower
+        is_served = "served" in mcp_name_lower or "atendido" in mcp_name_lower or "served" in endpoint_lower
+        is_update = "update" in mcp_name_lower and not is_served
+        is_remove = "remove" in mcp_name_lower or "delete" in mcp_name_lower
+        is_get_single = "get_solicitation" in mcp_name_lower and "all" not in mcp_name_lower and "responsible" not in mcp_name_lower
+
+        # 1. Se for REGISTRO DE SOLICITAÇÃO (ex: Pedido de Oração, Falar com o Pastor, etc.)
+        if is_register:
+            types_list = []
+            now = time.time()
+            cid_str = str(church_id) if church_id else "default"
+            if cid_str in _SOLICITATION_TYPES_CACHE:
+                cached_time, cached_types = _SOLICITATION_TYPES_CACHE[cid_str]
+                if now - cached_time < 3600:
+                    types_list = cached_types
+
+            if not types_list and phone and church_id:
+                try:
+                    headers = {"Authorization": f"Bearer {apikey}"} if apikey else {}
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        resp = await client.get(
+                            f"{base_url}/api/solicitation/types/n8n/{phone}?church_id={church_id}",
+                            headers=headers
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            types_list = data.get("body", []) if isinstance(data, dict) else data
+                            if isinstance(types_list, list) and types_list:
+                                _SOLICITATION_TYPES_CACHE[cid_str] = (now, types_list)
+                except Exception as err:
+                    logger.warning(f"[JevDispatcher] Falha ao consultar tipos de solicitação: {err}")
+
+            # Identificar o tipo ideal baseado na mensagem
+            q_norm = _norm(query)
+            selected_type = None
+
+            if types_list and isinstance(types_list, list):
+                # Heurística 1: Falar com o Pastor / Pastoral / Gabinete
+                if any(w in q_norm for w in ["pastor", "pastoral", "conselho", "aconselhamento", "conversa", "conversar", "gabinete", "visita"]):
+                    for t in types_list:
+                        t_norm = _norm(t.get("description") or t.get("name") or "")
+                        if any(w in t_norm for w in ["pastor", "pastoral", "visita", "atendimento", "gabinete", "aconselhamento"]):
+                            selected_type = t
+                            break
+
+                # Heurística 2: Cesta Básica / Assistência Social / Alimento
+                if not selected_type and any(w in q_norm for w in ["cesta", "alimento", "comida", "social", "ajuda financeira", "cesta basica"]):
+                    for t in types_list:
+                        t_norm = _norm(t.get("description") or t.get("name") or "")
+                        if any(w in t_norm for w in ["cesta", "social", "alimento", "ajuda"]):
+                            selected_type = t
+                            break
+
+                # Heurística 3: Pedido de Oração / Intercessão / Saúde / Cura / Família
+                if not selected_type and any(w in q_norm for w in ["orac", "orar", "rezar", "intercess", "clamor", "cura", "saude", "vida", "familia", "libertacao"]):
+                    for t in types_list:
+                        t_norm = _norm(t.get("description") or t.get("name") or "")
+                        if "orac" in t_norm:
+                            selected_type = t
+                            break
+
+                # Heurística 4: Comparação direta com o nome/descrição de cada tipo
+                if not selected_type:
+                    for t in types_list:
+                        t_norm = _norm(t.get("description") or t.get("name") or "")
+                        if t_norm and t_norm in q_norm:
+                            selected_type = t
+                            break
+
+                # Fallback: Tipo de Oração ou Primeiro tipo da lista
+                if not selected_type:
+                    for t in types_list:
+                        t_norm = _norm(t.get("description") or t.get("name") or "")
+                        if "orac" in t_norm:
+                            selected_type = t
+                            break
+                    if not selected_type and types_list:
+                        selected_type = types_list[0]
+
+            if selected_type and isinstance(selected_type, dict):
+                tid = selected_type.get("_id") or selected_type.get("id")
+                if tid:
+                    tool_args["type_id"] = str(tid)
+                tname = selected_type.get("description") or selected_type.get("name") or "Pedido de Oração"
+                if isinstance(tname, list):
+                    tname = tname[0] if tname else "Pedido de Oração"
+                if not tool_args.get("subject"):
+                    tool_args["subject"] = str(tname).strip()
+
+            # Resolver Subject / Assunto se não veio
+            if not tool_args.get("subject"):
+                if any(w in q_norm for w in ["pastor", "pastoral", "conselho"]):
+                    tool_args["subject"] = "Atendimento Pastoral"
+                elif any(w in q_norm for w in ["cesta", "alimento"]):
+                    tool_args["subject"] = "Pedido de Cesta Básica"
+                else:
+                    tool_args["subject"] = "Pedido de Oração"
+
+            # Resolver Description / Descrição
+            if not tool_args.get("description"):
+                clean_desc = re.sub(r'^(?:por favor|registre|cadastre|anote|abra uma solicitacao|solicito|gostaria de pedir|quero pedir)\s*', '', query, flags=re.IGNORECASE).strip()
+                tool_args["description"] = clean_desc if len(clean_desc) > 3 else query.strip()
+
+            logger.info(
+                f"[JevDispatcher] 📝 Solicitação resolvida: type_id={tool_args.get('type_id')!r}, "
+                f"subject={tool_args.get('subject')!r}, desc_len={len(str(tool_args.get('description', '')))}"
+            )
+
+        # 2. Se for UPDATE, ATENDIDO, REMOÇÃO ou GET_SINGLE, precisamos de solicitation_id
+        if is_served or is_update or is_remove or is_get_single:
+            cur_sid = (
+                tool_args.get("solicitation_id")
+                or tool_args.get("SOLICITACAO_ID")
+                or self.context_data.get("solicitation_id")
+            )
+            # Buscar ID de 24 hex chars na query
+            if not cur_sid or not re.match(r'^[a-fA-F0-9]{24}$', str(cur_sid)):
+                m_hex = re.search(r'\b([a-fA-F0-9]{24})\b', query)
+                if m_hex:
+                    cur_sid = m_hex.group(1)
+
+            # Se não encontrou ID explícito, mas o usuário quer marcar como atendido / atualizar
+            if not cur_sid and phone and church_id:
+                try:
+                    headers = {"Authorization": f"Bearer {apikey}"} if apikey else {}
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        resp = await client.get(
+                            f"{base_url}/api/solicitations/n8n/{phone}?church_id={church_id}",
+                            headers=headers
+                        )
+                        if resp.status_code == 200:
+                            s_data = resp.json()
+                            s_items = s_data.get("body", []) if isinstance(s_data, dict) else s_data
+                            if isinstance(s_items, list) and s_items:
+                                # Prioriza pedidos abertos (status == 0)
+                                open_items = [s for s in s_items if s.get("status") == 0]
+                                target = open_items[0] if open_items else s_items[0]
+                                if target.get("_id"):
+                                    cur_sid = target["_id"]
+                except Exception as err:
+                    logger.warning(f"[JevDispatcher] Falha ao localizar solicitação ativa do usuário: {err}")
+
+            if cur_sid:
+                tool_args["solicitation_id"] = str(cur_sid)
+                tool_args["SOLICITACAO_ID"] = str(cur_sid)
+
     async def _extract_open_text_param(
         self,
         query: str,
@@ -923,6 +1145,59 @@ class JevDispatcherService:
                     "achados": achados,
                     "dados": parsed_data,
                     "recomendacao": rec
+                }
+                return json.dumps(structured_payload, ensure_ascii=False)
+
+            if "register_solicitation" in mcp_name.lower():
+                structured_payload = {
+                    "achados": [
+                        "A solicitação/pedido de oração foi registrada com sucesso no sistema da igreja.",
+                        f"Retorno do servidor: {parsed_data}"
+                    ],
+                    "dados": parsed_data,
+                    "recomendacao": (
+                        "Confirme calorosamente com o usuário que o seu pedido foi anotado com muito carinho "
+                        "e que os responsáveis/pastores já receberam a informação para orar e prestar o apoio necessário."
+                    )
+                }
+                return json.dumps(structured_payload, ensure_ascii=False)
+
+            if "get_all_solicitation" in mcp_name.lower():
+                solicitations = []
+                if isinstance(parsed_data, list):
+                    solicitations = parsed_data
+                elif isinstance(parsed_data, dict):
+                    solicitations = parsed_data.get("body") or parsed_data.get("solicitations") or []
+                    if not isinstance(solicitations, list):
+                        solicitations = [parsed_data]
+
+                if solicitations:
+                    achados = [
+                        f"Foram encontradas {len(solicitations)} solicitação(ões) cadastrada(s).",
+                    ]
+                    rec = (
+                        "Apresente ao usuário o status e o assunto dos seus pedidos de forma acolhedora, "
+                        "usando lista simples (tópicos com traço), sem tabelas markdown."
+                    )
+                else:
+                    achados = ["Nenhuma solicitação ou pedido foi encontrado para este usuário."]
+                    rec = "Informe gentilmente que não foram encontrados pedidos registrados no momento e pergunte se gostaria de registrar um pedido de oração ou apoio."
+
+                structured_payload = {
+                    "achados": achados,
+                    "dados": parsed_data,
+                    "recomendacao": rec
+                }
+                return json.dumps(structured_payload, ensure_ascii=False)
+
+            if "update_status_served" in mcp_name.lower():
+                structured_payload = {
+                    "achados": [
+                        "A solicitação foi marcada como atendida/concluída com sucesso.",
+                        f"Retorno do servidor: {parsed_data}"
+                    ],
+                    "dados": parsed_data,
+                    "recomendacao": "Confirme que a solicitação foi marcada como atendida com sucesso."
                 }
                 return json.dumps(structured_payload, ensure_ascii=False)
 
