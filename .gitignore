@@ -64,5 +64,9 @@ _bmad-output/
 *.txt
 !requirements.txt
 implementation_plan.md
+prompts_backup_producao.md
+*backup_producao*
+*prompt_backup*
+backup_prompts/
 
 
