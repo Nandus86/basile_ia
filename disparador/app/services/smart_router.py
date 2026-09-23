@@ -119,11 +119,16 @@ async def _schedule_routing_timer(queue_id: str, seconds: int):
         try:
             await asyncio.sleep(seconds)
             logger.info("Global accumulation timer expired for %s — starting routing", timer_key)
-            await execute_routing(queue_id)
         except asyncio.CancelledError:
-            pass
+            return
         finally:
+            # Libera a chave do timer assim que o sleep termina, permitindo novos agendamentos se necessário
             _active_timers.pop(timer_key, None)
+
+        try:
+            await execute_routing(queue_id)
+        except Exception as e:
+            logger.error("Error executing routing for %s: %s", queue_id, e, exc_info=True)
 
     _active_timers[timer_key] = asyncio.create_task(_timer())
 
@@ -312,8 +317,17 @@ async def execute_routing(queue_id: str):
             await disparador_redis.client.delete(
                 f"disp:staged:meta:global:{queue_id}:{config_path}:{type_id}:{service_id}"
             )
-        await disparador_redis.client.delete(index_key)
-        await disparador_redis.client.delete(f"disp:staged:deadline:global:{queue_id}")
+            await disparador_redis.client.srem(index_key, entry)
+
+        remaining_staged = await disparador_redis.client.scard(index_key)
+        if remaining_staged == 0:
+            await disparador_redis.client.delete(index_key)
+            await disparador_redis.client.delete(f"disp:staged:deadline:global:{queue_id}")
+        else:
+            logger.info("Index %s still has %d entries staged, keeping index", index_key, remaining_staged)
+            timer_key = f"global:{queue_id}"
+            if timer_key not in _active_timers or _active_timers[timer_key].done():
+                await _schedule_routing_timer(queue_id, 10)
 
         logger.info("Global Smart Routing completed for %s — %d messages queued", queue_id, total_messages)
 
