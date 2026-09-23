@@ -1,8 +1,9 @@
 import logging
 import asyncio
+import math
 import random
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import httpx
 import json
@@ -82,13 +83,17 @@ def is_within_time_window(config, payload: dict) -> bool:
 
     start = parse_time(config.start_time)
     end = parse_time(config.end_time)
-    current_time = now_tz.time()
-    
+
+    # Tolerância de 5 segundos no início para evitar perda por frações de segundo na virada do minuto
+    start_dt = now_tz.replace(hour=start.hour, minute=start.minute, second=start.second, microsecond=0)
+    end_dt = now_tz.replace(hour=end.hour, minute=end.minute, second=end.second, microsecond=0)
+    grace_start_dt = start_dt - timedelta(seconds=5)
+
     if start <= end:
-        return start <= current_time <= end
+        return grace_start_dt <= now_tz <= end_dt
     else:
         # Crosses midnight
-        return start <= current_time or current_time <= end
+        return now_tz >= grace_start_dt or now_tz <= end_dt
 
 def get_seconds_until_window_opens(config, payload: dict) -> int:
     """Calculate the exact number of seconds until the next dispatch window opens."""
@@ -121,10 +126,11 @@ def get_seconds_until_window_opens(config, payload: dict) -> int:
     next_start = now_tz.replace(hour=start_t.hour, minute=start_t.minute, second=0, microsecond=0)
     
     if now_tz >= next_start:
-        from datetime import timedelta
         next_start += timedelta(days=1)
         
-    return int((next_start - now_tz).total_seconds())
+    diff = (next_start - now_tz).total_seconds()
+    # Usa ceil e soma margem de 2s para garantir que acorde DENTRO da janela (ex: 08:00:02)
+    return max(1, math.ceil(diff) + 2)
 
 async def send_progress(url: str, service_id: str, total: int, sent: int, failed: int = 0, status: str = "running"):
     try:
