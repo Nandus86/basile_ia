@@ -929,6 +929,8 @@ def _resolve_stm_config(agent_config: Optional[Dict[str, Any]]):
 
 async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, content: str, tool_trace: dict = None, webhook_path: str = None):
     """Save a message to MTM (PostgreSQL) and trigger auto-summarize if needed."""
+    if not agent_id or str(agent_id) in ("00000000-0000-0000-0000-000000000000", "None"):
+        return
     try:
         from app.models.conversation_message import ConversationMessage
         from app.context import get_request_context
@@ -965,6 +967,10 @@ async def _save_mtm_message(db, agent_id: str, session_id: str, role: str, conte
             asyncio.create_task(_auto_summarize_mtm_to_ltm(agent_id, session_id))
 
     except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
         print(f"[MTM] ❌ Error saving message: {e}")
 
 
@@ -976,7 +982,9 @@ async def _load_mtm_fallback(db, agent_id: str, session_id: str, limit: int = 5,
         import uuid
 
         conditions = [ConversationMessage.session_id == str(session_id)]
-        if not ignore_agent and agent_id:
+        if not ignore_agent:
+            if not agent_id or str(agent_id) in ("00000000-0000-0000-0000-000000000000", "None"):
+                return []
             conditions.append(ConversationMessage.agent_id == uuid.UUID(str(agent_id)))
 
         q = (
@@ -1004,6 +1012,8 @@ async def _load_mtm_fallback(db, agent_id: str, session_id: str, limit: int = 5,
 
 async def _check_mtm_has_history(db, agent_id: str, session_id: str) -> bool:
     """Check if this contact has any prior conversation in MTM."""
+    if not agent_id or str(agent_id) in ("00000000-0000-0000-0000-000000000000", "None"):
+        return False
     try:
         from app.models.conversation_message import ConversationMessage
         from sqlalchemy import select, func
@@ -3725,13 +3735,6 @@ async def process_message_task(
                     tz_name=_resolve_tz_name(transition_data)
                 )
 
-                # MTM: fallback logic for fallback path (using nil uuid for agent_id if no agent was resolved)
-                import uuid
-                fallback_agent_id = str(uuid.UUID(int=0))
-
-                # MTM: save user message
-                await _save_mtm_message(db, fallback_agent_id, session_id, "user", message)
-
                 result = await run_orchestrator_v2(
                     message=message,
                     session_id=session_id,
@@ -3771,7 +3774,6 @@ async def process_message_task(
                                     content=str(response_text), ttl_seconds=86400,
                                     tz_name=_resolve_tz_name(transition_data)
                                 )
-                                await _save_mtm_message(db, fallback_agent_id, session_id, "assistant", str(response_text))
                             
                             response_transition_data = _merge_transition_data(transition_data, context_data)
                             if response_transition_data:
@@ -3802,9 +3804,6 @@ async def process_message_task(
                         content=str(final_result), ttl_seconds=86400,
                         tz_name=_resolve_tz_name(transition_data)
                     )
-                    
-                    # MTM: save assistant response
-                    await _save_mtm_message(db, fallback_agent_id, session_id, "assistant", str(final_result))
 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
