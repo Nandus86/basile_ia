@@ -387,64 +387,68 @@ async def process_webhook_message(message: aio_pika.IncomingMessage):
                     is_structured=bool(agent.output_schema)
                 )
                 await monitor.start()
-                    # Initial state is handled by the loop delay
-                
-                while attempts <= max_retries:
-                    attempts += 1
-                    try:
-                        from app.worker.tasks import process_message_task
-                        
-                        logger.info(f"[Consumer] Delegating to unified process_message_task")
-                        response_data = await process_message_task(
-                            ctx={},
-                            message=message_text,
-                            session_id=session_id,
-                            agent_id=agent_id,
-                            user_access_level=user_access_level,
-                            context_data=context_data,
-                            transition_data=transition_data,
-                            callback_url=None,     # Handled later by consumer loop
-                            monitor_instance=monitor
-                        )
-                        
-                        if response_data.get("status") == "failed":
-                            raise Exception(response_data.get("error", "Unknown error in process_message_task"))
-                            
-                        # process_message_task handles STM internally
-                        
-                        # Extract final result
-                        if "output" in response_data:
-                            # Structured using output
-                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data"]}
-                        elif "workflow_name" in response_data:
-                            # Direct payload / Workflow automation mode: preserve all custom fields in a dict
-                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data", "is_hitl_pause", "workflow_name", "matched_keyword"]}
-                        elif "response" in response_data:
-                            # Standard text response
-                            final_result = response_data["response"]
-                        else:
-                            final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data", "is_hitl_pause"]}
-                            
-                        agent_used = response_data.get("agent_used")
-                        is_hitl_pause = response_data.get("is_hitl_pause", False)
-                        
-                        # If execution succeeded, break retry loop
-                        break
 
-                    except Exception as e:
-                        last_exception = e
-                        logger.error(f"[Consumer] Attempt {attempts}/{max_retries+1} failed: {str(e)}")
-                        if attempts <= max_retries:
-                            logger.info(f"[Consumer] Retrying in {retry_delay} seconds...")
-                            await asyncio.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
-                        else:
-                            logger.error(f"[Consumer] All {max_retries+1} attempts failed for job {job_id}.")
-                            raise last_exception
-                
-                # Stop StatusMonitor — processing complete
-                if monitor:
-                    await monitor.stop()
+            response_data = {}
+            final_result = ""
+            agent_used = None
+            is_hitl_pause = False
+
+            while attempts <= max_retries:
+                attempts += 1
+                try:
+                    from app.worker.tasks import process_message_task
+                    
+                    logger.info(f"[Consumer] Delegating to unified process_message_task")
+                    response_data = await process_message_task(
+                        ctx={},
+                        message=message_text,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        user_access_level=user_access_level,
+                        context_data=context_data,
+                        transition_data=transition_data,
+                        callback_url=None,     # Handled later by consumer loop
+                        monitor_instance=monitor
+                    )
+                    
+                    if response_data.get("status") == "failed":
+                        raise Exception(response_data.get("error", "Unknown error in process_message_task"))
+                        
+                    # process_message_task handles STM internally
+                    
+                    # Extract final result
+                    if "output" in response_data:
+                        # Structured using output
+                        final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data"]}
+                    elif "workflow_name" in response_data:
+                        # Direct payload / Workflow automation mode: preserve all custom fields in a dict
+                        final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data", "is_hitl_pause", "workflow_name", "matched_keyword"]}
+                    elif "response" in response_data:
+                        # Standard text response
+                        final_result = response_data["response"]
+                    else:
+                        final_result = {k: v for k, v in response_data.items() if k not in ["status", "agent_used", "processing_time_ms", "transition_data", "is_hitl_pause"]}
+                        
+                    agent_used = response_data.get("agent_used")
+                    is_hitl_pause = response_data.get("is_hitl_pause", False)
+                    
+                    # If execution succeeded, break retry loop
+                    break
+
+                except Exception as e:
+                    last_exception = e
+                    logger.error(f"[Consumer] Attempt {attempts}/{max_retries+1} failed: {str(e)}")
+                    if attempts <= max_retries:
+                        logger.info(f"[Consumer] Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        logger.error(f"[Consumer] All {max_retries+1} attempts failed for job {job_id}.")
+                        raise last_exception
+            
+            # Stop StatusMonitor — processing complete
+            if monitor:
+                await monitor.stop()
                 
             # Set to completed
             is_workflow = isinstance(response_data, dict) and "workflow_name" in response_data
