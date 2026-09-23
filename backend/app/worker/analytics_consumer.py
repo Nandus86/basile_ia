@@ -172,48 +172,20 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     job_log.request_data["context"] = context
                     await session.commit()
                     
-                    # Use AgentFactory to properly route to OpenRouter, Google, Custom endpoints, etc.
-                    from app.orchestrator.agent_factory import AgentFactory
-                    factory = AgentFactory(session)
-                    agent_config = await factory.get_agent_config(agent)
-                    llm = factory.create_llm(agent_config, session_id=session_id)
+                    # Analyze session with TypeSafe JEV (~typesafe/jev-latest)
+                    from app.services.jev_analytics_service import JevAnalyticsService
+                    jev_svc = JevAnalyticsService(session)
 
-                    if agent.output_schema:
-                        raw_schema = dict(agent.output_schema)
-                        if "parameters" in raw_schema:
-                            # It's already an OpenAI Function-style dict
-                            schema_dict = raw_schema
-                            if "name" not in schema_dict:
-                                schema_dict["name"] = "AnalyticsOutput"
-                        else:
-                            # It's a raw JSON Schema, wrap it
-                            schema_dict = {
-                                "name": "AnalyticsOutput",
-                                "description": "Structured output for user analytics",
-                                "parameters": raw_schema
-                            }
-                        llm = llm.with_structured_output(schema=schema_dict)
-                        
-                    sys_prompt = agent.system_prompt or "Você é um analista de dados."
-                    langchain_msgs = [SystemMessage(content=sys_prompt), HumanMessage(content=context)]
-                    
-                    response = await llm.ainvoke(langchain_msgs)
-                    
-                    # Parse Output
-                    new_aprendizado = {}
-                    if isinstance(response, dict):
-                        new_aprendizado = response
-                    elif hasattr(response, "content") and isinstance(response.content, str):
-                        try:
-                            text = response.content.strip()
-                            if text.startswith("```json"): text = text[7:-3]
-                            elif text.startswith("```"): text = text[3:-3]
-                            new_aprendizado = json.loads(text.strip())
-                        except Exception:
-                            new_aprendizado = {"raw_analysis": response.content}
+                    member_name = crm_data.get("first_name") or crm_data.get("Nome Completo") or crm_data.get("name") or ""
+                    church_name = crm_data.get("church_name") or crm_data.get("Igreja Sede") or user.church_id or ""
 
-                    # Attach target date metadata
-                    new_aprendizado["data_analise"] = target_date_str or datetime.now().strftime("%Y-%m-%d")
+                    new_aprendizado = await jev_svc.analyze_session(
+                        history_text=history_text,
+                        church_name=church_name,
+                        member_name=member_name,
+                        crm_data=crm_data,
+                        target_date=target_date_str
+                    )
 
                     # Merge into profile_data["__zona_aprendizado"]
                     current_aprendizado = user.profile_data.get("__zona_aprendizado") or {}

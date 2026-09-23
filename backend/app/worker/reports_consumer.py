@@ -163,13 +163,12 @@ async def process_map_reduce(session, report, config):
     sub_reports_texts = []
     
     if report.level == "church" and report.period_type == "daily":
-        # DAILY CHURCH REPORT: Map-Reduce over UserAnalytics
+        # DAILY CHURCH REPORT: Quantitative JEV Aggregation + Single Pastoral Qualitative Synthesis
         users_res = await session.execute(
             select(UserAnalytics).where(UserAnalytics.church_id == report.entity_id)
         )
         users = users_res.scalars().all()
         
-        # Calculate stats
         total_users = len(users)
         avg_score = sum(u.engagement_score for u in users) / total_users if total_users > 0 else 0
         critical_count = sum(1 for u in users if u.care_priority == "critical")
@@ -180,58 +179,140 @@ async def process_map_reduce(session, report, config):
         )
         total_disp_contacts = sum(d["total_contacts"] for d in church_dispatches)
 
+        # 4 JEV Dimensions Initialization
+        dim1_keys = [
+            "visitante_novo", "cadastro_identificacao", "duvida_cultos", "celulas_grupos",
+            "eventos_conferencias", "cursos_ensino_batismo", "financeiro_pix_dizimo",
+            "informacao_institucional", "voluntariado_servir", "confirmacao_dialogo",
+            "saudacao_gratidao", "pedido_oracao_cuidado", "outros_especiais"
+        ]
+        dim2_keys = [
+            "estavel_rotina", "oracao_intercessao", "saude_enfermidade", "luto_perda",
+            "crise_urgente", "crise_familiar", "afastamento_desanimo", "conflito_reclamacao"
+        ]
+        dim3_keys = ["membro_ativo", "visitante_novo", "em_risco_afastado"]
+        dim4_keys = ["animado", "acolhido", "neutro", "duvidoso", "frustrado", "luto_triste"]
+
+        dim1_counts = {k: 0 for k in dim1_keys}
+        dim2_counts = {k: 0 for k in dim2_keys}
+        dim3_counts = {k: 0 for k in dim3_keys}
+        dim4_counts = {k: 0 for k in dim4_keys}
+        casos_criticos_detalhe = []
+
+        for u in users:
+            crm = u.profile_data.get("__zona_crm", {}) if isinstance(u.profile_data, dict) else {}
+            aprendizado = u.profile_data.get("__zona_aprendizado", {}) if isinstance(u.profile_data, dict) else {}
+            raw_dims = aprendizado.get("raw_dimensions", {}) if isinstance(aprendizado, dict) else {}
+
+            d1 = raw_dims.get("dimensao_1_tipo_atendimento") or aprendizado.get("tipo_atendimento")
+            d2 = raw_dims.get("dimensao_2_criticidade_pastoral") or aprendizado.get("criticidade_pastoral")
+            d3 = raw_dims.get("dimensao_3_vinculo") or aprendizado.get("status_vinculo")
+            d4 = raw_dims.get("dimensao_4_sentimento") or aprendizado.get("sentimento_predominante")
+
+            # Fallbacks para compatibilidade com registros anteriores
+            if not d1:
+                topicos = aprendizado.get("topicos_de_interesse") or []
+                if any("pix" in str(t).lower() or "financ" in str(t).lower() for t in topicos):
+                    d1 = "financeiro_pix_dizimo"
+                elif any("culto" in str(t).lower() for t in topicos):
+                    d1 = "duvida_cultos"
+                elif any("célula" in str(t).lower() or "celula" in str(t).lower() or "gc" in str(t).lower() for t in topicos):
+                    d1 = "celulas_grupos"
+                elif u.interaction_count > 0:
+                    d1 = "outros_especiais"
+                else:
+                    d1 = "saudacao_gratidao"
+
+            if not d2:
+                if u.care_priority == "critical": d2 = "crise_urgente"
+                elif u.care_priority == "high": d2 = "saude_enfermidade"
+                elif u.care_priority == "medium": d2 = "oracao_intercessao"
+                else: d2 = "estavel_rotina"
+
+            if not d3:
+                if aprendizado.get("vinculo_igreja_ativo") is False:
+                    d3 = "em_risco_afastado"
+                elif u.interaction_count <= 2:
+                    d3 = "visitante_novo"
+                else:
+                    d3 = "membro_ativo"
+
+            if not d4:
+                sent_leg = str(aprendizado.get("sentimento_predominante", "")).lower()
+                if "acolhid" in sent_leg: d4 = "acolhido"
+                elif "animad" in sent_leg or "alegre" in sent_leg: d4 = "animado"
+                elif "frustrad" in sent_leg or "irritad" in sent_leg: d4 = "frustrado"
+                elif "luto" in sent_leg or "triste" in sent_leg: d4 = "luto_triste"
+                elif "duvid" in sent_leg or "incert" in sent_leg: d4 = "duvidoso"
+                else: d4 = "neutro"
+
+            dim1_counts[d1 if d1 in dim1_counts else "outros_especiais"] += 1
+            dim2_counts[d2 if d2 in dim2_counts else "estavel_rotina"] += 1
+            dim3_counts[d3 if d3 in dim3_counts else "membro_ativo"] += 1
+            dim4_counts[d4 if d4 in dim4_counts else "neutro"] += 1
+
+            # Coleta casos com atenção pastoral
+            if d2 in ["crise_urgente", "luto_perda", "saude_enfermidade", "crise_familiar", "afastamento_desanimo"] or u.care_priority in ["critical", "high"]:
+                name = crm.get("first_name") or crm.get("Nome Completo") or crm.get("name") or "Desconhecido"
+                phone = crm.get("Celular") or crm.get("phone") or u.session_id
+                casos_criticos_detalhe.append({
+                    "membro_nome": name,
+                    "session_id": u.session_id,
+                    "phone": phone,
+                    "criticidade": d2,
+                    "resumo": aprendizado.get("pontos_de_atencao") or aprendizado.get("motivo_do_vinculo") or f"Atenção requerida: {d2.replace('_', ' ').title()}",
+                    "sentimento": d4
+                })
+
+        relatorio_quantitativo = {
+            "total_atendimentos": sum(dim1_counts.values()) or total_users,
+            "total_membros_unicos": total_users,
+            "dimensao_1_tipo_atendimento": dim1_counts,
+            "dimensao_2_criticidade_pastoral": dim2_counts,
+            "dimensao_3_vinculo": dim3_counts,
+            "dimensao_4_sentimento": dim4_counts,
+            "disparos_automaticos": church_dispatches,
+            "total_disparos_automaticos": total_disp_contacts
+        }
+
         stats = {
             "total_users": total_users,
             "avg_engagement_score": round(avg_score, 2),
             "critical_cases": critical_count,
+            "relatorio_quantitativo": relatorio_quantitativo,
+            "casos_criticos_detalhe": casos_criticos_detalhe,
             "disparos_automaticos": church_dispatches,
             "total_disparos_automaticos": total_disp_contacts
         }
-        
-        # Map phase: split into blocks
-        blocks = [users[i:i + CHUNK_SIZE] for i in range(0, total_users, CHUNK_SIZE)]
-        logger.info(f"[ReportsConsumer] Mapping {len(blocks)} blocks for church {report.entity_id}")
-        
-        for i, block in enumerate(blocks):
-            block_data = []
-            for u in block:
-                crm = u.profile_data.get("__zona_crm", {})
-                aprendizado = u.profile_data.get("__zona_aprendizado", {})
-                name = crm.get("first_name") or crm.get("Nome Completo") or "Desconhecido"
-                if not aprendizado:
-                    if u.interaction_count > 0:
-                        block_data.append({
-                            "nome": name,
-                            "score": u.engagement_score,
-                            "prioridade": u.care_priority,
-                            "analise": {"status": "perfil_ativo", "interacoes": u.interaction_count}
-                        })
-                    continue
-                
-                block_data.append({
-                    "nome": name,
-                    "score": u.engagement_score,
-                    "prioridade": u.care_priority,
-                    "analise": aprendizado
-                })
-                
-            if not block_data: continue
-                
-            map_prompt = (
-                f"Resuma as tendências, problemas e vitórias deste grupo de {len(block_data)} membros "
-                f"da igreja. Seja clínico e direto. Dados:\n{json.dumps(block_data, ensure_ascii=False)}"
-            )
-            map_resp = await llm.ainvoke([
-                SystemMessage(content="Você é um assistente que sumariza perfil de membros de igreja."),
-                HumanMessage(content=map_prompt)
-            ])
-            sub_reports_texts.append(f"--- Bloco {i+1} ---\n{map_resp.content}")
+        report.stats = stats
 
-        if church_dispatches:
-            disp_lines = [f"- {d['label']} (Path: {d['path']}, Type ID: {d['type_id']}): {d['total_contacts']} membros atingidos em {d['total_dispatches']} disparos" for d in church_dispatches]
-            sub_reports_texts.append(
-                f"--- Disparos Automáticos Realizados no Período ---\n" + "\n".join(disp_lines) + f"\nTotal de membros impactados via automação: {total_disp_contacts}"
-            )
+        if total_users == 0:
+            report.report_content = "Não houve movimentações significativas nesta igreja no dia de hoje."
+            return
+
+        # Chamada Única de Síntese Qualitativa com a LLM
+        church_title = report.entity_name or "Igreja Local"
+        date_str = start_time.strftime("%d/%m/%Y")
+        synthesis_prompt = (
+            f"Você é o Supervisor Pastoral da igreja '{church_title}'.\n"
+            f"Seu objetivo é gerar um relatório pastoral executivo, acolhedor, analítico e de alto nível para a liderança desta igreja referente a {date_str}.\n\n"
+            f"MÉTRICAS QUANTITATIVAS CONSOLIDADAS:\n"
+            f"{json.dumps(relatorio_quantitativo, ensure_ascii=False, indent=2)}\n\n"
+            f"CASOS DE ATENÇÃO PASTORAL CRÍTICA DO DIA ({len(casos_criticos_detalhe)} casos):\n"
+            f"{json.dumps(casos_criticos_detalhe, ensure_ascii=False, indent=2)}\n\n"
+            f"Redija o relatório exclusivamente em formato Markdown profissional e humanizado com as seguintes seções:\n"
+            f"1. 📊 **Visão Geral e Engajamento** (Resumo executivo do volume de atendimentos e principais demandas da comunidade)\n"
+            f"2. ⚠️ **Atenção Pastoral Imediata** (Destaque nominal dos casos críticos de saúde, luto, crise ou afastamento, com orientações práticas)\n"
+            f"3. 💡 **Oportunidades e Próximos Passos** (Recomendações pastorais para os líderes de células, voluntários e novos visitantes)\n"
+            f"4. 📢 **Comunicações e Disparos** (Avaliação do impacto das mensagens e campanhas automáticas enviadas pela igreja)"
+        )
+
+        final_resp = await llm.ainvoke([
+            SystemMessage(content=sys_prompt),
+            HumanMessage(content=synthesis_prompt)
+        ])
+        report.report_content = final_resp.content
+        return
             
     elif report.period_type in ["weekly", "monthly"]:
         # WEEKLY/MONTHLY REPORT: Reduce over previous period reports
@@ -393,14 +474,21 @@ async def process_report_message(message: aio_pika.abc.AbstractIncomingMessage):
                         try:
                             import httpx
                             async with httpx.AsyncClient() as client:
+                                stats_dict = report.stats or {}
+                                relatorio_quant = stats_dict.get("relatorio_quantitativo") or {}
+                                casos_criticos = stats_dict.get("casos_criticos_detalhe") or []
                                 payload_out = {
                                     "report_id": str(report.id),
+                                    "church_id": report.entity_id,
+                                    "church_name": report.entity_name,
                                     "level": report.level,
-                                    "entity_id": report.entity_id,
                                     "period_type": report.period_type,
                                     "period_start": report.period_start.isoformat() if report.period_start else None,
                                     "period_end": report.period_end.isoformat() if report.period_end else None,
-                                    "stats": report.stats,
+                                    "relatorio_quantitativo": relatorio_quant,
+                                    "relatorio_qualitativo": report.report_content,
+                                    "casos_criticos_detalhe": casos_criticos,
+                                    "stats": stats_dict,
                                     "report_content": report.report_content
                                 }
                                 await client.post(webhook_url, json=payload_out, timeout=10.0)
