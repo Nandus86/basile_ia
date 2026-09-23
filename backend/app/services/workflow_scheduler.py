@@ -113,10 +113,9 @@ class WorkflowScheduler:
                                         session_id=session_id, role="assistant", content=timeout_msg, ttl_seconds=86400
                                     )
                                     from app.worker.tasks import _save_mtm_message
-                                    import uuid as _uuid
                                     agent_id = trigger_payload.get('agent_id') if isinstance(trigger_payload, dict) else None
-                                    _save_agent_id = agent_id or str(_uuid.UUID(int=0))
-                                    await _save_mtm_message(db, _save_agent_id, session_id, "assistant", timeout_msg)
+                                    if agent_id:
+                                        await _save_mtm_message(db, str(agent_id), session_id, "assistant", timeout_msg)
                                 except Exception as mtm_err:
                                     logger.debug(f"[WorkflowScheduler] Could not save timeout message to MTM: {mtm_err}")
                                 
