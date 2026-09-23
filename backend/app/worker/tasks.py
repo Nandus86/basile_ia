@@ -3080,6 +3080,7 @@ async def process_message_task(
     agent_config = None
     monitor = monitor_instance
     monitor_created_here = False
+    response_data = None
 
     trigger_results = None
 
@@ -3539,36 +3540,40 @@ async def process_message_task(
             if agent_id:
                 agent = await factory.get_agent_by_id(agent_id)
                 
-                # ═══════════════════════════════════════════════════════
-                # Outbound Mode Handling (Bypass & AI Formulated Dispatches)
-                # ═══════════════════════════════════════════════════════
-                if agent:
-                    ctx_data = context_data or {}
-                    outbound_mode = ctx_data.get("outbound_mode")
-                    is_formulation_only = ctx_data.get("formulation_only", False)
-                    
-                    if outbound_mode == "bypass":
-                        print(f"[Task] ⚡ Outbound mode 'bypass' detected. Bypassing agent and saving directly as assistant.")
-                        user_tz_name = _resolve_tz_name(transition_data)
-                        
-                        # Save to history ONLY as assistant (since it's a notification from the system)
-                        await redis_client.add_message(
-                            session_id=session_id, role="assistant", content=message, ttl_seconds=86400,
-                            tz_name=user_tz_name
-                        )
-                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", message)
-                        
-                        processing_time = (time.time() - start_time) * 1000
-                        response_data = {
-                            "status": "completed",
-                            "response": message,
-                            "agent_used": "Outbound (bypass)",
-                            "processing_time_ms": processing_time,
-                        }
-                        if callback_url:
-                            from app.worker.tasks import _send_callback
-                            await _send_callback(callback_url, response_data)
-                        return response_data
+            # ═══════════════════════════════════════════════════════
+            # Outbound Mode Handling (Bypass & AI Formulated Dispatches)
+            # ═══════════════════════════════════════════════════════
+            ctx_data = context_data or {}
+            outbound_mode = ctx_data.get("outbound_mode")
+            is_formulation_only = ctx_data.get("formulation_only", False)
+            
+            if outbound_mode == "bypass":
+                print(f"[Task] ⚡ Outbound mode 'bypass' detected. Bypassing agent and saving directly as assistant.")
+                user_tz_name = _resolve_tz_name(transition_data)
+                
+                # Save to history ONLY as assistant (since it's a notification from the system)
+                await redis_client.add_message(
+                    session_id=session_id, role="assistant", content=message, ttl_seconds=86400,
+                    tz_name=user_tz_name
+                )
+                import uuid as _uuid
+                save_agent_id = str(agent.id) if agent else str(_uuid.UUID(int=0))
+                await _save_mtm_message(db, save_agent_id, session_id, "assistant", message)
+                
+                processing_time = (time.time() - start_time) * 1000
+                response_data = {
+                    "status": "completed",
+                    "response": message,
+                    "agent_used": "Outbound (bypass)",
+                    "processing_time_ms": processing_time,
+                }
+                response_transition_data = _merge_transition_data(transition_data, context_data)
+                if response_transition_data:
+                    response_data["transition_data"] = response_transition_data
+                if callback_url:
+                    from app.worker.tasks import _send_callback
+                    await _send_callback(callback_url, response_data)
+                return response_data
 
                 # ═══════════════════════════════════════════════════════
                 # Workflow Keyword Trigger (Bypasses Agent)
@@ -3787,7 +3792,7 @@ async def process_message_task(
                     final_result = _ctx_re.sub('', final_result).strip()
 
                 # Process response_variables - substituição de palavras na resposta
-                response_vars = agent_config.get("config", {}).get("response_variables", [])
+                response_vars = (agent_config or {}).get("config", {}).get("response_variables", [])
                 if response_vars and isinstance(final_result, str):
                     final_result = _apply_response_variables(final_result, response_vars, context_data)
 
