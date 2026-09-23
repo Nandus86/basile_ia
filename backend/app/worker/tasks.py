@@ -3181,10 +3181,9 @@ async def process_message_task(
                                     session_id=session_id, role="assistant", content=response_text, ttl_seconds=86400,
                                     tz_name=_resolve_tz_name(transition_data)
                                 )
-                                import uuid as _uuid
-                                _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
-                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
-                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                                if agent_id:
+                                    await _save_mtm_message(db, str(agent_id), session_id, "assistant", response_text)
+                                    await _save_mtm_message(db, str(agent_id), session_id, "user", message)
 
                             response_data = {
                                 "status": "early_response",
@@ -3232,13 +3231,10 @@ async def process_message_task(
                                     tz_name=_resolve_tz_name(transition_data)
                                 )
                                 # Save to MTM
-                                import uuid as _uuid
-                                _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
-                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
-
-                                # Save user message to MTM too
-                                if store_in_mem:
-                                    await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                                if agent_id:
+                                    await _save_mtm_message(db, str(agent_id), session_id, "assistant", response_text)
+                                    if store_in_mem:
+                                        await _save_mtm_message(db, str(agent_id), session_id, "user", message)
 
                             response_data = {
                                 "status": "paused",
@@ -3269,10 +3265,9 @@ async def process_message_task(
                                     session_id=session_id, role="assistant", content=cancel_response, ttl_seconds=86400,
                                     tz_name=_resolve_tz_name(transition_data)
                                 )
-                                import uuid as _uuid
-                                _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
-                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                                await _save_mtm_message(db, _save_agent_id, session_id, "assistant", cancel_response)
+                                if agent_id:
+                                    await _save_mtm_message(db, str(agent_id), session_id, "user", message)
+                                    await _save_mtm_message(db, str(agent_id), session_id, "assistant", cancel_response)
 
                             current_active = await redis_client.get(f"active_workflow_run:{session_id}")
                             if current_active == str(res_ctx.get("execution_id")):
@@ -3344,12 +3339,10 @@ async def process_message_task(
                                 )
                             
                             # Save to MTM
-                            import uuid as _uuid
-                            _save_agent_id = agent_id if agent_id else str(_uuid.UUID(int=0))
-                            if store_in_mem:
-                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
+                            if agent_id and store_in_mem:
+                                await _save_mtm_message(db, str(agent_id), session_id, "user", message)
                                 if response_text:
-                                    await _save_mtm_message(db, _save_agent_id, session_id, "assistant", response_text)
+                                    await _save_mtm_message(db, str(agent_id), session_id, "assistant", response_text)
                                 
                             processing_time = (time.time() - start_time) * 1000
                             response_data = {
@@ -3489,12 +3482,11 @@ async def process_message_task(
                                         session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
                                         tz_name=_resolve_tz_name(transition_data)
                                     )
-                                # Save to MTM (using a dummy fallback agent_id if none provided)
-                                import uuid
-                                _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
-                                await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                                if response_text:
-                                    await _save_mtm_message(db, _save_agent_id, session_id, "assistant", str(response_text))
+                                # Save to MTM
+                                if agent_id:
+                                    await _save_mtm_message(db, str(agent_id), session_id, "user", message)
+                                    if response_text:
+                                        await _save_mtm_message(db, str(agent_id), session_id, "assistant", str(response_text))
     
                             processing_time = (time.time() - start_time) * 1000
                             response_data = {
@@ -3523,10 +3515,9 @@ async def process_message_task(
                             session_id=session_id, role="assistant", content=global_wf_response, ttl_seconds=86400,
                             tz_name=_resolve_tz_name(transition_data)
                         )
-                        import uuid
-                        _save_agent_id = agent_id if agent_id else str(uuid.UUID(int=0))
-                        await _save_mtm_message(db, _save_agent_id, session_id, "user", message)
-                        await _save_mtm_message(db, _save_agent_id, session_id, "assistant", global_wf_response)
+                        if agent_id:
+                            await _save_mtm_message(db, str(agent_id), session_id, "user", message)
+                            await _save_mtm_message(db, str(agent_id), session_id, "assistant", global_wf_response)
 
                         processing_time = (time.time() - start_time) * 1000
                         response_data = {
@@ -3566,9 +3557,8 @@ async def process_message_task(
                     session_id=session_id, role="assistant", content=message, ttl_seconds=86400,
                     tz_name=user_tz_name
                 )
-                import uuid as _uuid
-                save_agent_id = str(agent.id) if agent else str(_uuid.UUID(int=0))
-                await _save_mtm_message(db, save_agent_id, session_id, "assistant", message)
+                if agent:
+                    await _save_mtm_message(db, str(agent.id), session_id, "assistant", message)
                 
                 processing_time = (time.time() - start_time) * 1000
                 response_data = {
@@ -3585,102 +3575,102 @@ async def process_message_task(
                     await _send_callback(callback_url, response_data)
                 return response_data
 
-                # ═══════════════════════════════════════════════════════
-                # Workflow Keyword Trigger (Bypasses Agent)
-                # ═══════════════════════════════════════════════════════
-                if agent:
-                    wf_direct_response = None
-                    try:
-                        wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
-                    except Exception as wf_trigger_err:
-                        import traceback
-                        print(f"[Task] ⚠️ Error checking workflow direct triggers: {wf_trigger_err}")
-                        traceback.print_exc()
-                    if wf_direct_response is not None:
-                        # ── Direct Payload Mode (dict with __direct_payload) ──
-                        if isinstance(wf_direct_response, dict) and wf_direct_response.get("__direct_payload"):
-                            print(f"[Task] ⚡ Workflow direct trigger with DIRECT PAYLOAD. Merging into response.")
-                            
-                            response_text = wf_direct_response.get("response", "")
-                            
-                            # Save to history
-                            store_in_mem = wf_direct_response.get("store_in_memory", True)
-                            if store_in_mem:
-                                await redis_client.add_message(
-                                    session_id=session_id, role="user", content=message, ttl_seconds=86400,
-                                    tz_name=_resolve_tz_name(transition_data)
-                                )
-                                if response_text:
-                                    await redis_client.add_message(
-                                        session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
-                                        tz_name=_resolve_tz_name(transition_data)
-                                    )
-                                # Save to MTM
-                                await _save_mtm_message(db, str(agent.id), session_id, "user", message)
-                                if response_text:
-                                    await _save_mtm_message(db, str(agent.id), session_id, "assistant", str(response_text))
-
-                            processing_time = (time.time() - start_time) * 1000
-                            # Build response_data: merge ALL automation fields at root level
-                            response_data = {
-                                "status": "completed",
-                                "processing_time_ms": processing_time,
-                            }
-                            # Merge automation fields (except internal markers)
-                            for k, v in wf_direct_response.items():
-                                if k != "__direct_payload":
-                                    response_data[k] = v
-                            
-                            response_transition_data = _merge_transition_data(transition_data, context_data)
-                            if response_transition_data:
-                                response_data["transition_data"] = response_transition_data
-                            if callback_url:
-                                from app.worker.tasks import _send_callback
-                                await _send_callback(callback_url, response_data)
-                            return response_data
+            # ═══════════════════════════════════════════════════════
+            # Workflow Keyword Trigger (Bypasses Agent)
+            # ═══════════════════════════════════════════════════════
+            if agent:
+                wf_direct_response = None
+                try:
+                    wf_direct_response = await _check_workflow_direct_triggers(db, str(agent.id), message, context_data)
+                except Exception as wf_trigger_err:
+                    import traceback
+                    print(f"[Task] ⚠️ Error checking workflow direct triggers: {wf_trigger_err}")
+                    traceback.print_exc()
+                if wf_direct_response is not None:
+                    # ── Direct Payload Mode (dict with __direct_payload) ──
+                    if isinstance(wf_direct_response, dict) and wf_direct_response.get("__direct_payload"):
+                        print(f"[Task] ⚡ Workflow direct trigger with DIRECT PAYLOAD. Merging into response.")
                         
-                        # ── Legacy Mode (string result) ──
-                        elif isinstance(wf_direct_response, str):
-                            print(f"[Task] ⚡ Workflow direct trigger executed. Bypassing agent.")
-                            
-                            # Save to history
+                        response_text = wf_direct_response.get("response", "")
+                        
+                        # Save to history
+                        store_in_mem = wf_direct_response.get("store_in_memory", True)
+                        if store_in_mem:
                             await redis_client.add_message(
                                 session_id=session_id, role="user", content=message, ttl_seconds=86400,
                                 tz_name=_resolve_tz_name(transition_data)
                             )
-                            await redis_client.add_message(
-                                session_id=session_id, role="assistant", content=wf_direct_response, ttl_seconds=86400,
-                                tz_name=_resolve_tz_name(transition_data)
-                            )
+                            if response_text:
+                                await redis_client.add_message(
+                                    session_id=session_id, role="assistant", content=str(response_text), ttl_seconds=86400,
+                                    tz_name=_resolve_tz_name(transition_data)
+                                )
                             # Save to MTM
                             await _save_mtm_message(db, str(agent.id), session_id, "user", message)
-                            await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_direct_response)
+                            if response_text:
+                                await _save_mtm_message(db, str(agent.id), session_id, "assistant", str(response_text))
 
-                            processing_time = (time.time() - start_time) * 1000
-                            response_data = {
-                                "status": "completed",
-                                "response": wf_direct_response,
-                                "agent_used": "Workflow Automation",
-                                "processing_time_ms": processing_time,
-                            }
-                            if callback_url:
-                                from app.worker.tasks import _send_callback
-                                await _send_callback(callback_url, response_data)
-                            return response_data
-
-                if agent:
-                    agent_config = await factory.get_agent_config(agent, context_data=context_data)
+                        processing_time = (time.time() - start_time) * 1000
+                        # Build response_data: merge ALL automation fields at root level
+                        response_data = {
+                            "status": "completed",
+                            "processing_time_ms": processing_time,
+                        }
+                        # Merge automation fields (except internal markers)
+                        for k, v in wf_direct_response.items():
+                            if k != "__direct_payload":
+                                response_data[k] = v
+                        
+                        response_transition_data = _merge_transition_data(transition_data, context_data)
+                        if response_transition_data:
+                            response_data["transition_data"] = response_transition_data
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
                     
-                    # Auto-map transition data based on agent schema if not provided
-                    if agent.transition_input_schema and not transition_data:
-                        trans_keys = set(agent.transition_input_schema.keys())
-                        if context_data:
-                            t_data = {}
-                            for k in trans_keys:
-                                if k in context_data:
-                                    t_data[k] = context_data[k]
-                            if t_data:
-                                transition_data = t_data
+                    # ── Legacy Mode (string result) ──
+                    elif isinstance(wf_direct_response, str):
+                        print(f"[Task] ⚡ Workflow direct trigger executed. Bypassing agent.")
+                        
+                        # Save to history
+                        await redis_client.add_message(
+                            session_id=session_id, role="user", content=message, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        await redis_client.add_message(
+                            session_id=session_id, role="assistant", content=wf_direct_response, ttl_seconds=86400,
+                            tz_name=_resolve_tz_name(transition_data)
+                        )
+                        # Save to MTM
+                        await _save_mtm_message(db, str(agent.id), session_id, "user", message)
+                        await _save_mtm_message(db, str(agent.id), session_id, "assistant", wf_direct_response)
+
+                        processing_time = (time.time() - start_time) * 1000
+                        response_data = {
+                            "status": "completed",
+                            "response": wf_direct_response,
+                            "agent_used": "Workflow Automation",
+                            "processing_time_ms": processing_time,
+                        }
+                        if callback_url:
+                            from app.worker.tasks import _send_callback
+                            await _send_callback(callback_url, response_data)
+                        return response_data
+
+            if agent:
+                agent_config = await factory.get_agent_config(agent, context_data=context_data)
+                
+                # Auto-map transition data based on agent schema if not provided
+                if agent.transition_input_schema and not transition_data:
+                    trans_keys = set(agent.transition_input_schema.keys())
+                    if context_data:
+                        t_data = {}
+                        for k in trans_keys:
+                            if k in context_data:
+                                t_data[k] = context_data[k]
+                        if t_data:
+                            transition_data = t_data
 
             # Job Status Updates Monitor - Sync with consumer logic
             if not monitor and callback_url:
