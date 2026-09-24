@@ -108,6 +108,7 @@ class DisparadorRedis:
     async def set_campaign_contacts(self, service_id: str, contacts: List[dict]):
         await self.ensure_connected()
         key = f"disp:campaign:contacts:{service_id}"
+        existing_contacts = await self.client.hgetall(key) or {}
         mapping = {}
         for i, c in enumerate(contacts):
             number = c.get("number") or c.get("phone") or c.get("user_id")
@@ -115,6 +116,15 @@ class DisparadorRedis:
                 logger.warning(f"[RedisService] Contact {i} in service_id={service_id} has no identity (dropped from tracking). Contact data: {c}")
                 continue
             
+            # Preserve existing sent/failed contact state upon requeue or retry
+            if number in existing_contacts:
+                try:
+                    existing_data = json.loads(existing_contacts[number])
+                    if existing_data.get("status") in ("sent", "failed"):
+                        continue
+                except Exception:
+                    pass
+
             # Store everything that comes in the contact object
             contact_data = dict(c)
             contact_data["status"] = "pending"
@@ -125,6 +135,20 @@ class DisparadorRedis:
         if mapping:
             await self.client.hset(key, mapping=mapping)
             await self.client.expire(key, 604800)
+
+    async def get_contact_status(self, service_id: str, number: str) -> Optional[str]:
+        if not number:
+            return None
+        await self.ensure_connected()
+        key = f"disp:campaign:contacts:{service_id}"
+        raw = await self.client.hget(key, number)
+        if raw:
+            try:
+                data = json.loads(raw)
+                return data.get("status")
+            except Exception:
+                pass
+        return None
 
     async def update_contact_status(self, service_id: str, number: str, status: str, error: str = None):
         if not number:

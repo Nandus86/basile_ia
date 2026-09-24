@@ -87,8 +87,112 @@ async def pause_campaign(service_id: str):
     await disparador_redis.pause_campaign(service_id)
     return {"message": "Paused successfully"}
 
+async def resume_pending_campaign(service_id: str, db: AsyncSession):
+    """Resume only the pending contacts of a campaign without resending to already sent contacts."""
+    campaign = await disparador_redis.get_campaign(service_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    config_path = campaign.get("config_path")
+    if not config_path:
+        raise HTTPException(status_code=400, detail="config_path not found in campaign metadata")
+
+    query = select(DispatcherConfig).where(DispatcherConfig.path == config_path)
+    result = await db.execute(query)
+    config = result.scalar_one_or_none()
+    if not config:
+        raise HTTPException(status_code=404, detail="Dispatcher config not found for this path")
+
+    payloads = await disparador_redis.get_campaign_payloads(service_id)
+    input_payload = payloads.get("input", {}) if payloads else {}
+
+    contacts = await disparador_redis.get_campaign_contacts(service_id)
+    if not contacts:
+        raise HTTPException(status_code=404, detail="No contacts found for this campaign")
+
+    # Filter only contacts that have not been sent yet
+    pending_contacts = [c for c in contacts if c.get("status") in ("pending", "waiting", None)]
+    if not pending_contacts:
+        await disparador_redis.complete_campaign(service_id)
+        return {
+            "message": "Nenhum contato pendente nesta campanha. Campanha marcada como concluída.",
+            "service_id": service_id,
+            "pending_count": 0,
+            "already_sent": campaign.get("sent", 0),
+            "total": campaign.get("total", len(contacts)),
+            "status": "completed"
+        }
+
+    cleaned_contacts = []
+    for c in pending_contacts:
+        cleaned_c = {k: v for k, v in c.items() if k not in {"status", "updated_at", "error"}}
+        cleaned_contacts.append(cleaned_c)
+
+    campaign_key = campaign.get("campaign_key") or f"{input_payload.get('type_id', config_path)}:{input_payload.get('queue_id', '')}:{service_id}"
+    await disparador_redis.unlock_campaign(campaign_key)
+    await disparador_redis.resume_campaign(service_id)
+
+    # Ensure campaign status in redis is running
+    await disparador_redis.ensure_connected()
+    c_raw = await disparador_redis.client.get(f"disp:campaign:{service_id}")
+    if c_raw:
+        try:
+            c_dict = json.loads(c_raw)
+            c_dict["status"] = "running"
+            await disparador_redis.client.set(f"disp:campaign:{service_id}", json.dumps(c_dict))
+        except Exception:
+            pass
+
+    resume_payload = dict(input_payload)
+    dispatch_flags = resume_payload.get("dispatch_flags") or {}
+    if not isinstance(dispatch_flags, dict):
+        dispatch_flags = {}
+    dispatch_flags["lock_bypass"] = True
+    dispatch_flags["resume"] = True
+    resume_payload["dispatch_flags"] = dispatch_flags
+    resume_payload["config_path"] = config_path
+    resume_payload["campaign_key"] = campaign_key
+    resume_payload["campaign_total"] = campaign.get("total", len(contacts))
+    resume_payload["service_id"] = service_id
+    resume_payload["type_id"] = input_payload.get("type_id", config_path)
+    resume_payload["queue_id"] = input_payload.get("queue_id", "")
+
+    run_id = uuid.uuid4().hex
+    batch_size = config.messages_per_batch if config.messages_per_batch > 0 else 1
+    batch_size = min(batch_size, 10)
+
+    await disparador_rmq.connect()
+    enqueued_count = 0
+    for i in range(0, len(cleaned_contacts), batch_size):
+        batch_contacts = cleaned_contacts[i:i + batch_size]
+        batch_payload = dict(resume_payload)
+        batch_payload["contacts"] = batch_contacts
+        batch_payload["run_id"] = f"{run_id}_b{i // batch_size}"
+        try:
+            queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+            import aio_pika
+            message = aio_pika.Message(
+                body=json.dumps(batch_payload).encode(),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+            )
+            await disparador_rmq.channel.default_exchange.publish(message, routing_key="disp_jobs")
+            enqueued_count += len(batch_contacts)
+        except Exception as e:
+            logger.error(f"Error publishing resume batch for {service_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Erro ao reenfileirar lote: {e}")
+
+    logger.info(f"[ResumeCampaign] Enqueued {enqueued_count} pending contacts for campaign {service_id}")
+    return {
+        "message": f"Campanha retomada: {enqueued_count} contatos pendentes enfileirados",
+        "service_id": service_id,
+        "pending_count": enqueued_count,
+        "already_sent": campaign.get("sent", 0),
+        "total": campaign.get("total", len(contacts)),
+        "status": "running"
+    }
+
 @router.post("/campaigns/{service_id}/resume")
-async def resume_campaign(service_id: str):
+async def resume_campaign(service_id: str, db: AsyncSession = Depends(get_db)):
     await disparador_redis.resume_campaign(service_id)
 
     campaign = await disparador_redis.get_campaign(service_id)
@@ -97,13 +201,16 @@ async def resume_campaign(service_id: str):
         if campaign_key:
             await disparador_redis.unlock_campaign(campaign_key)
 
-    return {"message": "Resumed successfully"}
+    return await resume_pending_campaign(service_id, db)
 
+@router.post("/campaigns/{service_id}/resume-pending")
+async def resume_pending_endpoint(service_id: str, db: AsyncSession = Depends(get_db)):
+    return await resume_pending_campaign(service_id, db)
 
 @router.post("/campaigns/{service_id}/activate")
-async def activate_campaign(service_id: str):
+async def activate_campaign(service_id: str, db: AsyncSession = Depends(get_db)):
     """Alias for resume to support frontend action naming."""
-    return await resume_campaign(service_id)
+    return await resume_campaign(service_id, db)
 
 @router.post("/campaigns/unlock")
 async def unlock_campaign_lock(payload: CampaignLockRequest):

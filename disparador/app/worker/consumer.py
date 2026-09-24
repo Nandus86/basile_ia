@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 active_tasks = {}
 
 async def process_dispatch_message(message: aio_pika.IncomingMessage):
-    async with message.process():
+    async with message.process(requeue=True):
         try:
             body_str = message.body.decode()
             payload = json.loads(body_str)
@@ -114,11 +114,13 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                     active_tasks.pop(run_id, None)
 
         except asyncio.CancelledError:
-            # Re-raise to let 'async with message.process()' handle it if needed
-            # but usually we want to return from the callback
-            return
+            logger.warning(
+                f"[Worker] Message processing for run_id={run_id if 'run_id' in locals() else 'unknown'} "
+                f"was CANCELLED. Re-raising to trigger RabbitMQ requeue."
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error processing dispatch message for {service_id}: {e}")
+            logger.error(f"Error processing dispatch message for {service_id if 'service_id' in locals() else 'unknown'}: {e}", exc_info=True)
             if 'run_id' in locals() and active_tasks.get(run_id) == asyncio.current_task():
                 active_tasks.pop(run_id, None)
 
@@ -137,26 +139,19 @@ async def start_consumer():
             from app.services.smart_router import recover_staged_timers
             await recover_staged_timers()
 
-            
             if not disparador_rmq.channel:
                 raise Exception("RabbitMQ channel not open")
 
-            # We need to discover queues disp_*
-            # For this simple worker, we'll assume the webhook API tells it or it listens to a common queue
-            # Wait, RabbitMQ doesn't let us wildcard consume queues directly.
-            # IN THE PLAN: we declare disp_{type_id}_{queue_id}.
-            # Actually, to consume dynamic queues we should probably either route them to a single exchange
-            # OR we can just have the worker consume a generic queue "disp_worker" and bind it.
-            # Since the plan said publish to disp_{type_id}_{queue_id}, we need to fetch all queues
-            # But the webhook already provides contacts. We should probably just use ONE queue for the worker
-            # let's simplify to 'disp_main_queue' for the payloads, but we want routing to separate queues if we need prioritization.
-            # We'll use a single queue "disp_jobs" for this MVP, or listen to amq.rabbitmq.trace?
-            # Let's adjust slightly: we use a single queue `disp_jobs` for the worker, and we queue the batches there.
-            
             queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
+            # Item B: QoS prefetch to avoid overwhelming consumer and prevent timeouts
+            await disparador_rmq.channel.set_qos(prefetch_count=2)
             await queue.consume(process_dispatch_message)
             
-            logger.info("Started consuming Disparador messages")
+            logger.info("Started consuming Disparador messages (prefetch=2)")
+
+            # Item D: Start stagnant campaign reconciliation watchdog
+            from app.services.reconciliation import start_reconciliation_watchdog
+            watchdog_task = asyncio.create_task(start_reconciliation_watchdog())
             
             # Keep alive
             if disparador_rmq.connection:
@@ -169,6 +164,10 @@ async def start_consumer():
                 await close_event.wait()
                 logger.warning("RabbitMQ closed. Reconnecting...")
                 
+                # Cancel watchdog task
+                if not watchdog_task.done():
+                    watchdog_task.cancel()
+
                 # Cancel active tasks to prevent duplicate processing on requeue
                 for t in active_tasks.values():
                     t.cancel()
