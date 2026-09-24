@@ -86,6 +86,10 @@ async def proxy_pause_campaign(service_id: str, request: Request):
 async def proxy_resume_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/resume", request)
 
+@dashboard_router.post("/dashboard/campaigns/{service_id}/resume-pending")
+async def proxy_resume_pending_campaign(service_id: str, request: Request):
+    return await _proxy("POST", f"/dashboard/campaigns/{service_id}/resume-pending", request)
+
 @dashboard_router.post("/dashboard/campaigns/{service_id}/activate")
 async def proxy_activate_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/activate", request)

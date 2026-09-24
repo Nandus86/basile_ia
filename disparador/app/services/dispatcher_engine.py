@@ -156,6 +156,12 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
 
     logger.info(f"[DispatcherEngine] Dispatching contact {batch_position + 1}/{batch_total}: contact_number='{contact_number}', service_id={service_id}")
 
+    # Check if contact was already sent (idempotency guard on requeue or resume)
+    existing_status = await disparador_redis.get_contact_status(service_id, contact_number)
+    if existing_status == "sent":
+        logger.info(f"Skipping already sent contact {contact_number} in campaign {service_id}")
+        return
+
     # Rate Limit
     is_allowed = await disparador_redis.check_rate_limit(contact_number)
     if not is_allowed:
