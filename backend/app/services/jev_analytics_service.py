@@ -1,7 +1,7 @@
 """
-JevAnalyticsService — Classificação Analítica e Pastoral via TypeSafe JEV
+AnalyticsClassificationService — Classificação Analítica e Pastoral
 ========================================================================
-Avalia conversas e atendimentos utilizando o motor TypeSafe JEV (~typesafe/jev-latest no OpenRouter).
+Avalia conversas e atendimentos utilizando o motor analítico de decisões.
 Classifica em 4 dimensões analíticas em uma única requisição (<150ms):
   1. Dimensão 1: Tipo de Atendimento (13 categorias operacionais)
   2. Dimensão 2: Criticidade Pastoral / Alerta (8 níveis de cuidado)
@@ -25,8 +25,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Perguntas tipadas para o TypeSafe JEV
-JEV_ANALYTICS_QUESTIONS = {
+# Perguntas tipadas para o motor analítico
+ANALYTICS_QUESTIONS = {
     "dimensao_1_tipo_atendimento": {
         "type": "choice",
         "instructions": "Qual é a intenção ou assunto principal tratado pelo usuário nesta conversa com a igreja?",
@@ -94,6 +94,9 @@ JEV_ANALYTICS_QUESTIONS = {
     }
 }
 
+# Alias retrocompatível
+JEV_ANALYTICS_QUESTIONS = ANALYTICS_QUESTIONS
+
 # Rótulos legíveis e tópicos por categoria
 TOPICOS_MAP = {
     "visitante_novo": ["Visitante", "Primeiro Contato", "Boas-Vindas"],
@@ -112,7 +115,7 @@ TOPICOS_MAP = {
 }
 
 
-class JevAnalyticsService:
+class AnalyticsClassificationService:
     def __init__(self, db: Optional[AsyncSession] = None):
         self.db = db
         self.api_key = (
@@ -126,14 +129,15 @@ class JevAnalyticsService:
         if self.db:
             try:
                 from app.models.ai_provider import AIProvider
-                q = select(AIProvider).where(AIProvider.provider == "openrouter", AIProvider.is_active == True)
+                from sqlalchemy import func
+                q = select(AIProvider).where(func.lower(AIProvider.name) == "openrouter", AIProvider.is_active == True)
                 res = await self.db.execute(q)
                 prov = res.scalar_one_or_none()
                 if prov and prov.api_key:
                     self.api_key = prov.api_key.strip()
                     return self.api_key
             except Exception as e:
-                logger.warning(f"[JevAnalyticsService] Não foi possível obter OpenRouter key do banco: {e}")
+                logger.warning(f"[AnalyticsClassificationService] Não foi possível obter OpenRouter key do banco: {e}")
         return ""
 
     async def analyze_session(
@@ -145,17 +149,17 @@ class JevAnalyticsService:
         target_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Executa a análise multi-dimensional do atendimento do usuário via TypeSafe JEV.
+        Executa a análise multi-dimensional do atendimento do usuário via motor analítico.
         Retorna dicionário pronto para gravação em profile_data['__zona_aprendizado'].
         """
         t0 = time.perf_counter()
         api_key = await self._resolve_api_key()
 
         if not api_key:
-            logger.warning("[JevAnalyticsService] Sem OpenRouter API Key. Usando classificação heurística de fallback.")
+            logger.warning("[AnalyticsClassificationService] Sem OpenRouter API Key. Usando classificação heurística de fallback.")
             return self._heuristic_fallback(history_text, target_date)
 
-        # Monta o estado resumido para o JEV
+        # Monta o estado resumido para análise
         cleaned_history = history_text.strip()
         if len(cleaned_history) > 3500:
             cleaned_history = cleaned_history[-3500:]  # Mantém as mensagens mais recentes se for muito longo
@@ -169,7 +173,7 @@ class JevAnalyticsService:
         payload = {
             "model": "~typesafe/jev-latest",
             "state": state,
-            "questions": JEV_ANALYTICS_QUESTIONS
+            "questions": ANALYTICS_QUESTIONS
         }
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -184,17 +188,17 @@ class JevAnalyticsService:
                     data = res.json()
                     answers = data.get("answers", data)
                     elapsed_ms = (time.perf_counter() - t0) * 1000
-                    logger.info(f"[JevAnalyticsService] ⚡ JEV analisou sessão em {elapsed_ms:.1f}ms")
-                    return await self._format_jev_response(answers, history_text, church_name, member_name, target_date, api_key)
+                    logger.info(f"[AnalyticsClassificationService] ⚡ Motor Analítico analisou sessão em {elapsed_ms:.1f}ms")
+                    return await self._format_analytics_response(answers, history_text, church_name, member_name, target_date, api_key)
                 else:
-                    logger.warning(f"[JevAnalyticsService] JEV retornou status {res.status_code}: {res.text[:200]}")
+                    logger.warning(f"[AnalyticsClassificationService] Motor analítico retornou status {res.status_code}: {res.text[:200]}")
                     return self._heuristic_fallback(history_text, target_date)
 
         except Exception as e:
-            logger.error(f"[JevAnalyticsService] Erro ao comunicar com JEV: {e}")
+            logger.error(f"[AnalyticsClassificationService] Erro ao comunicar com motor analítico: {e}")
             return self._heuristic_fallback(history_text, target_date)
 
-    async def _format_jev_response(
+    async def _format_analytics_response(
         self,
         answers: Dict[str, Any],
         history_text: str,
@@ -203,7 +207,7 @@ class JevAnalyticsService:
         target_date: Optional[str],
         api_key: str
     ) -> Dict[str, Any]:
-        """Formata e enriquece a resposta do JEV nas estruturas necessárias."""
+        """Formata e enriquece a resposta analítica nas estruturas necessárias."""
         dim1 = answers.get("dimensao_1_tipo_atendimento", {}).get("choice") or "outros_especiais"
         dim2 = answers.get("dimensao_2_criticidade_pastoral", {}).get("choice") or "estavel_rotina"
         dim3 = answers.get("dimensao_3_vinculo", {}).get("choice") or "membro_ativo"
@@ -311,7 +315,7 @@ class JevAnalyticsService:
                     d = json.loads(txt.strip())
                     return d.get("motivo_do_vinculo", ""), d.get("pontos_de_atencao", "")
         except Exception as e:
-            logger.warning(f"[JevAnalyticsService] Erro ao gerar resumo crítico leve: {e}")
+            logger.warning(f"[AnalyticsClassificationService] Erro ao gerar resumo crítico leve: {e}")
 
         # Fallback de texto caso falhe
         return (
@@ -376,3 +380,7 @@ class JevAnalyticsService:
                 "dimensao_4_sentimento": dim4
             }
         }
+
+
+# Alias retrocompatível
+JevAnalyticsService = AnalyticsClassificationService
