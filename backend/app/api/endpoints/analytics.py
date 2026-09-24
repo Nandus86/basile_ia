@@ -306,7 +306,7 @@ class GenerateReportRequest(BaseModel):
 @router.post("/reports/generate", summary="Gerar Relatório Manual")
 async def generate_report_manual(req: GenerateReportRequest, db: AsyncSession = Depends(get_db)):
     from app.services.analytics_scheduler import queue_report_task
-    await queue_report_task(req.level, req.period_type, req.entity_id, req.entity_name, req.start_time, req.end_time)
+    await queue_report_task(req.level, req.period_type, req.entity_id, req.entity_name, req.start_time, req.end_time, force=True)
     return {"status": "queued", "message": "Geração do relatório iniciada."}
 
 @router.get("/churches", summary="Listar Igrejas para Filtro")

@@ -129,7 +129,7 @@ async def run_analytics_agent(target_date=None):
     finally:
         logger.info("[AnalyticsScheduler] Finished daily analytics agent run.")
 
-async def queue_report_task(level: str, period_type: str, entity_id: str, entity_name: str, start_time, end_time):
+async def queue_report_task(level: str, period_type: str, entity_id: str, entity_name: str, start_time, end_time, force: bool = False):
     """Creates a pending AnalyticsReport and queues it."""
     from app.models.analytics_report import AnalyticsReport
     from app.services.rabbitmq_service import rabbitmq_client
@@ -146,7 +146,23 @@ async def queue_report_task(level: str, period_type: str, entity_id: str, entity
                 cast(AnalyticsReport.period_start, Date) == start_time.date()
             )
         )
-        if existing.scalar_one_or_none():
+        existing_rec = existing.scalar_one_or_none()
+        if existing_rec:
+            if force:
+                existing_rec.status = "pending"
+                existing_rec.period_start = start_time
+                existing_rec.period_end = end_time
+                existing_rec.stats = None
+                existing_rec.report_content = None
+                await session.commit()
+                await rabbitmq_client.connect()
+                await rabbitmq_client.publish_message(
+                    exchange_name="",
+                    routing_key="analytics_reports_queue",
+                    message_body={"report_id": str(existing_rec.id)}
+                )
+                logger.info(f"[AnalyticsScheduler] Re-queued existing report {existing_rec.id} ({level}/{period_type}) with force=True")
+                return
             logger.info(f"[AnalyticsScheduler] Report {level}/{period_type} for {entity_id} at {start_time.date()} already exists.")
             return
 
@@ -173,13 +189,10 @@ async def queue_report_task(level: str, period_type: str, entity_id: str, entity
 
 async def run_church_daily_reports():
     logger.info("[AnalyticsScheduler] Starting church daily reports...")
-    from datetime import datetime, timezone, timedelta
     from app.models.user_analytics import UserAnalytics
     from sqlalchemy import select
     
-    now = datetime.now(timezone.utc)
-    start_time = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    end_time = start_time + timedelta(days=1, microseconds=-1)
+    start_time, end_time, _ = get_utc_day_range()
     
     async with AsyncSessionLocal() as session:
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
@@ -191,12 +204,7 @@ async def run_church_daily_reports():
 
 async def run_system_daily_reports():
     logger.info("[AnalyticsScheduler] Starting system daily reports...")
-    from datetime import datetime, timezone, timedelta
-    
-    now = datetime.now(timezone.utc)
-    start_time = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    end_time = start_time + timedelta(days=1, microseconds=-1)
-    
+    start_time, end_time, _ = get_utc_day_range()
     await queue_report_task("system", "daily", "system", "Global Basile", start_time, end_time)
     
 async def run_church_weekly_reports():

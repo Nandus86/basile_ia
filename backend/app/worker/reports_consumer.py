@@ -164,18 +164,111 @@ async def process_map_reduce(session, report, config):
     
     if report.level == "church" and report.period_type == "daily":
         # DAILY CHURCH REPORT: Quantitative JEV Aggregation + Single Pastoral Qualitative Synthesis
-        users_res = await session.execute(
-            select(UserAnalytics).where(UserAnalytics.church_id == report.entity_id)
+        from app.models.conversation_message import ConversationMessage
+        from app.models.job_log import JobLog
+        from sqlalchemy import or_
+
+        # 1. Fetch all church sessions for dispatch correlation fallback
+        all_church_res = await session.execute(
+            select(UserAnalytics.session_id).where(
+                or_(
+                    UserAnalytics.church_id == report.entity_id,
+                    UserAnalytics.session_id.startswith(str(report.entity_id))
+                )
+            )
         )
-        users = users_res.scalars().all()
+        all_church_sessions = [type('UserObj', (), {'session_id': s}) for s in all_church_res.scalars().all()]
+
+        # 2. Identify active sessions within [start_time, end_time]
+        active_sessions_with_paths = {}
+
+        msg_res = await session.execute(
+            select(ConversationMessage.session_id, ConversationMessage.webhook_path)
+            .where(
+                ConversationMessage.created_at >= start_time,
+                ConversationMessage.created_at <= end_time,
+            )
+            .distinct()
+        )
+        for s_id, w_path in msg_res.all():
+            if s_id:
+                active_sessions_with_paths.setdefault(str(s_id), set()).add(w_path or "")
+
+        job_res = await session.execute(
+            select(JobLog.session_id, JobLog.webhook_path)
+            .where(
+                JobLog.created_at >= start_time,
+                JobLog.created_at <= end_time,
+            )
+            .distinct()
+        )
+        for s_id, w_path in job_res.all():
+            if s_id:
+                active_sessions_with_paths.setdefault(str(s_id), set()).add(w_path or "")
+
+        # 3. Filter by allowed_endpoints if configured
+        allowed_paths = config.allowed_endpoints if (config and config.allowed_endpoints) else []
+
+        def _is_session_allowed(paths_set: set, allowed_list: list) -> bool:
+            if not allowed_list:
+                return True
+            for p in paths_set:
+                if not p:
+                    continue
+                clean_p = p.strip().strip("/").split("/")[-1].lower()
+                for item in allowed_list:
+                    if not item:
+                        continue
+                    clean_item = item.strip().strip("/").split("/")[-1].lower()
+                    if clean_item == clean_p or clean_item in p.lower():
+                        return True
+            return False
+
+        if allowed_paths:
+            eligible_sessions = {
+                s_id for s_id, paths in active_sessions_with_paths.items()
+                if _is_session_allowed(paths, allowed_paths)
+            }
+        else:
+            eligible_sessions = set(active_sessions_with_paths.keys())
+
+        # Include users directly marked seen in this window when not restricted by endpoints
+        if not allowed_paths:
+            seen_res = await session.execute(
+                select(UserAnalytics.session_id).where(
+                    or_(
+                        UserAnalytics.church_id == report.entity_id,
+                        UserAnalytics.session_id.startswith(str(report.entity_id))
+                    ),
+                    UserAnalytics.last_seen_at >= start_time,
+                    UserAnalytics.last_seen_at <= end_time
+                )
+            )
+            for s_row in seen_res.scalars().all():
+                if s_row:
+                    eligible_sessions.add(str(s_row))
+
+        if eligible_sessions:
+            users_res = await session.execute(
+                select(UserAnalytics).where(
+                    or_(
+                        UserAnalytics.church_id == report.entity_id,
+                        UserAnalytics.session_id.startswith(str(report.entity_id))
+                    ),
+                    UserAnalytics.session_id.in_(eligible_sessions)
+                )
+            )
+            users = users_res.scalars().all()
+        else:
+            users = []
         
         total_users = len(users)
         avg_score = sum(u.engagement_score for u in users) / total_users if total_users > 0 else 0
         critical_count = sum(1 for u in users if u.care_priority == "critical")
         
-        # Collect auto dispatches for church
+        # Collect auto dispatches for church (using all church sessions for fallback correlation)
         church_dispatches = await _collect_dispatch_stats(
-            session, config, start_time, end_time, church_id=report.entity_id, church_users=users
+            session, config, start_time, end_time, church_id=report.entity_id, church_users=all_church_sessions or users
         )
         total_disp_contacts = sum(d["total_contacts"] for d in church_dispatches)
 
