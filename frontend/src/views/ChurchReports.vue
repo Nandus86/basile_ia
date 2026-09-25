@@ -741,7 +741,7 @@ const generateManual = async () => {
     const churchObj = churches.value.find(c => c.id === selectedChurch.value)
     const churchName = churchObj ? churchObj.name : selectedChurch.value
 
-    await axios.post(`/analytics/reports/generate`, {
+    const res = await axios.post(`/analytics/reports/generate`, {
       level: 'church',
       period_type: periodType.value,
       entity_id: selectedChurch.value,
@@ -750,9 +750,16 @@ const generateManual = async () => {
       end_time: end.toISOString()
     })
     
-    setTimeout(() => fetchReports(), 1000)
+    snackbarText.value = res.data?.message || 'Geração iniciada! O relatório do período será gerado ou substituído.'
+    snackbarColor.value = 'success'
+    snackbar.value = true
+
+    setTimeout(() => fetchReports(), 1200)
   } catch (error) {
     console.error('Error generating report', error)
+    snackbarText.value = error.response?.data?.detail || 'Erro ao solicitar geração do relatório.'
+    snackbarColor.value = 'error'
+    snackbar.value = true
   } finally {
     generating.value = false
   }
