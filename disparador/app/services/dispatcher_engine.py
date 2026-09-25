@@ -156,11 +156,16 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
 
     logger.info(f"[DispatcherEngine] Dispatching contact {batch_position + 1}/{batch_total}: contact_number='{contact_number}', service_id={service_id}")
 
+    dispatch_flags = (source_payload or {}).get("dispatch_flags") or {}
+    is_recreated = bool(dispatch_flags.get("recreate", False)) or bool(dispatch_flags.get("force", False))
+
     # Check if contact was already sent (idempotency guard on requeue or resume)
-    existing_status = await disparador_redis.get_contact_status(service_id, contact_number)
-    if existing_status == "sent":
-        logger.info(f"Skipping already sent contact {contact_number} in campaign {service_id}")
-        return
+    # If recreate or force is requested, do not skip
+    if not is_recreated:
+        existing_status = await disparador_redis.get_contact_status(service_id, contact_number)
+        if existing_status == "sent":
+            logger.info(f"Skipping already sent contact {contact_number} in campaign {service_id}")
+            return
 
     # Rate Limit
     is_allowed = await disparador_redis.check_rate_limit(contact_number)
@@ -319,7 +324,9 @@ async def dispatch_batch(config, type_id: str, queue_id: str, contacts: list, se
 
     actual_total = campaign_total if campaign_total is not None else total
     await disparador_redis.init_campaign(service_id, actual_total, str(config.id), config.path, campaign_key=campaign_key, church_name=church_name)
-    await disparador_redis.set_campaign_contacts(service_id, contacts)
+    dispatch_flags = (source_payload or {}).get("dispatch_flags") or {}
+    is_recreated_batch = bool(dispatch_flags.get("recreate", False)) or bool(dispatch_flags.get("force", False))
+    await disparador_redis.set_campaign_contacts(service_id, contacts, force_reset=is_recreated_batch)
     
     # Save input payload sample
     if source_payload:

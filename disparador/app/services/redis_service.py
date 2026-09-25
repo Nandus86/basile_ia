@@ -105,10 +105,10 @@ class DisparadorRedis:
                 except Exception:
                     pass
 
-    async def set_campaign_contacts(self, service_id: str, contacts: List[dict]):
+    async def set_campaign_contacts(self, service_id: str, contacts: List[dict], force_reset: bool = False):
         await self.ensure_connected()
         key = f"disp:campaign:contacts:{service_id}"
-        existing_contacts = await self.client.hgetall(key) or {}
+        existing_contacts = {} if force_reset else (await self.client.hgetall(key) or {})
         mapping = {}
         for i, c in enumerate(contacts):
             number = c.get("number") or c.get("phone") or c.get("user_id")
@@ -116,8 +116,8 @@ class DisparadorRedis:
                 logger.warning(f"[RedisService] Contact {i} in service_id={service_id} has no identity (dropped from tracking). Contact data: {c}")
                 continue
             
-            # Preserve existing sent/failed contact state upon requeue or retry
-            if number in existing_contacts:
+            # Preserve existing sent/failed contact state upon requeue or retry unless force_reset
+            if not force_reset and number in existing_contacts:
                 try:
                     existing_data = json.loads(existing_contacts[number])
                     if existing_data.get("status") in ("sent", "failed"):
