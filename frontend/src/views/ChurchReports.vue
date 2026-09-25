@@ -156,25 +156,25 @@
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Total Diálogo</div>
                         <div class="text-h6 font-weight-bold text-teal">
-                          {{ selectedReport?.stats?.trafego_mensagens?.total_mensagens_dialogo || 0 }}
+                          {{ trafegoData.total_mensagens_dialogo || 0 }}
                         </div>
                       </v-col>
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Membros</div>
                         <div class="text-h6 font-weight-bold">
-                          {{ selectedReport?.stats?.trafego_mensagens?.mensagens_membros || 0 }}
+                          {{ trafegoData.mensagens_membros || 0 }}
                         </div>
                       </v-col>
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Respostas IA</div>
                         <div class="text-h6 font-weight-bold">
-                          {{ selectedReport?.stats?.trafego_mensagens?.respostas_ia || 0 }}
+                          {{ trafegoData.respostas_ia || 0 }}
                         </div>
                       </v-col>
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Média/Membro</div>
                         <div class="text-h6 font-weight-bold text-info">
-                          {{ selectedReport?.stats?.trafego_mensagens?.media_mensagens_por_membro || 0 }}
+                          {{ trafegoData.media_mensagens_por_membro || 0 }}
                         </div>
                       </v-col>
                     </v-row>
@@ -191,25 +191,25 @@
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Alcançados</div>
                         <div class="text-h6 font-weight-bold text-indigo">
-                          {{ selectedReport?.stats?.funil_disparos?.membros_alcancados || selectedReport?.stats?.total_disparos_automaticos || 0 }}
+                          {{ funilData.membros_alcancados || selectedReport?.stats?.total_disparos_automaticos || 0 }}
                         </div>
                       </v-col>
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Passivos</div>
                         <div class="text-h6 font-weight-bold text-medium-emphasis">
-                          {{ selectedReport?.stats?.funil_disparos?.contatos_passivos || 0 }}
+                          {{ funilData.contatos_passivos || 0 }}
                         </div>
                       </v-col>
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Reativos</div>
                         <div class="text-h6 font-weight-bold text-success">
-                          {{ selectedReport?.stats?.funil_disparos?.interacoes_reativas || 0 }}
+                          {{ funilData.interacoes_reativas || 0 }}
                         </div>
                       </v-col>
                       <v-col cols="6" sm="3">
                         <div class="text-caption text-medium-emphasis">Conversão</div>
                         <div class="text-h6 font-weight-bold text-purple">
-                          {{ selectedReport?.stats?.funil_disparos?.taxa_conversao_pct || 0 }}%
+                          {{ funilData.taxa_conversao_pct || 0 }}%
                         </div>
                       </v-col>
                     </v-row>
@@ -482,6 +482,14 @@ const criticalCases = computed(() => {
   return selectedReport.value?.stats?.casos_criticos_detalhe || []
 })
 
+const trafegoData = computed(() => {
+  return selectedReport.value?.stats?.relatorio_quantitativo?.trafego_mensagens || selectedReport.value?.stats?.trafego_mensagens || {}
+})
+
+const funilData = computed(() => {
+  return selectedReport.value?.stats?.relatorio_quantitativo?.funil_disparos || selectedReport.value?.stats?.funil_disparos || {}
+})
+
 const hasDim1 = computed(() => {
   const d = quantData.value.dimensao_1_tipo_atendimento
   return d && Object.values(d).some(v => v > 0)
@@ -517,6 +525,26 @@ const formattedCrmJson = computed(() => {
   const stats = rep.stats || {}
   const relQuant = stats.relatorio_quantitativo || {}
   const casosCriticos = stats.casos_criticos_detalhe || []
+
+  // Fallback estruturado para relatórios legados
+  const trafego = relQuant.trafego_mensagens || stats.trafego_mensagens || {
+    total_mensagens_dialogo: (stats.total_users || 0) * 2,
+    mensagens_membros: stats.total_users || 0,
+    respostas_ia: stats.total_users || 0,
+    media_mensagens_por_membro: 2.0,
+    mensagens_operadores_humanos_desconsideradas: 0
+  }
+
+  const dispContatos = stats.total_disparos_automaticos || 0
+  const funil = relQuant.funil_disparos || stats.funil_disparos || {
+    total_disparos_enviados: dispContatos,
+    membros_alcancados: dispContatos,
+    contatos_passivos: Math.max(0, dispContatos - (stats.total_users || 0)),
+    interacoes_reativas: Math.min(stats.total_users || 0, dispContatos),
+    interacoes_organicas: Math.max(0, (stats.total_users || 0) - dispContatos),
+    taxa_conversao_pct: dispContatos > 0 ? Math.round((Math.min(stats.total_users || 0, dispContatos) / dispContatos) * 100) : 0
+  }
+
   const payload = {
     report_id: rep.id,
     church_id: rep.entity_id,
@@ -527,8 +555,8 @@ const formattedCrmJson = computed(() => {
     period_end: rep.period_end,
     relatorio_quantitativo: relQuant,
     relatorio_qualitativo: rep.report_content || '',
-    trafego_mensagens: relQuant.trafego_mensagens || stats.trafego_mensagens || {},
-    funil_disparos: relQuant.funil_disparos || stats.funil_disparos || {},
+    trafego_mensagens: trafego,
+    funil_disparos: funil,
     classificacao_analitica: {
       tipo_atendimento: relQuant.dimensao_1_tipo_atendimento || {},
       criticidade_pastoral: relQuant.dimensao_2_criticidade_pastoral || {},

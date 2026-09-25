@@ -631,6 +631,13 @@ async def process_report_message(message: aio_pika.abc.AbstractIncomingMessage):
                     logger.error("[ReportsConsumer] AnalyticsConfig not found.")
                     return
 
+                if not config.is_active and not payload.get("force"):
+                    logger.warning(f"[ReportsConsumer] Analytics is inactive. Cancelling scheduled report {report_id}.")
+                    report.status = "cancelled"
+                    report.error_message = "Analytics desativado na configuração."
+                    await session.commit()
+                    return
+
                 report.status = "processing"
                 await session.commit()
                 

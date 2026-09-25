@@ -73,8 +73,8 @@ async def run_analytics_agent(target_date=None):
             config_res = await session.execute(select(AnalyticsConfig).limit(1))
             config = config_res.scalar_one_or_none()
             
-            if not config or not config.agent_id:
-                logger.warning("[AnalyticsScheduler] No agent configured for Analytics. Skipping run.")
+            if not config or not config.is_active or not config.agent_id:
+                logger.info("[AnalyticsScheduler] Analytics Agent is inactive or not configured. Skipping run.")
                 return
                 
             from app.models.conversation_message import ConversationMessage
@@ -136,6 +136,13 @@ async def queue_report_task(level: str, period_type: str, entity_id: str, entity
     import uuid
     
     async with AsyncSessionLocal() as session:
+        if not force:
+            cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+            cfg = cfg_res.scalar_one_or_none()
+            if not cfg or not cfg.is_active:
+                logger.info(f"[AnalyticsScheduler] Skipping queue_report_task for {entity_name} ({level}/{period_type}): Analytics is inactive.")
+                return
+
         # Check if already generated for this exact period (normalize to date-only for dedup)
         from sqlalchemy import select, func, cast, Date
         existing = await session.execute(
@@ -159,7 +166,7 @@ async def queue_report_task(level: str, period_type: str, entity_id: str, entity
                 await rabbitmq_client.publish_message(
                     exchange_name="",
                     routing_key="analytics_reports_queue",
-                    message_body={"report_id": str(existing_rec.id)}
+                    message_body={"report_id": str(existing_rec.id), "force": force}
                 )
                 logger.info(f"[AnalyticsScheduler] Re-queued existing report {existing_rec.id} ({level}/{period_type}) with force=True")
                 return
@@ -183,9 +190,9 @@ async def queue_report_task(level: str, period_type: str, entity_id: str, entity
         await rabbitmq_client.publish_message(
             exchange_name="",
             routing_key="analytics_reports_queue",
-            message_body={"report_id": str(report.id)}
+            message_body={"report_id": str(report.id), "force": force}
         )
-        logger.info(f"[AnalyticsScheduler] Queued report {report.id} ({level}/{period_type})")
+        logger.info(f"[AnalyticsScheduler] Queued report {report.id} ({level}/{period_type}, force={force})")
 
 async def run_church_daily_reports():
     logger.info("[AnalyticsScheduler] Starting church daily reports...")
@@ -195,6 +202,12 @@ async def run_church_daily_reports():
     start_time, end_time, _ = get_utc_day_range()
     
     async with AsyncSessionLocal() as session:
+        cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+        config = cfg_res.scalar_one_or_none()
+        if not config or not config.is_active or not config.church_agent_id:
+            logger.info("[AnalyticsScheduler] Church daily reports skipped: Analytics is inactive or no church agent configured.")
+            return
+
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
         church_ids = churches_res.scalars().all()
         
@@ -205,7 +218,13 @@ async def run_church_daily_reports():
 async def run_system_daily_reports():
     logger.info("[AnalyticsScheduler] Starting system daily reports...")
     start_time, end_time, _ = get_utc_day_range()
-    await queue_report_task("system", "daily", "system", "Global Basile", start_time, end_time)
+    async with AsyncSessionLocal() as session:
+        cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+        config = cfg_res.scalar_one_or_none()
+        if not config or not config.is_active or not config.system_agent_id:
+            logger.info("[AnalyticsScheduler] System daily reports skipped: Analytics is inactive or no system agent configured.")
+            return
+        await queue_report_task("system", "daily", "system", "Global Basile", start_time, end_time)
     
 async def run_church_weekly_reports():
     logger.info("[AnalyticsScheduler] Starting church weekly reports...")
@@ -219,6 +238,12 @@ async def run_church_weekly_reports():
     end_time = start_time + timedelta(days=7, microseconds=-1)
     
     async with AsyncSessionLocal() as session:
+        cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+        config = cfg_res.scalar_one_or_none()
+        if not config or not config.is_active or not config.church_agent_id:
+            logger.info("[AnalyticsScheduler] Church weekly reports skipped: Analytics is inactive or no church agent configured.")
+            return
+
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
         church_ids = churches_res.scalars().all()
         
@@ -232,7 +257,13 @@ async def run_system_weekly_reports():
     now = datetime.now(timezone.utc)
     start_time = (now - timedelta(days=now.weekday() + 7)).replace(hour=0, minute=0, second=0, microsecond=0)
     end_time = start_time + timedelta(days=7, microseconds=-1)
-    await queue_report_task("system", "weekly", "system", "Global Basile", start_time, end_time)
+    async with AsyncSessionLocal() as session:
+        cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+        config = cfg_res.scalar_one_or_none()
+        if not config or not config.is_active or not config.system_agent_id:
+            logger.info("[AnalyticsScheduler] System weekly reports skipped: Analytics is inactive or no system agent configured.")
+            return
+        await queue_report_task("system", "weekly", "system", "Global Basile", start_time, end_time)
     
 async def run_church_monthly_reports():
     logger.info("[AnalyticsScheduler] Starting church monthly reports...")
@@ -247,6 +278,12 @@ async def run_church_monthly_reports():
     start_time = end_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     async with AsyncSessionLocal() as session:
+        cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+        config = cfg_res.scalar_one_or_none()
+        if not config or not config.is_active or not config.church_agent_id:
+            logger.info("[AnalyticsScheduler] Church monthly reports skipped: Analytics is inactive or no church agent configured.")
+            return
+
         churches_res = await session.execute(select(UserAnalytics.church_id).where(UserAnalytics.church_id != None).distinct())
         church_ids = churches_res.scalars().all()
         
@@ -261,7 +298,13 @@ async def run_system_monthly_reports():
     first_day_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end_time = first_day_this_month - timedelta(microseconds=1)
     start_time = end_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    await queue_report_task("system", "monthly", "system", "Global Basile", start_time, end_time)
+    async with AsyncSessionLocal() as session:
+        cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+        config = cfg_res.scalar_one_or_none()
+        if not config or not config.is_active or not config.system_agent_id:
+            logger.info("[AnalyticsScheduler] System monthly reports skipped: Analytics is inactive or no system agent configured.")
+            return
+        await queue_report_task("system", "monthly", "system", "Global Basile", start_time, end_time)
 
 def _parse_time_parts(time_str: str, default_h: int = 3, default_m: int = 0):
     try:
