@@ -44,9 +44,15 @@ def get_utc_day_range(target_date=None, tz_name="America/Sao_Paulo"):
     if target_date is None:
         target_date_obj = (now_local - timedelta(days=1)).date()
     elif isinstance(target_date, str):
-        target_date_obj = date.fromisoformat(target_date.strip())
+        clean_str = target_date.strip()
+        if "T" in clean_str:
+            clean_str = clean_str.split("T")[0]
+        target_date_obj = date.fromisoformat(clean_str)
     elif isinstance(target_date, datetime):
-        target_date_obj = target_date.date()
+        if target_date.tzinfo is not None:
+            target_date_obj = target_date.astimezone(user_tz).date()
+        else:
+            target_date_obj = target_date.date()
     elif isinstance(target_date, date):
         target_date_obj = target_date
     else:
@@ -66,6 +72,19 @@ async def run_analytics_agent(target_date=None):
     who actually sent messages on the target day (defaults to yesterday D-1).
     """
     start_utc, end_utc, target_date_obj = get_utc_day_range(target_date)
+
+    # Distributed lock across multiple Uvicorn workers
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:user_analytics_daily:{target_date_obj}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running user analytics for {target_date_obj}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
+
     logger.info(f"[AnalyticsScheduler] Starting daily analytics run for date {target_date_obj} (UTC {start_utc} to {end_utc})...")
     try:
         async with AsyncSessionLocal() as session:
@@ -130,77 +149,150 @@ async def run_analytics_agent(target_date=None):
         logger.info("[AnalyticsScheduler] Finished daily analytics agent run.")
 
 async def queue_report_task(level: str, period_type: str, entity_id: str, entity_name: str, start_time, end_time, force: bool = False):
-    """Creates a pending AnalyticsReport and queues it."""
+    """
+    Creates or updates an AnalyticsReport and queues it.
+    Guarantees exactly one report per entity per period.
+    When force=True (manual run), replaces whatever report already exists for the day and cleans up duplicates.
+    """
     from app.models.analytics_report import AnalyticsReport
     from app.services.rabbitmq_service import rabbitmq_client
+    from app.redis_client import redis_client
+    from sqlalchemy import select, or_, cast, Date, func, case
     import uuid
-    
-    async with AsyncSessionLocal() as session:
-        if not force:
-            cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
-            cfg = cfg_res.scalar_one_or_none()
-            if not cfg or not cfg.is_active:
-                logger.info(f"[AnalyticsScheduler] Skipping queue_report_task for {entity_name} ({level}/{period_type}): Analytics is inactive.")
-                return
 
-        # Check if already generated for this exact period (normalize to date-only for dedup)
-        from sqlalchemy import select, func, cast, Date
-        existing = await session.execute(
-            select(AnalyticsReport).where(
-                AnalyticsReport.level == level,
-                AnalyticsReport.period_type == period_type,
-                AnalyticsReport.entity_id == entity_id,
-                cast(AnalyticsReport.period_start, Date) == start_time.date()
-            )
-        )
-        existing_rec = existing.scalar_one_or_none()
-        if existing_rec:
-            if force:
-                existing_rec.status = "pending"
-                existing_rec.period_start = start_time
-                existing_rec.period_end = end_time
-                existing_rec.stats = None
-                existing_rec.report_content = None
-                await session.commit()
-                await rabbitmq_client.connect()
-                await rabbitmq_client.publish_message(
-                    exchange_name="",
-                    routing_key="analytics_reports_queue",
-                    message_body={"report_id": str(existing_rec.id), "force": force}
-                )
-                logger.info(f"[AnalyticsScheduler] Re-queued existing report {existing_rec.id} ({level}/{period_type}) with force=True")
-                return
-            logger.info(f"[AnalyticsScheduler] Report {level}/{period_type} for {entity_id} at {start_time.date()} already exists.")
+    if period_type == "daily":
+        start_time, end_time, target_date_obj = get_utc_day_range(start_time)
+    else:
+        target_date_obj = start_time.date() if hasattr(start_time, 'date') else start_time
+
+    # Distributed lock to prevent race conditions during insertion/queuing
+    r_client = None
+    lock_key = f"lock:queue_report:{level}:{period_type}:{entity_id}:{target_date_obj}"
+    try:
+        r_client = await redis_client.connect()
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=60)
+        if not acquired and not force:
+            logger.info(f"[AnalyticsScheduler] Report task for {entity_id} ({level}/{period_type}) on {target_date_obj} is already being processed. Skipping.")
             return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
 
-        report = AnalyticsReport(
-            id=uuid.uuid4(),
-            level=level,
-            period_type=period_type,
-            entity_id=entity_id,
-            entity_name=entity_name,
-            period_start=start_time,
-            period_end=end_time,
-            status="pending"
-        )
-        session.add(report)
-        await session.commit()
-        
-        await rabbitmq_client.connect()
-        await rabbitmq_client.publish_message(
-            exchange_name="",
-            routing_key="analytics_reports_queue",
-            message_body={"report_id": str(report.id), "force": force}
-        )
-        logger.info(f"[AnalyticsScheduler] Queued report {report.id} ({level}/{period_type}, force={force})")
+    try:
+        async with AsyncSessionLocal() as session:
+            if not force:
+                cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
+                cfg = cfg_res.scalar_one_or_none()
+                if not cfg or not cfg.is_active:
+                    logger.info(f"[AnalyticsScheduler] Skipping queue_report_task for {entity_name} ({level}/{period_type}): Analytics is inactive.")
+                    return
+
+            # Check if already generated for this exact period (matching UTC or Sao Paulo date)
+            date_filters = [cast(AnalyticsReport.period_start, Date) == target_date_obj]
+            try:
+                date_filters.append(cast(func.timezone('America/Sao_Paulo', AnalyticsReport.period_start), Date) == target_date_obj)
+            except Exception:
+                pass
+
+            existing_stmt = (
+                select(AnalyticsReport)
+                .where(
+                    AnalyticsReport.level == level,
+                    AnalyticsReport.period_type == period_type,
+                    AnalyticsReport.entity_id == str(entity_id),
+                    or_(*date_filters)
+                )
+                .order_by(
+                    case((AnalyticsReport.status == "completed", 1), else_=2),
+                    AnalyticsReport.completed_at.desc().nullslast(),
+                    AnalyticsReport.id.desc()
+                )
+            )
+            existing_res = await session.execute(existing_stmt)
+            existing_recs = existing_res.scalars().all()
+
+            if existing_recs:
+                primary_rec = existing_recs[0]
+                
+                # Delete surplus duplicate reports so that ONLY ONE remains
+                if len(existing_recs) > 1:
+                    for dup in existing_recs[1:]:
+                        logger.info(f"[AnalyticsScheduler] Removing duplicate report {dup.id} for {entity_id} on {target_date_obj}")
+                        await session.delete(dup)
+                    await session.flush()
+
+                if force:
+                    # Replace whatever is there with fresh pending state
+                    primary_rec.status = "pending"
+                    primary_rec.period_start = start_time
+                    primary_rec.period_end = end_time
+                    if entity_name:
+                        primary_rec.entity_name = entity_name
+                    primary_rec.stats = None
+                    primary_rec.report_content = None
+                    primary_rec.sub_reports = []
+                    primary_rec.error_message = None
+                    primary_rec.completed_at = None
+                    await session.commit()
+
+                    await rabbitmq_client.connect()
+                    await rabbitmq_client.publish_message(
+                        exchange_name="",
+                        routing_key="analytics_reports_queue",
+                        message_body={"report_id": str(primary_rec.id), "force": True}
+                    )
+                    logger.info(f"[AnalyticsScheduler] Replaced and re-queued report {primary_rec.id} ({level}/{period_type}) for {target_date_obj} (force=True)")
+                    return
+                else:
+                    await session.commit()
+                    logger.info(f"[AnalyticsScheduler] Report {level}/{period_type} for {entity_id} at {target_date_obj} already exists. Skipping.")
+                    return
+
+            # No existing report — create brand new one
+            report = AnalyticsReport(
+                id=uuid.uuid4(),
+                level=level,
+                period_type=period_type,
+                entity_id=str(entity_id),
+                entity_name=entity_name,
+                period_start=start_time,
+                period_end=end_time,
+                status="pending"
+            )
+            session.add(report)
+            await session.commit()
+            
+            await rabbitmq_client.connect()
+            await rabbitmq_client.publish_message(
+                exchange_name="",
+                routing_key="analytics_reports_queue",
+                message_body={"report_id": str(report.id), "force": force}
+            )
+            logger.info(f"[AnalyticsScheduler] Queued new report {report.id} ({level}/{period_type}, force={force})")
+    finally:
+        if r_client:
+            try:
+                await r_client.delete(lock_key)
+            except Exception:
+                pass
 
 async def run_church_daily_reports():
     logger.info("[AnalyticsScheduler] Starting church daily reports...")
     from app.models.user_analytics import UserAnalytics
     from sqlalchemy import select
     
-    start_time, end_time, _ = get_utc_day_range()
-    
+    start_time, end_time, target_date_obj = get_utc_day_range()
+
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:church_daily_reports:{target_date_obj}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running church daily reports for {target_date_obj}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
+
     async with AsyncSessionLocal() as session:
         cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
         config = cfg_res.scalar_one_or_none()
@@ -217,7 +309,19 @@ async def run_church_daily_reports():
 
 async def run_system_daily_reports():
     logger.info("[AnalyticsScheduler] Starting system daily reports...")
-    start_time, end_time, _ = get_utc_day_range()
+    start_time, end_time, target_date_obj = get_utc_day_range()
+
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:system_daily_reports:{target_date_obj}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running system daily reports for {target_date_obj}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
+
     async with AsyncSessionLocal() as session:
         cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
         config = cfg_res.scalar_one_or_none()
@@ -225,7 +329,7 @@ async def run_system_daily_reports():
             logger.info("[AnalyticsScheduler] System daily reports skipped: Analytics is inactive or no system agent configured.")
             return
         await queue_report_task("system", "daily", "system", "Global Basile", start_time, end_time)
-    
+
 async def run_church_weekly_reports():
     logger.info("[AnalyticsScheduler] Starting church weekly reports...")
     from datetime import datetime, timezone, timedelta
@@ -236,6 +340,17 @@ async def run_church_weekly_reports():
     # Get last monday
     start_time = (now - timedelta(days=now.weekday() + 7)).replace(hour=0, minute=0, second=0, microsecond=0)
     end_time = start_time + timedelta(days=7, microseconds=-1)
+
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:church_weekly_reports:{start_time.date()}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running church weekly reports for {start_time.date()}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
     
     async with AsyncSessionLocal() as session:
         cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
@@ -250,6 +365,7 @@ async def run_church_weekly_reports():
         for cid in church_ids:
             name = await _resolve_church_name(session, cid)
             await queue_report_task("church", "weekly", cid, name, start_time, end_time)
+
         
 async def run_system_weekly_reports():
     logger.info("[AnalyticsScheduler] Starting system weekly reports...")
@@ -257,6 +373,18 @@ async def run_system_weekly_reports():
     now = datetime.now(timezone.utc)
     start_time = (now - timedelta(days=now.weekday() + 7)).replace(hour=0, minute=0, second=0, microsecond=0)
     end_time = start_time + timedelta(days=7, microseconds=-1)
+
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:system_weekly_reports:{start_time.date()}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running system weekly reports for {start_time.date()}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
+
     async with AsyncSessionLocal() as session:
         cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
         config = cfg_res.scalar_one_or_none()
@@ -277,6 +405,17 @@ async def run_church_monthly_reports():
     end_time = first_day_this_month - timedelta(microseconds=1)
     start_time = end_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:church_monthly_reports:{start_time.date()}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running church monthly reports for {start_time.date()}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
+
     async with AsyncSessionLocal() as session:
         cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
         config = cfg_res.scalar_one_or_none()
@@ -298,6 +437,18 @@ async def run_system_monthly_reports():
     first_day_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end_time = first_day_this_month - timedelta(microseconds=1)
     start_time = end_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    from app.redis_client import redis_client
+    try:
+        r_client = await redis_client.connect()
+        lock_key = f"lock:scheduler:system_monthly_reports:{start_time.date()}"
+        acquired = await r_client.set(lock_key, "1", nx=True, ex=7200)
+        if not acquired:
+            logger.info(f"[AnalyticsScheduler] Another worker already running system monthly reports for {start_time.date()}. Skipping.")
+            return
+    except Exception as e:
+        logger.warning(f"[AnalyticsScheduler] Redis lock warning: {e}")
+
     async with AsyncSessionLocal() as session:
         cfg_res = await session.execute(select(AnalyticsConfig).limit(1))
         config = cfg_res.scalar_one_or_none()
