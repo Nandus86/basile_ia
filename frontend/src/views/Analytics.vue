@@ -10,6 +10,17 @@
             </p>
           </div>
           <div class="d-flex align-center ga-3">
+            <v-chip
+              :color="config.is_active ? 'success' : 'grey'"
+              variant="flat"
+              class="font-weight-medium"
+              prepend-icon="mdi-power"
+              @click="openConfig"
+              style="cursor: pointer;"
+              title="Clique para gerenciar o agendamento"
+            >
+              {{ config.is_active ? 'Motor Automático: ATIVO' : 'Motor Automático: DESLIGADO' }}
+            </v-chip>
             <v-btn color="secondary" variant="outlined" prepend-icon="mdi-cog" @click="openConfig">
               Configurar Analistas
             </v-btn>
@@ -347,8 +358,10 @@
                   <v-col cols="12">
                     <v-switch
                       v-model="config.is_active"
-                      label="Motor Analista Ativo"
+                      label="Motor Geral de Analytics Ativo (Habilita agendamentos automáticos nas madrugadas)"
                       color="primary"
+                      hint="Quando desativado, nenhum relatório diário de usuários ou igrejas roda automaticamente nas madrugadas."
+                      persistent-hint
                     ></v-switch>
                   </v-col>
                   <v-col cols="12" md="6">
@@ -907,8 +920,20 @@ const saveConfig = async () => {
   }
 }
 
+const fetchConfigStatus = async () => {
+  try {
+    const res = await axios.get('/analytics/config')
+    if (res.data) {
+      config.value.is_active = res.data.is_active
+    }
+  } catch (e) {
+    console.error('Failed to fetch config status', e)
+  }
+}
+
 onMounted(() => {
   fetchAnalytics()
+  fetchConfigStatus()
 })
 </script>
 

@@ -74,6 +74,9 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                 from app.models.analytics_config import AnalyticsConfig
                 config_res = await session.execute(select(AnalyticsConfig).limit(1))
                 config = config_res.scalar_one_or_none()
+                if not config or (not config.is_active and not payload.get("force")):
+                    logger.info(f"[AnalyticsConsumer] Analytics is inactive. Skipping task for session {session_id}.")
+                    return
 
                 # Logging to JobLogs (so it appears on UI)
                 from app.models.job_log import JobLog
