@@ -30,14 +30,14 @@ def _normalize_path(p: str) -> str:
             p = p[len(prefix):]
     return p
 
-async def _collect_dispatch_stats(session, config, start_time, end_time, church_id: str = None, church_users: list = None) -> list:
+async def _collect_dispatch_stats(session, config, start_time, end_time, church_id: str = None, church_users: list = None) -> tuple:
     """
     Coleta estatísticas de disparos automáticos com base no auto_dispatch_mapping do config.
-    Retorna lista com métricas detalhadas por regra mapeada.
+    Retorna tupla (dispatch_stats, dispatched_session_set).
     """
     mapping = config.auto_dispatch_mapping if config and config.auto_dispatch_mapping else []
     if not mapping:
-        return []
+        return [], set()
 
     log_query = select(DispatcherWebhookLog).where(
         DispatcherWebhookLog.created_at >= start_time,
@@ -46,7 +46,7 @@ async def _collect_dispatch_stats(session, config, start_time, end_time, church_
     logs_res = await session.execute(log_query)
     logs = logs_res.scalars().all()
     if not logs:
-        return []
+        return [], set()
 
     church_session_set = set()
     if church_users:
@@ -55,6 +55,7 @@ async def _collect_dispatch_stats(session, config, start_time, end_time, church_
                 church_session_set.add(str(u.session_id))
 
     dispatch_stats = []
+    dispatched_session_set = set()
 
     for rule in mapping:
         rule_path = (rule.get("path") or "").strip()
@@ -108,6 +109,15 @@ async def _collect_dispatch_stats(session, config, start_time, end_time, church_
             count = log.contact_count if log.contact_count is not None else len(payload.get("contacts", []))
             total_contacts += count
 
+            # Track dispatched contacts/sessions
+            queue_id = payload.get("queue_id", "")
+            for c in payload.get("contacts", []):
+                c_num = str(c.get("number") or c.get("phone") or "").strip()
+                if c_num:
+                    if queue_id:
+                        dispatched_session_set.add(f"{queue_id}{c_num}")
+                    dispatched_session_set.add(c_num)
+
         if matched_batches > 0 or total_contacts > 0:
             dispatch_stats.append({
                 "label": rule_label,
@@ -117,7 +127,7 @@ async def _collect_dispatch_stats(session, config, start_time, end_time, church_
                 "total_contacts": total_contacts
             })
 
-    return dispatch_stats
+    return dispatch_stats, dispatched_session_set
 
 async def process_map_reduce(session, report, config):
     """Executes the Map-Reduce logic for generating the report."""
@@ -163,7 +173,7 @@ async def process_map_reduce(session, report, config):
     sub_reports_texts = []
     
     if report.level == "church" and report.period_type == "daily":
-        # DAILY CHURCH REPORT: Quantitative JEV Aggregation + Single Pastoral Qualitative Synthesis
+        # DAILY CHURCH REPORT: Quantitative Analytics Aggregation + Single Pastoral Qualitative Synthesis
         from app.models.conversation_message import ConversationMessage
         from app.models.job_log import JobLog
         from sqlalchemy import or_
@@ -267,12 +277,70 @@ async def process_map_reduce(session, report, config):
         critical_count = sum(1 for u in users if u.care_priority == "critical")
         
         # Collect auto dispatches for church (using all church sessions for fallback correlation)
-        church_dispatches = await _collect_dispatch_stats(
+        church_dispatches, dispatched_sessions = await _collect_dispatch_stats(
             session, config, start_time, end_time, church_id=report.entity_id, church_users=all_church_sessions or users
         )
         total_disp_contacts = sum(d["total_contacts"] for d in church_dispatches)
 
-        # 4 JEV Dimensions Initialization
+        # 3. Message Traffic & Dialogue Volume Calculation (strictly excluding human operators 'fromMe')
+        church_session_ids_set = {s.session_id for s in all_church_sessions if s.session_id}
+        if eligible_sessions:
+            church_session_ids_set.update(eligible_sessions)
+
+        msgs_query = select(ConversationMessage.session_id, ConversationMessage.role).where(
+            ConversationMessage.created_at >= start_time,
+            ConversationMessage.created_at <= end_time,
+            or_(
+                ConversationMessage.session_id.in_(church_session_ids_set) if church_session_ids_set else False,
+                ConversationMessage.session_id.startswith(str(report.entity_id))
+            )
+        )
+        msgs_res = await session.execute(msgs_query)
+        church_messages = msgs_res.all()
+
+        msgs_user = sum(1 for m in church_messages if m.role == "user")
+        msgs_assistant = sum(1 for m in church_messages if m.role == "assistant")
+        msgs_from_me = sum(1 for m in church_messages if m.role == "fromMe")
+        total_dialogo = msgs_user + msgs_assistant
+
+        membros_que_enviaram_msg = {m.session_id for m in church_messages if m.role == "user"}
+        total_membros_ativos_dialogo = len(membros_que_enviaram_msg)
+        media_msgs = round(total_dialogo / total_membros_ativos_dialogo, 1) if total_membros_ativos_dialogo > 0 else 0.0
+
+        trafego_mensagens = {
+            "total_mensagens_dialogo": total_dialogo,
+            "mensagens_membros": msgs_user,
+            "respostas_ia": msgs_assistant,
+            "media_mensagens_por_membro": media_msgs,
+            "mensagens_operadores_humanos_desconsideradas": msgs_from_me
+        }
+
+        # 4. Dispatch Funnel (Passive Contacts vs Reactive Dialogue)
+        matched_dispatched_members = dispatched_sessions.intersection(church_session_ids_set) if church_session_ids_set else dispatched_sessions
+        membros_alcancados_count = len(matched_dispatched_members) if matched_dispatched_members else total_disp_contacts
+
+        if matched_dispatched_members:
+            contatos_passivos_set = matched_dispatched_members - membros_que_enviaram_msg
+            interacoes_reativas_set = matched_dispatched_members.intersection(membros_que_enviaram_msg)
+            contatos_passivos = len(contatos_passivos_set)
+            interacoes_reativas = len(interacoes_reativas_set)
+        else:
+            interacoes_reativas = min(total_membros_ativos_dialogo, total_disp_contacts)
+            contatos_passivos = max(0, total_disp_contacts - interacoes_reativas)
+
+        taxa_conversao = round((interacoes_reativas / membros_alcancados_count) * 100, 1) if membros_alcancados_count > 0 else 0.0
+        interacoes_organicas = max(0, total_membros_ativos_dialogo - interacoes_reativas)
+
+        funil_disparos = {
+            "total_disparos_enviados": total_disp_contacts,
+            "membros_alcancados": membros_alcancados_count,
+            "contatos_passivos": contatos_passivos,
+            "interacoes_reativas": interacoes_reativas,
+            "interacoes_organicas": interacoes_organicas,
+            "taxa_conversao_pct": taxa_conversao
+        }
+
+        # 4 Analytics Dimensions Initialization
         dim1_keys = [
             "visitante_novo", "cadastro_identificacao", "duvida_cultos", "celulas_grupos",
             "eventos_conferencias", "cursos_ensino_batismo", "financeiro_pix_dizimo",
@@ -360,6 +428,8 @@ async def process_map_reduce(session, report, config):
         relatorio_quantitativo = {
             "total_atendimentos": sum(dim1_counts.values()) or total_users,
             "total_membros_unicos": total_users,
+            "trafego_mensagens": trafego_mensagens,
+            "funil_disparos": funil_disparos,
             "dimensao_1_tipo_atendimento": dim1_counts,
             "dimensao_2_criticidade_pastoral": dim2_counts,
             "dimensao_3_vinculo": dim3_counts,
@@ -372,6 +442,8 @@ async def process_map_reduce(session, report, config):
             "total_users": total_users,
             "avg_engagement_score": round(avg_score, 2),
             "critical_cases": critical_count,
+            "trafego_mensagens": trafego_mensagens,
+            "funil_disparos": funil_disparos,
             "relatorio_quantitativo": relatorio_quantitativo,
             "casos_criticos_detalhe": casos_criticos_detalhe,
             "disparos_automaticos": church_dispatches,
@@ -389,15 +461,25 @@ async def process_map_reduce(session, report, config):
         synthesis_prompt = (
             f"Você é o Supervisor Pastoral da igreja '{church_title}'.\n"
             f"Seu objetivo é gerar um relatório pastoral executivo, acolhedor, analítico e de alto nível para a liderança desta igreja referente a {date_str}.\n\n"
-            f"MÉTRICAS QUANTITATIVAS CONSOLIDADAS:\n"
+            f"1. TRÁFEGO DE MENSAGENS E ENGAJAMENTO:\n"
+            f"- Total de Mensagens Trocadas (Diálogo Membros + IA): {trafego_mensagens['total_mensagens_dialogo']}\n"
+            f"  * Mensagens enviadas pelos membros: {trafego_mensagens['mensagens_membros']}\n"
+            f"  * Respostas da IA: {trafego_mensagens['respostas_ia']}\n"
+            f"  * Média de mensagens por membro: {trafego_mensagens['media_mensagens_por_membro']}\n\n"
+            f"2. FUNIL DE DISPAROS E NOTIFICAÇÕES (PASSIVOS VS ATIVOS):\n"
+            f"- Total de Disparos Enviados: {funil_disparos['total_disparos_enviados']}\n"
+            f"- Membros Alcançados: {funil_disparos['membros_alcancados']}\n"
+            f"- Contatos Passivos (receberam e não precisaram responder): {funil_disparos['contatos_passivos']}\n"
+            f"- Interações Reativas (responderam ao disparo): {funil_disparos['interacoes_reativas']} ({funil_disparos['taxa_conversao_pct']}% de conversão)\n\n"
+            f"3. CLASSIFICAÇÃO ANALÍTICA DAS CONVERSAS:\n"
             f"{json.dumps(relatorio_quantitativo, ensure_ascii=False, indent=2)}\n\n"
-            f"CASOS DE ATENÇÃO PASTORAL CRÍTICA DO DIA ({len(casos_criticos_detalhe)} casos):\n"
+            f"4. CASOS DE ATENÇÃO PASTORAL CRÍTICA DO DIA ({len(casos_criticos_detalhe)} casos):\n"
             f"{json.dumps(casos_criticos_detalhe, ensure_ascii=False, indent=2)}\n\n"
             f"Redija o relatório exclusivamente em formato Markdown profissional e humanizado com as seguintes seções:\n"
-            f"1. 📊 **Visão Geral e Engajamento** (Resumo executivo do volume de atendimentos e principais demandas da comunidade)\n"
-            f"2. ⚠️ **Atenção Pastoral Imediata** (Destaque nominal dos casos críticos de saúde, luto, crise ou afastamento, com orientações práticas)\n"
-            f"3. 💡 **Oportunidades e Próximos Passos** (Recomendações pastorais para os líderes de células, voluntários e novos visitantes)\n"
-            f"4. 📢 **Comunicações e Disparos** (Avaliação do impacto das mensagens e campanhas automáticas enviadas pela igreja)"
+            f"1. 📊 **Visão Geral e Engajamento** (Resumo executivo do tráfego de mensagens, volume de atendimentos e principais demandas da comunidade)\n"
+            f"2. 📢 **Comunicações e Funil de Disparos** (Avaliação do impacto dos avisos automáticos, contatos passivos e taxa de conversão em diálogo)\n"
+            f"3. ⚠️ **Atenção Pastoral Imediata** (Destaque nominal dos casos críticos de saúde, luto, crise ou afastamento, com orientações práticas)\n"
+            f"4. 💡 **Oportunidades e Próximos Passos** (Recomendações pastorais para os líderes de células, voluntários e novos visitantes)"
         )
 
         final_resp = await llm.ainvoke([
@@ -468,7 +550,7 @@ async def process_map_reduce(session, report, config):
         church_reports = churches_res.scalars().all()
         
         # Collect auto dispatches system-wide
-        sys_dispatches = await _collect_dispatch_stats(
+        sys_dispatches, _ = await _collect_dispatch_stats(
             session, config, start_time, end_time, church_id=None
         )
         total_sys_disp = sum(d["total_contacts"] for d in sys_dispatches)
@@ -580,6 +662,15 @@ async def process_report_message(message: aio_pika.abc.AbstractIncomingMessage):
                                     "period_end": report.period_end.isoformat() if report.period_end else None,
                                     "relatorio_quantitativo": relatorio_quant,
                                     "relatorio_qualitativo": report.report_content,
+                                    "trafego_mensagens": relatorio_quant.get("trafego_mensagens", {}),
+                                    "funil_disparos": relatorio_quant.get("funil_disparos", {}),
+                                    "classificacao_analitica": {
+                                        "tipo_atendimento": relatorio_quant.get("dimensao_1_tipo_atendimento", {}),
+                                        "criticidade_pastoral": relatorio_quant.get("dimensao_2_criticidade_pastoral", {}),
+                                        "vinculo": relatorio_quant.get("dimensao_3_vinculo", {}),
+                                        "sentimento": relatorio_quant.get("dimensao_4_sentimento", {})
+                                    },
+                                    "radar_atencao_pastoral": casos_criticos,
                                     "casos_criticos_detalhe": casos_criticos,
                                     "stats": stats_dict,
                                     "report_content": report.report_content

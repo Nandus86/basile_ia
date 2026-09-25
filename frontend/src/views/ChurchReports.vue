@@ -144,13 +144,86 @@
                 </v-col>
               </v-row>
 
+              <!-- Tráfego de Mensagens e Funil de Disparos -->
+              <v-row class="mb-4">
+                <v-col cols="12" md="6">
+                  <v-card variant="outlined" class="bg-surface pa-4 h-100">
+                    <div class="text-subtitle-2 font-weight-bold mb-3 d-flex align-center">
+                      <v-icon start color="teal" size="small">mdi-message-text-fast-outline</v-icon>
+                      Tráfego de Mensagens no Período
+                    </div>
+                    <v-row dense>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Total Diálogo</div>
+                        <div class="text-h6 font-weight-bold text-teal">
+                          {{ selectedReport?.stats?.trafego_mensagens?.total_mensagens_dialogo || 0 }}
+                        </div>
+                      </v-col>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Membros</div>
+                        <div class="text-h6 font-weight-bold">
+                          {{ selectedReport?.stats?.trafego_mensagens?.mensagens_membros || 0 }}
+                        </div>
+                      </v-col>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Respostas IA</div>
+                        <div class="text-h6 font-weight-bold">
+                          {{ selectedReport?.stats?.trafego_mensagens?.respostas_ia || 0 }}
+                        </div>
+                      </v-col>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Média/Membro</div>
+                        <div class="text-h6 font-weight-bold text-info">
+                          {{ selectedReport?.stats?.trafego_mensagens?.media_mensagens_por_membro || 0 }}
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-card>
+                </v-col>
+
+                <v-col cols="12" md="6">
+                  <v-card variant="outlined" class="bg-surface pa-4 h-100">
+                    <div class="text-subtitle-2 font-weight-bold mb-3 d-flex align-center">
+                      <v-icon start color="indigo" size="small">mdi-filter-variant</v-icon>
+                      Funil de Disparos e Notificações
+                    </div>
+                    <v-row dense>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Alcançados</div>
+                        <div class="text-h6 font-weight-bold text-indigo">
+                          {{ selectedReport?.stats?.funil_disparos?.membros_alcancados || selectedReport?.stats?.total_disparos_automaticos || 0 }}
+                        </div>
+                      </v-col>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Passivos</div>
+                        <div class="text-h6 font-weight-bold text-medium-emphasis">
+                          {{ selectedReport?.stats?.funil_disparos?.contatos_passivos || 0 }}
+                        </div>
+                      </v-col>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Reativos</div>
+                        <div class="text-h6 font-weight-bold text-success">
+                          {{ selectedReport?.stats?.funil_disparos?.interacoes_reativas || 0 }}
+                        </div>
+                      </v-col>
+                      <v-col cols="6" sm="3">
+                        <div class="text-caption text-medium-emphasis">Conversão</div>
+                        <div class="text-h6 font-weight-bold text-purple">
+                          {{ selectedReport?.stats?.funil_disparos?.taxa_conversao_pct || 0 }}%
+                        </div>
+                      </v-col>
+                    </v-row>
+                  </v-card>
+                </v-col>
+              </v-row>
+
               <!-- Dimensões 1 e 2: Tipo de Atendimento e Criticidade Pastoral -->
               <v-row class="mb-4">
                 <v-col cols="12" md="7">
                   <v-card variant="outlined" class="bg-surface pa-4 h-100">
                     <div class="text-subtitle-2 font-weight-bold mb-3 d-flex align-center">
                       <v-icon start color="primary" size="small">mdi-format-list-bulleted-type</v-icon>
-                      Dimensão 1: Tipos de Atendimento Classificados (JEV)
+                      Dimensão 1: Tipos de Atendimento Classificados (Analytics)
                     </div>
                     <div v-if="hasDim1" class="d-flex flex-wrap ga-2">
                       <v-chip
@@ -442,15 +515,30 @@ const formattedCrmJson = computed(() => {
   if (!selectedReport.value) return '{}'
   const rep = selectedReport.value
   const stats = rep.stats || {}
+  const relQuant = stats.relatorio_quantitativo || {}
+  const casosCriticos = stats.casos_criticos_detalhe || []
   const payload = {
+    report_id: rep.id,
     church_id: rep.entity_id,
     church_name: rep.entity_name || 'Igreja Local',
+    level: rep.level,
     period_type: rep.period_type,
     period_start: rep.period_start,
     period_end: rep.period_end,
-    relatorio_quantitativo: stats.relatorio_quantitativo || {},
+    relatorio_quantitativo: relQuant,
     relatorio_qualitativo: rep.report_content || '',
-    casos_criticos_detalhe: stats.casos_criticos_detalhe || []
+    trafego_mensagens: relQuant.trafego_mensagens || stats.trafego_mensagens || {},
+    funil_disparos: relQuant.funil_disparos || stats.funil_disparos || {},
+    classificacao_analitica: {
+      tipo_atendimento: relQuant.dimensao_1_tipo_atendimento || {},
+      criticidade_pastoral: relQuant.dimensao_2_criticidade_pastoral || {},
+      vinculo: relQuant.dimensao_3_vinculo || {},
+      sentimento: relQuant.dimensao_4_sentimento || {}
+    },
+    radar_atencao_pastoral: casosCriticos,
+    casos_criticos_detalhe: casosCriticos,
+    stats: stats,
+    report_content: rep.report_content || ''
   }
   return JSON.stringify(payload, null, 2)
 })

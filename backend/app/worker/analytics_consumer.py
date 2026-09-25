@@ -150,11 +150,20 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     # Ensure there is at least one message sent by a real user
                     user_msgs = [m for m in messages if m.role == "user"]
                     if not user_msgs:
+                        user.profile_data["ultimo_atendimento"] = {
+                            "tipo": "disparo_passivo",
+                            "data": target_date_str or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                            "respondeu_disparo": False
+                        }
+                        flag_modified(user, "profile_data")
                         job_log.status = "completed"
-                        job_log.response_data = {"status": "no_user_messages_in_window"}
+                        job_log.response_data = {
+                            "status": "passive_contact_recorded",
+                            "ultimo_atendimento": user.profile_data["ultimo_atendimento"]
+                        }
                         user.last_analyzed_at = datetime.now(timezone.utc)
                         await session.commit()
-                        logger.info(f"[AnalyticsConsumer] Skipping LLM for {user.session_id}: no user messages found in window")
+                        logger.info(f"[AnalyticsConsumer] Contato passivo registrado para {user.session_id} (sem mensagens ativas do usuário)")
                         return
 
                     # Format history
@@ -172,14 +181,14 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     job_log.request_data["context"] = context
                     await session.commit()
                     
-                    # Analyze session with TypeSafe JEV (~typesafe/jev-latest)
-                    from app.services.jev_analytics_service import JevAnalyticsService
-                    jev_svc = JevAnalyticsService(session)
+                    # Analyze session with AnalyticsClassificationService
+                    from app.services.jev_analytics_service import AnalyticsClassificationService
+                    analytics_cls_svc = AnalyticsClassificationService(session)
 
                     member_name = crm_data.get("first_name") or crm_data.get("Nome Completo") or crm_data.get("name") or ""
                     church_name = crm_data.get("church_name") or crm_data.get("Igreja Sede") or user.church_id or ""
 
-                    new_aprendizado = await jev_svc.analyze_session(
+                    new_aprendizado = await analytics_cls_svc.analyze_session(
                         history_text=history_text,
                         church_name=church_name,
                         member_name=member_name,
@@ -191,6 +200,11 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                     current_aprendizado = user.profile_data.get("__zona_aprendizado") or {}
                     current_aprendizado.update(new_aprendizado)
                     user.profile_data["__zona_aprendizado"] = current_aprendizado
+                    user.profile_data["ultimo_atendimento"] = {
+                        "tipo": "interacao_ativa",
+                        "data": new_aprendizado.get("data_analise", target_date_str or datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+                        "respondeu_disparo": True
+                    }
                     
                     # Recalculate engagement_score and care_priority
                     from app.services.analytics_service import AnalyticsService
@@ -225,6 +239,7 @@ async def process_analytics_message(message: aio_pika.abc.AbstractIncomingMessag
                                 payload_out = {
                                     "session_id": user.session_id,
                                     "analytics": new_aprendizado,
+                                    "ultimo_atendimento": user.profile_data.get("ultimo_atendimento"),
                                     "agent": agent.name,
                                     "type": "user_analytics"
                                 }
