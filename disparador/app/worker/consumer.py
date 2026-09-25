@@ -13,9 +13,14 @@ from app.services.dispatcher_engine import dispatch_batch, dispatch_contact
 logger = logging.getLogger(__name__)
 
 active_tasks = {}
-active_campaigns_lock = set()
 MAX_CONCURRENT_CAMPAIGNS = 10
 campaign_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CAMPAIGNS)
+church_locks: dict[str, asyncio.Lock] = {}
+
+def get_church_lock(church_key: str) -> asyncio.Lock:
+    if church_key not in church_locks:
+        church_locks[church_key] = asyncio.Lock()
+    return church_locks[church_key]
 
 async def process_dispatch_message(message: aio_pika.IncomingMessage):
     async with message.process(ignore_processed=True, requeue=True):
@@ -36,6 +41,18 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
             if not run_id:
                 run_id = f"legacy_{type_id}_{queue_id}_{service_id}_{int(asyncio.get_running_loop().time() * 1000)}"
 
+            # Church/queue identification for strict rate-limiting per church + endpoint
+            church_id = queue_id
+            if not church_id and payload.get("campaign_key"):
+                parts = payload["campaign_key"].split(":")
+                if len(parts) >= 2 and parts[1]:
+                    church_id = parts[1]
+            if not church_id and isinstance(payload.get("church"), dict):
+                church_id = payload["church"].get("queue_id") or payload["church"].get("church_id") or payload["church"].get("id")
+
+            endpoint_name = type_id or payload.get("config_path") or "default"
+            church_key = f"{endpoint_name}:{church_id}" if church_id else f"{endpoint_name}:{service_id}"
+
             current_task = asyncio.current_task()
             active_tasks[run_id] = current_task
             
@@ -48,7 +65,7 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
             config_path = payload.get("config_path")
             campaign_total = payload.get("campaign_total")
             
-            logger.info(f"[Worker] Processing dispatch message for run_id={run_id}, service_id={service_id}, type_id={type_id}, queue_id={queue_id}. Contacts count: {len(contacts)}")
+            logger.info(f"[Worker] Processing dispatch message for run_id={run_id}, service_id={service_id}, church_key={church_key}. Contacts count: {len(contacts)}")
             for i, c in enumerate(contacts):
                 num = c.get('number') or c.get('phone') or c.get('user_id')
                 if not num:
@@ -81,51 +98,50 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
                 active_tasks.pop(run_id, None)
                 return
 
-            # Concurrency lock per campaign
-            global active_campaigns_lock
-            if 'active_campaigns_lock' not in globals():
-                active_campaigns_lock = set()
+            # Concurrency serialization per church + endpoint:
+            # Ensures ONLY ONE batch/dispatch is active for the same church on the same endpoint,
+            # respecting the configured min_variation/max_variation delay between every contact!
+            church_lock = get_church_lock(church_key)
 
-            # If another batch of this same campaign is already actively dispatching,
-            # requeue this message back to RabbitMQ so that messages from other churches can be processed in parallel!
-            if campaign_key in active_campaigns_lock:
+            if church_lock.locked():
                 logger.info(
-                    f"[Worker] Campaign '{campaign_key}' is already active on another batch. "
-                    f"Requeueing message run_id={run_id} to allow other churches to process in parallel."
+                    f"[Worker] Church '{church_key}' is already actively dispatching. "
+                    f"Message run_id={run_id} is waiting in queue for previous batch to complete."
                 )
-                active_tasks.pop(run_id, None)
-                await asyncio.sleep(2.0)
-                if not message.channel.is_closed and not message.processed:
-                    await message.reject(requeue=True)
-                return
 
-            async with campaign_semaphore:
-                active_campaigns_lock.add(campaign_key)
-                try:
-                    # 3. Execute Dispatch
-                    await dispatch_batch(
-                        config,
-                        type_id,
-                        queue_id,
-                        contacts,
-                        service_id,
-                        context_data,
-                        transition_data,
-                        callback_url,
-                        run_id,
-                        campaign_key,
-                        message_text=message_text,
-                        source_payload=payload,
-                        timestamp_create=timestamp_create,
-                        campaign_total=campaign_total,
-                    )
-                except asyncio.CancelledError:
-                    logger.info(f"Task for run {run_id} gracefully cancelled.")
-                    raise
-                finally:
-                    active_campaigns_lock.discard(campaign_key)
-                    if active_tasks.get(run_id) == current_task:
-                        active_tasks.pop(run_id, None)
+            async with church_lock:
+                # Check again if campaign was deleted while waiting in line
+                if await disparador_redis.is_deleted(service_id):
+                    logger.warning(f"Campaign {service_id} was deleted while waiting. Dropping message.")
+                    active_tasks.pop(run_id, None)
+                    return
+
+                async with campaign_semaphore:
+                    logger.info(f"[Worker] Acquired lock for church '{church_key}'. Starting batch dispatch run_id={run_id}")
+                    try:
+                        # 3. Execute Dispatch
+                        await dispatch_batch(
+                            config,
+                            type_id,
+                            queue_id,
+                            contacts,
+                            service_id,
+                            context_data,
+                            transition_data,
+                            callback_url,
+                            run_id,
+                            campaign_key,
+                            message_text=message_text,
+                            source_payload=payload,
+                            timestamp_create=timestamp_create,
+                            campaign_total=campaign_total,
+                        )
+                    except asyncio.CancelledError:
+                        logger.info(f"Task for run {run_id} gracefully cancelled.")
+                        raise
+                    finally:
+                        if active_tasks.get(run_id) == current_task:
+                            active_tasks.pop(run_id, None)
 
         except asyncio.CancelledError:
             logger.warning(
@@ -157,11 +173,11 @@ async def start_consumer():
                 raise Exception("RabbitMQ channel not open")
 
             queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
-            # QoS prefetch set to 50 to allow multiple churches to be pulled and processed in parallel
-            await disparador_rmq.channel.set_qos(prefetch_count=50)
+            # QoS prefetch set to 20 to allow multiple churches to be pulled and processed in parallel
+            await disparador_rmq.channel.set_qos(prefetch_count=20)
             await queue.consume(process_dispatch_message)
             
-            logger.info("Started consuming Disparador messages (prefetch=50, max_concurrent=10)")
+            logger.info("Started consuming Disparador messages (prefetch=20, max_concurrent=10)")
 
             # Item D: Start stagnant campaign reconciliation watchdog
             from app.services.reconciliation import start_reconciliation_watchdog

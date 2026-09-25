@@ -277,6 +277,12 @@ async def dispatch_contact(config, type_id: str, queue_id: str, contact: dict, s
     # Warm-up (1.5x delay in first 10%)
     if batch_total > 0 and batch_position < (batch_total * 0.1):
         delay = int(delay * 1.5)
+
+    logger.info(
+        f"[DispatcherEngine] Waiting {delay}s anti-ban delay "
+        f"(configured: {config.min_variation_seconds}-{config.max_variation_seconds}s) "
+        f"after contact {batch_position + 1}/{batch_total} ({contact_number}) in {service_id}"
+    )
         
     await asyncio.sleep(delay)
     
