@@ -96,7 +96,26 @@ async def receive_dispatch(
 
         # Idempotency Lock: Prevent external systems from sending duplicate requests
         campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
-        if not retrigger:
+        dispatch_flags = payload.model_dump().get("dispatch_flags") or {}
+        if not isinstance(dispatch_flags, dict):
+            dispatch_flags = {}
+        is_retrigger = (
+            retrigger
+            or bool(dispatch_flags.get("retrigger"))
+            or bool(dispatch_flags.get("recreate"))
+            or bool(dispatch_flags.get("force"))
+            or (isinstance(body_json, dict) and (bool(body_json.get("retrigger")) or bool(body_json.get("force"))))
+        )
+
+        if is_retrigger:
+            # Clean up prior idempotency and campaign contacts so this retrigger is treated fresh
+            await disparador_redis.client.delete(f"disp:idempotency:{campaign_key}")
+            await disparador_redis.client.delete(f"disp:campaign:contacts:{payload.service_id}")
+            await disparador_redis.client.delete(f"disp:campaign:{payload.service_id}")
+            await disparador_redis.client.delete(f"disp:deleted:{payload.service_id}")
+            await disparador_redis.unlock_campaign(campaign_key)
+            logger.info(f"[Webhook] Retrigger requested for {campaign_key}. Cleared contacts and idempotency lock.")
+        else:
             is_new_request = await disparador_redis.client.set(f"disp:idempotency:{campaign_key}", "1", nx=True, ex=604800) # 7 days TTL
             if not is_new_request:
                 logger.warning(f"[Webhook] Duplicate request blocked for {campaign_key}. Returning success to stop external retries.")
@@ -181,7 +200,12 @@ async def receive_dispatch(
         # Normal flow (no routing rules or type_id not in rules)
         campaign_key = f"{payload.type_id}:{payload.queue_id}:{payload.service_id}"
         dispatch_flags = payload.model_dump().get("dispatch_flags") or {}
-        lock_bypass = bool(dispatch_flags.get("lock_bypass", False))
+        if not isinstance(dispatch_flags, dict):
+            dispatch_flags = {}
+        if is_retrigger:
+            dispatch_flags["recreate"] = True
+            dispatch_flags["lock_bypass"] = True
+        lock_bypass = bool(dispatch_flags.get("lock_bypass", False)) or is_retrigger
 
         if not lock_bypass and await disparador_redis.is_campaign_locked(campaign_key):
             run_status = None

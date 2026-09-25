@@ -107,6 +107,14 @@ async def proxy_recreate_campaign(service_id: str, request: Request):
         pass
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/recreate", request, body_json)
 
+@dashboard_router.post("/dashboard/campaigns/{service_id}/purge")
+async def proxy_purge_campaign(service_id: str, request: Request):
+    return await _proxy("POST", f"/dashboard/campaigns/{service_id}/purge", request)
+
+@dashboard_router.post("/dashboard/campaigns/{service_id}/reset")
+async def proxy_reset_campaign(service_id: str, request: Request):
+    return await _proxy("POST", f"/dashboard/campaigns/{service_id}/purge", request)
+
 @dashboard_router.post("/dashboard/campaigns/{service_id}/delete")
 async def proxy_delete_campaign(service_id: str, request: Request):
     return await _proxy("POST", f"/dashboard/campaigns/{service_id}/delete", request)
