@@ -13,9 +13,12 @@ from app.services.dispatcher_engine import dispatch_batch, dispatch_contact
 logger = logging.getLogger(__name__)
 
 active_tasks = {}
+active_campaigns_lock = set()
+MAX_CONCURRENT_CAMPAIGNS = 10
+campaign_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CAMPAIGNS)
 
 async def process_dispatch_message(message: aio_pika.IncomingMessage):
-    async with message.process(requeue=True):
+    async with message.process(ignore_processed=True, requeue=True):
         try:
             body_str = message.body.decode()
             payload = json.loads(body_str)
@@ -83,35 +86,46 @@ async def process_dispatch_message(message: aio_pika.IncomingMessage):
             if 'active_campaigns_lock' not in globals():
                 active_campaigns_lock = set()
 
-            while campaign_key in active_campaigns_lock:
-                await asyncio.sleep(1.0)
-            
-            active_campaigns_lock.add(campaign_key)
-            try:
-                # 3. Execute Dispatch
-                await dispatch_batch(
-                    config,
-                    type_id,
-                    queue_id,
-                    contacts,
-                    service_id,
-                    context_data,
-                    transition_data,
-                    callback_url,
-                    run_id,
-                    campaign_key,
-                    message_text=message_text,
-                    source_payload=payload,
-                    timestamp_create=timestamp_create,
-                    campaign_total=campaign_total,
+            # If another batch of this same campaign is already actively dispatching,
+            # requeue this message back to RabbitMQ so that messages from other churches can be processed in parallel!
+            if campaign_key in active_campaigns_lock:
+                logger.info(
+                    f"[Worker] Campaign '{campaign_key}' is already active on another batch. "
+                    f"Requeueing message run_id={run_id} to allow other churches to process in parallel."
                 )
-            except asyncio.CancelledError:
-                logger.info(f"Task for run {run_id} gracefully cancelled.")
-                raise
-            finally:
-                active_campaigns_lock.remove(campaign_key)
-                if active_tasks.get(run_id) == current_task:
-                    active_tasks.pop(run_id, None)
+                active_tasks.pop(run_id, None)
+                await asyncio.sleep(2.0)
+                if not message.channel.is_closed and not message.processed:
+                    await message.reject(requeue=True)
+                return
+
+            async with campaign_semaphore:
+                active_campaigns_lock.add(campaign_key)
+                try:
+                    # 3. Execute Dispatch
+                    await dispatch_batch(
+                        config,
+                        type_id,
+                        queue_id,
+                        contacts,
+                        service_id,
+                        context_data,
+                        transition_data,
+                        callback_url,
+                        run_id,
+                        campaign_key,
+                        message_text=message_text,
+                        source_payload=payload,
+                        timestamp_create=timestamp_create,
+                        campaign_total=campaign_total,
+                    )
+                except asyncio.CancelledError:
+                    logger.info(f"Task for run {run_id} gracefully cancelled.")
+                    raise
+                finally:
+                    active_campaigns_lock.discard(campaign_key)
+                    if active_tasks.get(run_id) == current_task:
+                        active_tasks.pop(run_id, None)
 
         except asyncio.CancelledError:
             logger.warning(
@@ -143,11 +157,11 @@ async def start_consumer():
                 raise Exception("RabbitMQ channel not open")
 
             queue = await disparador_rmq.channel.declare_queue("disp_jobs", durable=True)
-            # Item B: QoS prefetch to avoid overwhelming consumer and prevent timeouts
-            await disparador_rmq.channel.set_qos(prefetch_count=2)
+            # QoS prefetch set to 50 to allow multiple churches to be pulled and processed in parallel
+            await disparador_rmq.channel.set_qos(prefetch_count=50)
             await queue.consume(process_dispatch_message)
             
-            logger.info("Started consuming Disparador messages (prefetch=2)")
+            logger.info("Started consuming Disparador messages (prefetch=50, max_concurrent=10)")
 
             # Item D: Start stagnant campaign reconciliation watchdog
             from app.services.reconciliation import start_reconciliation_watchdog

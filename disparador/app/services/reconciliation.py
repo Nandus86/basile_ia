@@ -64,7 +64,16 @@ async def reconcile_stagnant_campaigns():
                     except Exception:
                         pass
                         
-            # If updated in the last 25 minutes, it may be actively dispatching
+            # If resumed recently or updated in the last 25 minutes, it may be actively dispatching
+            resumed_str = c.get("resumed_at")
+            if resumed_str:
+                try:
+                    resumed_dt = datetime.fromisoformat(resumed_str.replace("Z", "+00:00"))
+                    if (now - resumed_dt).total_seconds() < 1500:
+                        continue
+                except Exception:
+                    pass
+
             if latest_update:
                 elapsed = (now - latest_update).total_seconds()
                 if elapsed < 1500:

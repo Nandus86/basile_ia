@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import uuid
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,7 @@ async def resume_pending_campaign(service_id: str, db: AsyncSession):
         try:
             c_dict = json.loads(c_raw)
             c_dict["status"] = "running"
+            c_dict["resumed_at"] = datetime.now(timezone.utc).isoformat()
             await disparador_redis.client.set(f"disp:campaign:{service_id}", json.dumps(c_dict))
         except Exception:
             pass
